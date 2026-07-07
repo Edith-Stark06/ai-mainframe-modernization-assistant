@@ -58,3 +58,15 @@ ollama/
 
 *.tmp
 *.bak
+
+# Build artifacts
+dist/
+build/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Local databases
+*.db
+*.sqlite3
