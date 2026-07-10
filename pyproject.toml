@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "Ai-mainframe-modernization-assistant"
+version = "0.1.0"
+description = "Enterprise AI platform for understanding and modernizing IBM Z mainframe applications."
+readme = "README.md"
+requires-python = ">=3.11"
+
+authors = [
+    { name = "Ramana Sree, Verona Ann Mariya" }
+]
+
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "streamlit",
+    "langchain",
+    "langchain-community",
+    "langchain-ollama",
+    "chromadb",
+    "sentence-transformers",
+    "pydantic",
+    "pydantic-settings",
+    "python-dotenv",
+    "python-multipart",
+    "aiofiles",
+    "loguru",
+    "chardet",
+    "httpx"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "black",
+    "ruff",
+    "mypy"
+]
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.black]
+line-length = 88
+
+[tool.ruff]
+line-length = 88
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
