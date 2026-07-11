@@ -73,3 +73,6 @@ htmlcov/
 # Local databases
 *.db
 *.sqlite3
+
+# Patch exports
+*.patch
