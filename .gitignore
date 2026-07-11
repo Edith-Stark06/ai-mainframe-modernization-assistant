@@ -45,6 +45,9 @@ Thumbs.db
 # Workspace
 
 workspace/
+# Do not ignore source / test workspace packages
+!app/workspace/
+!tests/workspace/
 
 # ChromaDB
 
