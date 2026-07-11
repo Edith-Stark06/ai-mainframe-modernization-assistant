@@ -12,7 +12,8 @@ Responsibilities:
       its route handlers.
 
 Dependencies:
-    - app.api.routers.health — health-check endpoints
+    - app.api.routers.health  — health-check endpoints
+    - app.api.routers.upload  — file ingestion endpoints
 
 Examples:
     The router is imported and mounted in ``app.main``::
@@ -30,6 +31,7 @@ Project:
 from fastapi import APIRouter
 
 from app.api.routers.health import router as health_router
+from app.api.routers.upload import router as upload_router
 
 # ---------------------------------------------------------------------------
 # Versioned API router
@@ -38,3 +40,4 @@ from app.api.routers.health import router as health_router
 api_router = APIRouter(prefix="/api/v1")
 
 api_router.include_router(health_router)
+api_router.include_router(upload_router)
