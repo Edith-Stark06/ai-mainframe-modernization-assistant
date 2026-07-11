@@ -13,14 +13,11 @@ Project:
     AI-Powered Mainframe Modernization Assistant
 """
 
-from datetime import UTC, datetime
-
 import pytest
 
 from app.workspace.models import (
     FileType,
     ScannedFile,
-    TypeCount,
     WorkspaceInventory,
     WorkspaceSummary,
 )
@@ -66,9 +63,7 @@ def _make_inventory(files: list[ScannedFile]) -> WorkspaceInventory:
 class TestSummaryGeneratorReturnType:
     """Tests for the return type and basic structure of generate()."""
 
-    def test_generate_returns_workspace_summary(
-        self, gen: SummaryGenerator
-    ) -> None:
+    def test_generate_returns_workspace_summary(self, gen: SummaryGenerator) -> None:
         """generate() must return a WorkspaceSummary instance."""
         inv = _make_inventory([])
         result = gen.generate(inv)
@@ -128,7 +123,9 @@ class TestSummaryGeneratorSingleFile:
         inv = _make_inventory(files)
         result = gen.generate(inv)
         assert result.total_files == 1
-        cobol_counts = [tc for tc in result.by_type if tc.file_type == FileType.COBOL.value]
+        cobol_counts = [
+            tc for tc in result.by_type if tc.file_type == FileType.COBOL.value
+        ]
         assert len(cobol_counts) == 1
         assert cobol_counts[0].count == 1
 
@@ -166,9 +163,7 @@ class TestSummaryGeneratorMultipleFiles:
 
     def test_total_files_matches_inventory(self, gen: SummaryGenerator) -> None:
         """total_files must equal inventory.total_files."""
-        files = [
-            _make_scanned_file(f"file{i}.cbl", FileType.COBOL) for i in range(5)
-        ]
+        files = [_make_scanned_file(f"file{i}.cbl", FileType.COBOL) for i in range(5)]
         inv = _make_inventory(files)
         result = gen.generate(inv)
         assert result.total_files == 5
@@ -212,6 +207,8 @@ class TestSummaryGeneratorMultipleFiles:
         files = [_make_scanned_file("mystery.dat", FileType.UNKNOWN)]
         inv = _make_inventory(files)
         result = gen.generate(inv)
-        unknown = [tc for tc in result.by_type if tc.file_type == FileType.UNKNOWN.value]
+        unknown = [
+            tc for tc in result.by_type if tc.file_type == FileType.UNKNOWN.value
+        ]
         assert len(unknown) == 1
         assert unknown[0].count == 1

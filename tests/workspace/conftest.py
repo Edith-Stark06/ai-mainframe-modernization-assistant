@@ -64,7 +64,9 @@ def populated_workspace(tmp_path: Path) -> Path:
     (tmp_path / "batch.jcl").write_bytes(
         b"//MYJOB   JOB (ACCT),'PAYROLL',CLASS=A\n//STEP1 EXEC PGM=IEFBR14\n"
     )
-    (tmp_path / "readme.txt").write_bytes(b"This workspace contains payroll programs.\n")
+    (tmp_path / "readme.txt").write_bytes(
+        b"This workspace contains payroll programs.\n"
+    )
     subdir = tmp_path / "subdir"
     subdir.mkdir()
     (subdir / "report.cbl").write_bytes(

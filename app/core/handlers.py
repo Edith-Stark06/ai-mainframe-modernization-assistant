@@ -64,19 +64,17 @@ _UNKNOWN_REQUEST_ID = "unknown"
 
 def _get_request_id(request: Request) -> str:
     """
-    Extract the correlation ID from the request headers.
+    Return the request correlation ID.
 
-    The :class:`app.core.middleware.RequestIDMiddleware` guarantees that
-    every request carries an ``X-Request-ID`` header.  This helper
-    provides a safe fallback for requests that bypass the middleware.
-
-    Args:
-        request: The current Starlette request.
-
-    Returns:
-        The UUID4 string, or ``"unknown"`` when the header is absent.
+    The RequestIDMiddleware stores the generated UUID in
+    request.state.request_id. If the middleware was not executed,
+    fall back to the incoming header and finally to "unknown".
     """
-    return request.headers.get(_REQUEST_ID_HEADER, _UNKNOWN_REQUEST_ID)
+    return getattr(
+        request.state,
+        "request_id",
+        request.headers.get(_REQUEST_ID_HEADER, _UNKNOWN_REQUEST_ID),
+    )
 
 
 def _build_json_response(body: ErrorResponse, status_code: int) -> JSONResponse:

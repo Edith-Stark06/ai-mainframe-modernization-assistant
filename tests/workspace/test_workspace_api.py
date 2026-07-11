@@ -48,7 +48,6 @@ def workspace_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     This isolates API tests from the real workspace directory.
     """
     import app.workspace.inventory as inv_mod
-    import app.workspace.scanner as scan_mod
     from app.core import config as cfg_mod
 
     monkeypatch.setattr(cfg_mod.settings, "workspace_dir", str(tmp_path))
@@ -132,7 +131,15 @@ class TestInventoryEndpointNominal:
         """Each file record must contain all required metadata keys."""
         ws_id = _create_workspace(workspace_root, {"prog.cbl": _COBOL})
         body = client.get(f"/api/v1/workspaces/{ws_id}/inventory").json()
-        required = {"path", "filename", "extension", "sha256", "size_bytes", "file_type", "scanned_at"}
+        required = {
+            "path",
+            "filename",
+            "extension",
+            "sha256",
+            "size_bytes",
+            "file_type",
+            "scanned_at",
+        }
         assert required.issubset(set(body["files"][0].keys()))
 
     def test_inventory_filename_correct(
@@ -238,9 +245,7 @@ class TestSummaryEndpointNominal:
         self, client: TestClient, workspace_root: Path
     ) -> None:
         """total_files must equal the number of files discovered."""
-        ws_id = _create_workspace(
-            workspace_root, {"a.cbl": _COBOL, "b.jcl": _JCL}
-        )
+        ws_id = _create_workspace(workspace_root, {"a.cbl": _COBOL, "b.jcl": _JCL})
         body = client.get(f"/api/v1/workspaces/{ws_id}/summary").json()
         assert body["total_files"] == 2
 
@@ -277,9 +282,7 @@ class TestSummaryEndpointNominal:
         self, client: TestClient, workspace_root: Path
     ) -> None:
         """total_size_bytes must equal the sum of all file sizes."""
-        ws_id = _create_workspace(
-            workspace_root, {"a.cbl": _COBOL, "b.jcl": _JCL}
-        )
+        ws_id = _create_workspace(workspace_root, {"a.cbl": _COBOL, "b.jcl": _JCL})
         expected = len(_COBOL) + len(_JCL)
         body = client.get(f"/api/v1/workspaces/{ws_id}/summary").json()
         assert body["total_size_bytes"] == expected
