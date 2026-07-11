@@ -13,9 +13,11 @@ Responsibilities:
     - Handle application lifespan (startup / shutdown hooks).
 
 Dependencies:
-    - app.api.router       — versioned API router
-    - app.core.config      — application settings
-    - app.core.logging     — Loguru logger
+    - app.api.router         — versioned API router
+    - app.core.config        — application settings
+    - app.core.logging       — Loguru logger
+    - app.core.handlers      — global exception handlers
+    - app.core.middleware     — request ID middleware
 
 Examples:
     Start the development server::
@@ -42,7 +44,9 @@ from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
 from app.core.config import settings
+from app.core.handlers import register_exception_handlers
 from app.core.logging import logger
+from app.core.middleware import RequestIDMiddleware
 
 # ---------------------------------------------------------------------------
 # Lifespan
@@ -104,9 +108,19 @@ def create_application() -> FastAPI:
     )
 
     # ------------------------------------------------------------------
+    # Exception handlers
+    # ------------------------------------------------------------------
+
+    register_exception_handlers(application)
+
+    # ------------------------------------------------------------------
     # Middleware
     # ------------------------------------------------------------------
 
+    # Note: Starlette processes middleware in reverse-registration order.
+    # RequestIDMiddleware must be the innermost middleware so the request
+    # ID is available to exception handlers during error processing.
+    application.add_middleware(RequestIDMiddleware)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
