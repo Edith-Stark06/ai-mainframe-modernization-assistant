@@ -90,17 +90,13 @@ class WorkspaceScanner:
             NotADirectoryError: If *workspace_path* is not a directory.
         """
         if not workspace_path.exists():
-            raise FileNotFoundError(
-                f"Workspace path does not exist: {workspace_path}"
-            )
+            raise FileNotFoundError(f"Workspace path does not exist: {workspace_path}")
         if not workspace_path.is_dir():
             raise NotADirectoryError(
                 f"Workspace path is not a directory: {workspace_path}"
             )
 
-        logger.info(
-            "WorkspaceScanner: scanning '{}' …", workspace_path
-        )
+        logger.info("WorkspaceScanner: scanning '{}' …", workspace_path)
 
         scanned: list[ScannedFile] = []
         for file_path in sorted(workspace_path.rglob("*")):
