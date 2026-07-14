@@ -215,17 +215,103 @@ implementation and allows lightweight fakes in tests.
 
 ---
 
+## Format Detection Stage (TASK-007)
+
+### Responsibilities
+
+The Format Detector is the second stage of the compiler pipeline.  It
+receives a `SourceDocument` (raw, decoded source text + filename) from
+the Source Reader and returns a `SourceFormat` verdict without modifying
+the source in any way.
+
+| Responsibility | Detail |
+|---|---|
+| Classify source format | Returns `FIXED`, `FREE`, or `UNKNOWN` |
+| Apply documented heuristics | Four heuristics in defined priority order |
+| Remain stateless | Same input always produces same output |
+| Conservative verdict | Returns `UNKNOWN` rather than guessing |
+
+### Inputs
+
+```python
+@dataclass(frozen=True, slots=True)
+class SourceDocument:
+    filename: str   # path of the source file (used in diagnostics)
+    source: str     # complete decoded source text
+```
+
+### Outputs
+
+```python
+class SourceFormat(Enum):
+    UNKNOWN = "unknown"   # insufficient evidence
+    FIXED   = "fixed"     # ANSI reference / punch-card column layout
+    FREE    = "free"      # COBOL 2002+ free format
+```
+
+### Heuristic Cascade
+
+Heuristics are applied in priority order.  The first match wins.
+
+| Priority | Heuristic | Evidence | Verdict |
+|---|---|---|---|
+| 1 | `>>SOURCE FREE` compiler directive | Authoritative declaration | FREE |
+| 2 | `>>SOURCE FIXED` compiler directive | Authoritative declaration | FIXED |
+| 3 | `*>` comment syntax | Free-format-only comment marker | FREE |
+| 4 | Fixed-column structural evidence | Sequence area + Area A alignment | FIXED |
+| 5 | No confident evidence | Insufficient data | UNKNOWN |
+
+**Why each heuristic exists:**
+
+1. **`>>SOURCE FREE` / `>>SOURCE FIXED`** — These are explicit programmer
+   declarations supported by IBM Enterprise COBOL and GnuCOBOL.  They are
+   treated as ground truth and override all other evidence.
+
+2. **`*>` comment marker** — This comment style is only valid in COBOL 2002+
+   free format.  Its presence is unambiguous evidence regardless of column
+   position.
+
+3. **Fixed-column structural evidence** — In fixed format, columns 1–6 are
+   the Sequence Number Area, column 7 is the Indicator, and Area A begins
+   at column 8.  Lines showing this consistent layout over a sufficient
+   sample are classified as fixed.
+
+### Limitations
+
+- The detector operates on raw text only; it has no lexer or parser.
+- It cannot detect format switches mid-file (multiple `>>SOURCE` directives).
+  It returns the verdict of the first directive found.
+- Files with very few lines (fewer than 5 non-empty lines) fall back to
+  `UNKNOWN` because structural heuristics are unreliable on small samples.
+- Accidental column alignment in free-format code could (rarely) trigger
+  the fixed-column heuristic if the `>>SOURCE FREE` directive is absent.
+  This is a known limitation and is documented in the heuristic threshold.
+
+### Relationship to the Normalizer
+
+The Normalizer (TASK-008, future) receives both the `SourceDocument` and
+the `SourceFormat` verdict from the Format Detector.  It uses the verdict
+to decide how to strip sequence numbers, handle the indicator column, and
+produce a normalised source stream for the Scanner.
+
+If the Format Detector returns `UNKNOWN`, the Normalizer must surface a
+diagnostic and refuse to proceed, or apply a configurable fallback
+strategy (e.g. attempt fixed-format normalisation first).
+
+---
+
 ## Roadmap
 
 | Task | Sub-package | Deliverable |
 |------|-------------|-------------|
 | TASK-006 | `lexer` | COBOL lexer implementation |
-| TASK-007 | `syntax` | COBOL grammar and CST parser |
-| TASK-008 | `ast` | AST node hierarchy and visitor |
-| TASK-009 | `resolver` | COPY-book expansion engine |
-| TASK-010 | `semantic` | Semantic analyser and symbol table |
-| TASK-011 | `ir` | Intermediate representation and serialiser |
-| TASK-012 | `diagnostics` | Diagnostic model and LSP formatter |
+| TASK-007 | `lexer` | Source format detection (`SourceFormat`, `FormatDetector`) |
+| TASK-008 | `syntax` | COBOL grammar and CST parser |
+| TASK-009 | `ast` | AST node hierarchy and visitor |
+| TASK-010 | `resolver` | COPY-book expansion engine |
+| TASK-011 | `semantic` | Semantic analyser and symbol table |
+| TASK-012 | `ir` | Intermediate representation and serialiser |
+| TASK-013 | `diagnostics` | Diagnostic model and LSP formatter |
 
 ---
 
