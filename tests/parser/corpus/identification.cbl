@@ -1,0 +1,4 @@
+* IDENTIFICATION DIVISION SAMPLE
+* Tests keyword recognition for the division header.
+ IDENTIFICATION DIVISION.
+ PROGRAM-ID. HELLO-WORLD.
