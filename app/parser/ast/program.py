@@ -90,7 +90,7 @@ class ProgramNode(ASTNode):
         True
     """
 
-    identification_division: DivisionNode | None = None
+    identification_division: ASTNode | None = None
     environment_division: DivisionNode | None = None
     data_division: DivisionNode | None = None
     procedure_division: DivisionNode | None = None
