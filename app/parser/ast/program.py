@@ -17,6 +17,7 @@ Non-responsibilities:
 Dependencies:
     - :mod:`app.parser.ast.node`          — ``ASTNode`` base class.
     - :mod:`app.parser.ast.division`      — ``DivisionNode``.
+    - :mod:`app.parser.ast.data`          — ``DataDivisionNode``.
     - :mod:`app.parser.lexer.position`    — ``Position`` value type.
     - Python standard library only (``dataclasses``).
 
@@ -52,6 +53,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.parser.ast.data import DataDivisionNode
 from app.parser.ast.division import DivisionNode
 from app.parser.ast.node import ASTNode
 
@@ -92,7 +94,7 @@ class ProgramNode(ASTNode):
 
     identification_division: ASTNode | None = None
     environment_division: DivisionNode | None = None
-    data_division: DivisionNode | None = None
+    data_division: DataDivisionNode | None = None
     procedure_division: DivisionNode | None = None
 
     def accept(self, visitor: object) -> object:
