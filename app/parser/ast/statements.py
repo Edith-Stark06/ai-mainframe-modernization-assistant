@@ -1,0 +1,284 @@
+"""
+Statement AST Nodes.
+
+Purpose:
+    Define the immutable AST nodes that represent individual executable
+    COBOL statements parsed from the PROCEDURE DIVISION.
+
+    Each node carries the structural tokens captured during parsing.
+    Nodes are deliberately thin; semantic analysis is a separate concern.
+
+Responsibilities:
+    - Provide :class:`StatementNode` — the abstract base for all statement
+      nodes.
+    - Provide :class:`DisplayStatementNode` — a ``DISPLAY`` statement.
+    - Provide :class:`MoveStatementNode`    — a ``MOVE ... TO ...`` statement.
+    - Provide :class:`StopRunStatementNode` — a ``STOP RUN`` statement.
+    - Provide :class:`GobackStatementNode`  — a ``GOBACK`` statement.
+    - Remain immutable after construction (``frozen=True`` dataclasses).
+
+Non-responsibilities:
+    - Parsing or lexical analysis.
+    - Semantic validation (data types, scope, etc.).
+    - IF, EVALUATE, PERFORM, GO TO, CALL, COMPUTE, arithmetic statements.
+
+Dependencies:
+    - :mod:`app.parser.ast.node` — ``ASTNode`` base class.
+    - Python standard library only (``dataclasses``).
+
+Examples:
+    Creating a DISPLAY statement node::
+
+        from app.parser.ast.statements import DisplayStatementNode
+        from app.parser.lexer.position import Position
+
+        pos = Position(line=10, column=4, offset=200, filename="prog.cbl")
+        node = DisplayStatementNode(
+            start_position=pos,
+            end_position=pos,
+            operand="\"HELLO\"",
+        )
+        node.operand  # '"HELLO"'
+
+Author:
+    Edith Stark
+
+Project:
+    AI-Powered Mainframe Modernization Assistant
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from app.parser.ast.node import ASTNode
+
+__all__ = [
+    "DisplayStatementNode",
+    "GobackStatementNode",
+    "MoveStatementNode",
+    "StatementNode",
+    "StopRunStatementNode",
+]
+
+
+@dataclass(frozen=True)
+class StatementNode(ASTNode):
+    """
+    Abstract base for all PROCEDURE DIVISION statement nodes.
+
+    Every concrete statement node inherits from this class and gains the
+    standard ``start_position`` / ``end_position`` span from
+    :class:`~app.parser.ast.node.ASTNode`.
+
+    Concrete subclasses must implement :meth:`accept` to call the
+    appropriate visitor method.
+
+    Examples:
+        >>> from app.parser.lexer.position import Position
+        >>> pos = Position(line=1, column=1, offset=0, filename="x.cbl")
+        >>> # StatementNode is abstract — instantiate a concrete subclass.
+    """
+
+    def accept(self, visitor: object) -> object:
+        """
+        Dispatch to ``visitor.visit_statement(self)`` if available.
+
+        Concrete subclasses override this with a more specific method
+        name.  The base implementation provides a fallback that works
+        with any generic visitor.
+
+        Args:
+            visitor: Any visitor object.
+
+        Returns:
+            The return value of the visitor method, or ``None``.
+        """
+        visit = getattr(visitor, "visit_statement", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class DisplayStatementNode(StatementNode):
+    """
+    Immutable AST node for a COBOL ``DISPLAY`` statement.
+
+    Captures all operand tokens from immediately after ``DISPLAY`` up to
+    the terminating period as a single concatenated string.
+
+    COBOL syntax example::
+
+        DISPLAY "HELLO".
+        DISPLAY WS-COUNT.
+
+    Attributes:
+        start_position:
+            Source position of the ``DISPLAY`` keyword.
+        end_position:
+            Source position of the terminating period.
+        operand:
+            The raw operand text (e.g. ``'"HELLO"'``, ``'WS-COUNT'``).
+
+    Examples:
+        >>> from app.parser.lexer.position import Position
+        >>> pos = Position(line=10, column=4, offset=200, filename="x.cbl")
+        >>> node = DisplayStatementNode(
+        ...     start_position=pos, end_position=pos, operand='"HELLO"',
+        ... )
+        >>> node.operand
+        '"HELLO"'
+    """
+
+    operand: str
+
+    def accept(self, visitor: object) -> object:
+        """
+        Dispatch to ``visitor.visit_display_statement(self)`` if available.
+
+        Args:
+            visitor: Any visitor object.
+
+        Returns:
+            The return value of the visitor method, or ``None``.
+        """
+        visit = getattr(visitor, "visit_display_statement", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class MoveStatementNode(StatementNode):
+    """
+    Immutable AST node for a COBOL ``MOVE ... TO ...`` statement.
+
+    Captures the source operand (everything between ``MOVE`` and ``TO``)
+    and the target operand (everything between ``TO`` and the period).
+
+    COBOL syntax example::
+
+        MOVE 1 TO WS-COUNT.
+        MOVE WS-NAME TO DISPLAY-NAME.
+
+    Attributes:
+        start_position:
+            Source position of the ``MOVE`` keyword.
+        end_position:
+            Source position of the terminating period.
+        source:
+            The source operand text (e.g. ``'1'``, ``'WS-NAME'``).
+        target:
+            The target data-name text (e.g. ``'WS-COUNT'``).
+
+    Examples:
+        >>> from app.parser.lexer.position import Position
+        >>> pos = Position(line=5, column=4, offset=80, filename="x.cbl")
+        >>> node = MoveStatementNode(
+        ...     start_position=pos, end_position=pos,
+        ...     source="1", target="WS-COUNT",
+        ... )
+        >>> node.source
+        '1'
+        >>> node.target
+        'WS-COUNT'
+    """
+
+    source: str
+    target: str
+
+    def accept(self, visitor: object) -> object:
+        """
+        Dispatch to ``visitor.visit_move_statement(self)`` if available.
+
+        Args:
+            visitor: Any visitor object.
+
+        Returns:
+            The return value of the visitor method, or ``None``.
+        """
+        visit = getattr(visitor, "visit_move_statement", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class StopRunStatementNode(StatementNode):
+    """
+    Immutable AST node for the COBOL ``STOP RUN`` statement.
+
+    ``STOP RUN`` terminates program execution and transfers control
+    back to the operating system.
+
+    COBOL syntax example::
+
+        STOP RUN.
+
+    Attributes:
+        start_position:
+            Source position of the ``STOP`` keyword.
+        end_position:
+            Source position of the terminating period.
+
+    Examples:
+        >>> from app.parser.lexer.position import Position
+        >>> pos = Position(line=20, column=4, offset=400, filename="x.cbl")
+        >>> node = StopRunStatementNode(start_position=pos, end_position=pos)
+    """
+
+    def accept(self, visitor: object) -> object:
+        """
+        Dispatch to ``visitor.visit_stop_run_statement(self)`` if available.
+
+        Args:
+            visitor: Any visitor object.
+
+        Returns:
+            The return value of the visitor method, or ``None``.
+        """
+        visit = getattr(visitor, "visit_stop_run_statement", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class GobackStatementNode(StatementNode):
+    """
+    Immutable AST node for the COBOL ``GOBACK`` statement.
+
+    ``GOBACK`` transfers control back to the caller of the current
+    program or sub-program.
+
+    COBOL syntax example::
+
+        GOBACK.
+
+    Attributes:
+        start_position:
+            Source position of the ``GOBACK`` keyword or identifier.
+        end_position:
+            Source position of the terminating period.
+
+    Examples:
+        >>> from app.parser.lexer.position import Position
+        >>> pos = Position(line=25, column=4, offset=500, filename="x.cbl")
+        >>> node = GobackStatementNode(start_position=pos, end_position=pos)
+    """
+
+    def accept(self, visitor: object) -> object:
+        """
+        Dispatch to ``visitor.visit_goback_statement(self)`` if available.
+
+        Args:
+            visitor: Any visitor object.
+
+        Returns:
+            The return value of the visitor method, or ``None``.
+        """
+        visit = getattr(visitor, "visit_goback_statement", None)
+        if callable(visit):
+            return visit(self)
+        return None
