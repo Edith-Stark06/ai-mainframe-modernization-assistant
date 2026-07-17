@@ -7,9 +7,9 @@ Purpose:
     division-level parsers and assembles the final
     :class:`~app.parser.ast.program.ProgramNode`.
 
-    In this milestone the IDENTIFICATION DIVISION and DATA DIVISION are
-    parsed.  Future tasks will add ENVIRONMENT and PROCEDURE division
-    parsers that are invoked from here.
+    In this milestone the IDENTIFICATION DIVISION, DATA DIVISION, and
+    PROCEDURE DIVISION are parsed.  Future tasks will add the ENVIRONMENT
+    DIVISION parser.
 
 Responsibilities:
     - Accept a ``list[Token]`` and return a
@@ -20,8 +20,7 @@ Responsibilities:
       structurally.
 
 Non-responsibilities:
-    - Procedure Division parsing (future task).
-    - Statement or expression parsing.
+    - Statement or expression parsing (delegated to ProcedureDivisionParser).
     - COPY book expansion.
     - Semantic analysis.
 
@@ -29,12 +28,14 @@ Dependencies:
     - :mod:`app.parser.ast.program`                    — ``ProgramNode``.
     - :mod:`app.parser.ast.identification`             — ``IdentificationDivisionNode``.
     - :mod:`app.parser.ast.data`                       — ``DataDivisionNode``.
+    - :mod:`app.parser.ast.procedure`                  — ``ProcedureDivisionNode``.
     - :mod:`app.parser.lexer.token`                    — ``Token``.
     - :mod:`app.parser.lexer.token_types`              — ``TokenType``.
     - :mod:`app.parser.syntax.token_stream`            — ``TokenStream``.
     - :mod:`app.parser.syntax.parser_state`            — ``ParserState``.
     - :mod:`app.parser.syntax.identification_parser`   — ``IdentificationDivisionParser``.
     - :mod:`app.parser.syntax.data_parser`             — ``DataDivisionParser``.
+    - :mod:`app.parser.syntax.procedure_parser`        — ``ProcedureDivisionParser``.
     - Python standard library only.
 
 Examples:
@@ -64,12 +65,14 @@ from loguru import logger
 
 from app.parser.ast.data import DataDivisionNode
 from app.parser.ast.identification import IdentificationDivisionNode
+from app.parser.ast.procedure import ProcedureDivisionNode
 from app.parser.ast.program import ProgramNode
 from app.parser.lexer.token import Token
 from app.parser.lexer.token_types import TokenType
 from app.parser.syntax.data_parser import DataDivisionParser
 from app.parser.syntax.identification_parser import IdentificationDivisionParser
 from app.parser.syntax.parser_state import ParserState
+from app.parser.syntax.procedure_parser import ProcedureDivisionParser
 from app.parser.syntax.token_stream import TokenStream
 
 __all__ = ["ProgramParser"]
@@ -80,8 +83,9 @@ class ProgramParser:
     Top-level COBOL program parser.
 
     :class:`ProgramParser` coordinates parsing of all four COBOL
-    divisions.  Currently the IDENTIFICATION DIVISION and DATA DIVISION
-    are implemented; the remaining divisions are left to future tasks.
+    divisions.  The IDENTIFICATION DIVISION, DATA DIVISION, and PROCEDURE
+    DIVISION are implemented; the ENVIRONMENT DIVISION is left for a
+    future task.
 
     The class satisfies
     :class:`~app.parser.syntax.parser_interfaces.ParserProtocol`
@@ -103,6 +107,7 @@ class ProgramParser:
         """Initialise the parser and its division sub-parsers."""
         self._identification_parser = IdentificationDivisionParser()
         self._data_parser = DataDivisionParser()
+        self._procedure_parser = ProcedureDivisionParser()
 
     def parse(self, tokens: list[Token]) -> ProgramNode:
         """
@@ -150,6 +155,7 @@ class ProgramParser:
             program ::=
                 [ identification-division ]
                 [ data-division ]
+                [ procedure-division ]
                 EOF
 
         Args:
@@ -163,6 +169,7 @@ class ProgramParser:
 
         identification: IdentificationDivisionNode | None = None
         data: DataDivisionNode | None = None
+        procedure: ProcedureDivisionNode | None = None
 
         # Detect IDENTIFICATION DIVISION
         if self._is_identification_division(state):
@@ -172,6 +179,10 @@ class ProgramParser:
         if self._is_data_division(state):
             data = self._data_parser.parse(state)
 
+        # Detect PROCEDURE DIVISION
+        if self._is_procedure_division(state):
+            procedure = self._procedure_parser.parse(state)
+
         end = stream.current().position
 
         return ProgramNode(
@@ -179,6 +190,7 @@ class ProgramParser:
             end_position=end,
             identification_division=identification,
             data_division=data,
+            procedure_division=procedure,
         )
 
     # ------------------------------------------------------------------
@@ -229,6 +241,31 @@ class ProgramParser:
         if tok.type is not TokenType.KEYWORD:
             return False
         if tok.lexeme.upper() != "DATA":
+            return False
+        next_tok = stream.peek()
+        if next_tok.type is not TokenType.KEYWORD:
+            return False
+        return next_tok.lexeme.upper() == "DIVISION"
+
+    @staticmethod
+    def _is_procedure_division(state: ParserState) -> bool:
+        """
+        Return ``True`` if the stream is positioned on a PROCEDURE DIVISION header.
+
+        Looks at the current token (``PROCEDURE``) and the next token
+        (``DIVISION``) without consuming either.
+
+        Args:
+            state: The active :class:`~app.parser.syntax.parser_state.ParserState`.
+
+        Returns:
+            ``True`` if the next two tokens are ``PROCEDURE DIVISION``.
+        """
+        stream = state.stream
+        tok = stream.current()
+        if tok.type is not TokenType.KEYWORD:
+            return False
+        if tok.lexeme.upper() != "PROCEDURE":
             return False
         next_tok = stream.peek()
         if next_tok.type is not TokenType.KEYWORD:
