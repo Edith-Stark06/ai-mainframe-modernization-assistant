@@ -330,7 +330,12 @@ class TestIdentificationDivisionParserValid:
 
 
 class TestIdentificationDivisionParserMalformed:
-    """Malformed inputs raise ParserError."""
+    """Fatal errors raise ParserError; recoverable errors record diagnostics.
+
+    After TASK-017, clause-level errors (unknown keyword, non-keyword token,
+    missing period in clause body) are recovered via SyntaxDiagnostic.
+    Only division-header errors remain fatal.
+    """
 
     def _parse_expect_error(self, tokens: list[Token]) -> ParserError:
         state = _make_state(tokens)
@@ -355,31 +360,53 @@ class TestIdentificationDivisionParserMalformed:
         self._parse_expect_error(tokens)
 
     def test_missing_period_after_program_id_name(self) -> None:
-        """PROGRAM-ID . PROG <eof> → missing closing period."""
+        """PROGRAM-ID . PROG <eof> → missing closing period → recovered.
+
+        After TASK-017 the parser records a diagnostic and continues
+        rather than raising ParserError.
+        """
         tokens = (
             _ident_header() + [_kw("PROGRAM-ID"), _period(), _id("PROG")] + [_eof()]
         )
-        self._parse_expect_error(tokens)
+        state = _make_state(tokens)
+        parser = IdentificationDivisionParser()
+        # Should not raise; missing period is a recovered diagnostic
+        parser.parse(state)
+        assert state.has_errors
 
-    def test_unknown_clause_raises_parser_error(self) -> None:
-        """An unknown KEYWORD in the clause position raises ParserError."""
+    def test_unknown_clause_recovers_diagnostic(self) -> None:
+        """An unknown KEYWORD in clause position records a diagnostic.
+
+        After TASK-017 the parser records a SyntaxDiagnostic and continues
+        rather than raising ParserError.
+        """
         tokens = (
             _ident_header()
             + _program_id_clause()
             + [_kw("UNKNOWN-CLAUSE"), _period(), _id("VALUE"), _period()]
             + [_eof()]
         )
-        err = self._parse_expect_error(tokens)
-        assert "unknown" in str(err).lower() or "UNKNOWN-CLAUSE" in str(err)
+        state = _make_state(tokens)
+        parser = IdentificationDivisionParser()
+        parser.parse(state)
+        assert state.has_errors
+        diag_messages = " ".join(d.message for d in state.diagnostics)
+        assert "unknown" in diag_messages.lower() or "UNKNOWN-CLAUSE" in diag_messages
 
-    def test_non_keyword_in_clause_position_raises(self) -> None:
-        """A non-KEYWORD token where a clause keyword is expected raises ParserError."""
+    def test_non_keyword_in_clause_position_recovers(self) -> None:
+        """A non-KEYWORD token in clause position records a diagnostic.
+
+        After TASK-017 the parser records a SyntaxDiagnostic and continues.
+        """
         tokens = (
             _ident_header()
             + _program_id_clause()
             + [_id("NOT-A-KEYWORD"), _period(), _eof()]
         )
-        self._parse_expect_error(tokens)
+        state = _make_state(tokens)
+        parser = IdentificationDivisionParser()
+        parser.parse(state)
+        assert state.has_errors
 
     def test_eof_after_header_no_program_id(self) -> None:
         """IDENTIFICATION DIVISION . <eof> → program_id is None (no crash)."""
@@ -389,10 +416,18 @@ class TestIdentificationDivisionParserMalformed:
         node = parser.parse(state)
         assert node.program_id is None
 
-    def test_program_id_missing_name_raises(self) -> None:
-        """PROGRAM-ID . . → no name token → ParserError."""
+    def test_program_id_missing_name_recovers(self) -> None:
+        """PROGRAM-ID . . → no name token → diagnostic recorded.
+
+        After TASK-017 the parser records a SyntaxDiagnostic and continues.
+        program_id will be None since it could not be parsed.
+        """
         tokens = _ident_header() + [_kw("PROGRAM-ID"), _period(), _period(), _eof()]
-        self._parse_expect_error(tokens)
+        state = _make_state(tokens)
+        parser = IdentificationDivisionParser()
+        node = parser.parse(state)
+        assert state.has_errors
+        assert node.program_id is None
 
 
 # ---------------------------------------------------------------------------

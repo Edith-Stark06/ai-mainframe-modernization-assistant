@@ -20,8 +20,12 @@ Responsibilities:
     - Parse the mandatory PROGRAM-ID clause.
     - Parse optional AUTHOR, INSTALLATION, DATE-WRITTEN, DATE-COMPILED,
       and SECURITY clauses.
+    - Recover from malformed clauses using panic-mode synchronisation
+      via :class:`~app.parser.syntax.parser_state.ParserState` instead
+      of aborting at the first error.
     - Raise :class:`~app.parser.syntax.parser_exceptions.ParserError`
-      for malformed input or unknown clauses.
+      only for fatal conditions where recovery is impossible (e.g.
+      the IDENTIFICATION DIVISION header itself is malformed).
     - Return an immutable
       :class:`~app.parser.ast.identification.IdentificationDivisionNode`.
 
@@ -38,6 +42,7 @@ Dependencies:
     - :mod:`app.parser.lexer.token_types`  — ``TokenType``.
     - :mod:`app.parser.syntax.parser_state`   — ``ParserState``.
     - :mod:`app.parser.syntax.parser_exceptions` — ``ParserError``.
+    - :mod:`app.parser.diagnostics.recovery`     — ``RecoveryContext``.
     - Python standard library only.
 
 Examples:
@@ -48,6 +53,7 @@ Examples:
         parser = IdentificationDivisionParser()
         node = parser.parse(state)
         # node is IdentificationDivisionNode
+        # state.diagnostics contains any recovered errors
 
 Author:
     Edith Stark
@@ -69,6 +75,7 @@ from app.parser.ast.clauses import (
     SecurityClauseNode,
 )
 from app.parser.ast.identification import IdentificationDivisionNode
+from app.parser.diagnostics.recovery import RecoveryContext
 from app.parser.lexer.position import Position
 from app.parser.lexer.token import Token
 from app.parser.lexer.token_types import TokenType
@@ -111,6 +118,17 @@ class IdentificationDivisionParser:
     positioned on the ``IDENTIFICATION`` keyword when :meth:`parse` is
     called.
 
+    Recovery behaviour:
+        - If a clause is malformed (e.g. missing period, unknown keyword),
+          the error is recorded as a
+          :class:`~app.parser.diagnostics.recovery.SyntaxDiagnostic` and
+          the stream is synchronised to the next period or division header.
+          Parsing then continues with the next clause.
+        - If the ``IDENTIFICATION DIVISION .`` header itself is missing a
+          required keyword, a :class:`~app.parser.syntax.parser_exceptions.ParserError`
+          is raised immediately (fatal — we cannot continue without the
+          header).
+
     Examples:
         >>> # (see module docstring for full usage)
         >>> parser = IdentificationDivisionParser()
@@ -133,6 +151,17 @@ class IdentificationDivisionParser:
                 | date-compiled-clause
                 | security-clause )*
 
+        Recoverable errors (recorded as diagnostics, parsing continues):
+            - Unknown clause keyword.
+            - Non-keyword token where a clause keyword is expected.
+            - Missing period after PROGRAM-ID name.
+            - Missing period after comment-entry clause value.
+
+        Fatal errors (raise :class:`~app.parser.syntax.parser_exceptions.ParserError`):
+            - ``IDENTIFICATION`` keyword missing.
+            - ``DIVISION`` keyword missing after ``IDENTIFICATION``.
+            - Period missing after ``IDENTIFICATION DIVISION``.
+
         Args:
             state:
                 The active :class:`~app.parser.syntax.parser_state.ParserState`.
@@ -141,11 +170,12 @@ class IdentificationDivisionParser:
         Returns:
             A fully populated, immutable
             :class:`~app.parser.ast.identification.IdentificationDivisionNode`.
+            Clause fields that could not be parsed due to recovered errors
+            will be ``None``.
 
         Raises:
             ParserError:
-                If the header is malformed, a required token is missing,
-                or an unknown clause keyword is encountered.
+                If the division header is fatally malformed.
         """
         stream = state.stream
         start = stream.current().position
@@ -153,7 +183,7 @@ class IdentificationDivisionParser:
         logger.debug("Parsing IDENTIFICATION DIVISION at {}.", start)
 
         # ----------------------------------------------------------------
-        # IDENTIFICATION DIVISION .
+        # IDENTIFICATION DIVISION .  (fatal if header is wrong)
         # ----------------------------------------------------------------
         self._expect_keyword(stream.advance(), "IDENTIFICATION")
         self._expect_keyword(stream.advance(), "DIVISION")
@@ -185,37 +215,64 @@ class IdentificationDivisionParser:
             if tok.type is TokenType.EOF:
                 break
 
+            # Silently consume stray PERIOD tokens at clause level.
+            # These appear after panic-mode recovery synchronises to a
+            # paragraph boundary (leaving the period in the stream for
+            # the caller) or as trailing terminators from recovered clauses.
+            if tok.type is TokenType.PERIOD:
+                stream.advance()
+                continue
+
             # Only KEYWORD tokens can open a clause
             if tok.type is not TokenType.KEYWORD:
-                raise ParserError(
-                    f"expected a clause keyword, got {tok.lexeme!r}",
-                    line=tok.position.line,
-                    column=tok.position.column,
-                    offset=tok.position.offset,
+                logger.debug(
+                    "IdentificationDivisionParser: unexpected token {!r}; recovering.",
+                    tok.lexeme,
                 )
+                state.record_and_synchronise(
+                    message=(f"expected a clause keyword, got {tok.lexeme!r}"),
+                    error_token=tok,
+                    context=RecoveryContext.IDENTIFICATION_DIVISION,
+                )
+                continue
 
             keyword = tok.lexeme.upper()
 
             if keyword not in _CLAUSE_KEYWORDS:
-                raise ParserError(
-                    f"unknown IDENTIFICATION DIVISION clause: {tok.lexeme!r}",
-                    line=tok.position.line,
-                    column=tok.position.column,
-                    offset=tok.position.offset,
+                logger.debug(
+                    "IdentificationDivisionParser: unknown clause {!r}; recovering.",
+                    keyword,
                 )
+                state.record_and_synchronise(
+                    message=(f"unknown IDENTIFICATION DIVISION clause: {tok.lexeme!r}"),
+                    error_token=tok,
+                    context=RecoveryContext.IDENTIFICATION_DIVISION,
+                )
+                continue
 
-            if keyword == "PROGRAM-ID":
-                program_id = self._parse_program_id(state)
-            elif keyword == "AUTHOR":
-                author = self._parse_author(state)
-            elif keyword == "INSTALLATION":
-                installation = self._parse_installation(state)
-            elif keyword == "DATE-WRITTEN":
-                date_written = self._parse_date_written(state)
-            elif keyword == "DATE-COMPILED":
-                date_compiled = self._parse_date_compiled(state)
-            elif keyword == "SECURITY":
-                security = self._parse_security(state)
+            try:
+                if keyword == "PROGRAM-ID":
+                    program_id = self._parse_program_id(state)
+                elif keyword == "AUTHOR":
+                    author = self._parse_author(state)
+                elif keyword == "INSTALLATION":
+                    installation = self._parse_installation(state)
+                elif keyword == "DATE-WRITTEN":
+                    date_written = self._parse_date_written(state)
+                elif keyword == "DATE-COMPILED":
+                    date_compiled = self._parse_date_compiled(state)
+                elif keyword == "SECURITY":
+                    security = self._parse_security(state)
+            except ParserError as exc:
+                logger.debug(
+                    "IdentificationDivisionParser: recovering from error: {}",
+                    exc.message,
+                )
+                state.record_and_synchronise(
+                    message=exc.message,
+                    error_token=stream.current(),
+                    context=RecoveryContext.IDENTIFICATION_DIVISION,
+                )
 
         end = stream.current().position
 
@@ -372,6 +429,9 @@ class IdentificationDivisionParser:
     def _expect_keyword(tok: Token, keyword: str) -> None:
         """
         Assert that *tok* is a KEYWORD token with lexeme *keyword*.
+
+        This is used only for the fatal header check; clause-level
+        mismatches go through the recovery path instead.
 
         Args:
             tok:     The token to inspect.

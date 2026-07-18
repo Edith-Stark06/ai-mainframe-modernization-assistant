@@ -29,12 +29,15 @@ Responsibilities:
       - ``STOP RUN .``
       - ``GOBACK .``
 
+    - Recover from missing periods, unsupported statements, and malformed
+      statement syntax using panic-mode synchronisation via
+      :class:`~app.parser.syntax.parser_state.ParserState`.
     - Construct and return a
       :class:`~app.parser.ast.procedure.ProcedureDivisionNode` populated
       with :class:`~app.parser.ast.paragraphs.ParagraphNode` and their
       :class:`~app.parser.ast.statements.StatementNode` children.
     - Raise :class:`~app.parser.syntax.parser_exceptions.ParserError`
-      for malformed input.
+      only for fatal conditions (e.g. malformed division header).
 
 Non-responsibilities:
     - IF, EVALUATE, PERFORM, GO TO, CALL, COMPUTE, ADD, SUBTRACT,
@@ -54,6 +57,7 @@ Dependencies:
     - :mod:`app.parser.lexer.token_types` — ``TokenType``.
     - :mod:`app.parser.syntax.parser_state`      — ``ParserState``.
     - :mod:`app.parser.syntax.parser_exceptions` — ``ParserError``.
+    - :mod:`app.parser.diagnostics.recovery`     — ``RecoveryContext``.
     - Python standard library only.
 
 Examples:
@@ -64,6 +68,7 @@ Examples:
         parser = ProcedureDivisionParser()
         node = parser.parse(state)
         # node is ProcedureDivisionNode
+        # state.diagnostics contains any recovered errors
 
 Author:
     Edith Stark
@@ -85,6 +90,7 @@ from app.parser.ast.statements import (
     StatementNode,
     StopRunStatementNode,
 )
+from app.parser.diagnostics.recovery import RecoveryContext
 from app.parser.lexer.position import Position
 from app.parser.lexer.token import Token
 from app.parser.lexer.token_types import TokenType
@@ -133,6 +139,17 @@ class ProcedureDivisionParser:
     :class:`~app.parser.ast.procedure.ProcedureDivisionNode` containing
     the parsed paragraphs and their statements.
 
+    Recovery behaviour:
+        - Missing period after paragraph label: recorded as diagnostic,
+          stream synchronised to next period or paragraph boundary.
+        - Unsupported statement keyword: recorded as diagnostic, stream
+          synchronised to next period.
+        - Malformed statement (e.g. missing operand): recorded as
+          diagnostic, stream synchronised to next period.
+        - The ``PROCEDURE DIVISION .`` header still raises
+          :class:`~app.parser.syntax.parser_exceptions.ParserError` on
+          fatal mismatches.
+
     Examples:
         >>> parser = ProcedureDivisionParser()
         >>> isinstance(parser, ProcedureDivisionParser)
@@ -159,6 +176,16 @@ class ProcedureDivisionParser:
               | stop-run-statement
               | goback-statement
 
+        Recoverable errors (recorded as diagnostics, parsing continues):
+            - Missing period after paragraph label.
+            - Unsupported statement keyword.
+            - Malformed statement syntax.
+
+        Fatal errors (raise :class:`~app.parser.syntax.parser_exceptions.ParserError`):
+            - ``PROCEDURE`` keyword missing.
+            - ``DIVISION`` keyword missing after ``PROCEDURE``.
+            - Period missing after ``PROCEDURE DIVISION``.
+
         Args:
             state:
                 The active :class:`~app.parser.syntax.parser_state.ParserState`.
@@ -170,8 +197,7 @@ class ProcedureDivisionParser:
 
         Raises:
             ParserError:
-                If the header is malformed, a required token is missing,
-                or an unsupported construct cannot be skipped gracefully.
+                If the division header is fatally malformed.
         """
         stream = state.stream
         start: Position = stream.current().position
@@ -240,13 +266,24 @@ class ProcedureDivisionParser:
 
             # A paragraph label is an IDENTIFIER or KEYWORD that is NOT a
             # statement-level lexeme AND NOT a division-boundary keyword.
-            # Attempt to parse it as a paragraph; _parse_paragraph raises
-            # ParserError if the label is not followed by a period.
+            # Attempt to parse it as a paragraph; recover on error.
             if tok.type in (TokenType.IDENTIFIER, TokenType.KEYWORD):
                 upper = tok.lexeme.upper()
                 if upper not in _STATEMENT_LEXEMES:
-                    para = self._parse_paragraph(state)
-                    paragraphs.append(para)
+                    try:
+                        para = self._parse_paragraph(state)
+                        paragraphs.append(para)
+                    except ParserError as exc:
+                        logger.debug(
+                            "ProcedureDivisionParser: recovering from paragraph "
+                            "error: {}",
+                            exc.message,
+                        )
+                        state.record_and_synchronise(
+                            message=exc.message,
+                            error_token=stream.current(),
+                            context=RecoveryContext.PROCEDURE_DIVISION,
+                        )
                     continue
 
             # Log and break on anything unexpected at paragraph level
@@ -334,17 +371,16 @@ class ProcedureDivisionParser:
           the keyword is not a statement keyword).
         - A division boundary keyword is detected.
 
+        Recoverable errors within individual statements are caught,
+        recorded as diagnostics, and the stream is synchronised to the
+        next period before attempting the next statement.
+
         Args:
             state: The active parser state.
 
         Returns:
             Ordered list of :class:`~app.parser.ast.statements.StatementNode`
             instances.
-
-        Raises:
-            ParserError:
-                If a recognised statement keyword is followed by malformed
-                syntax.
         """
         stream = state.stream
         statements: list[StatementNode] = []
@@ -380,8 +416,20 @@ class ProcedureDivisionParser:
                     break
 
                 if upper in _STATEMENT_LEXEMES:
-                    stmt = self._parse_statement(state)
-                    statements.append(stmt)
+                    try:
+                        stmt = self._parse_statement(state)
+                        statements.append(stmt)
+                    except ParserError as exc:
+                        logger.debug(
+                            "ProcedureDivisionParser: recovering from statement "
+                            "error: {}",
+                            exc.message,
+                        )
+                        state.record_and_synchronise(
+                            message=exc.message,
+                            error_token=stream.current(),
+                            context=RecoveryContext.STATEMENT,
+                        )
                     continue
 
             # Anything else at statement level — unexpected; stop
