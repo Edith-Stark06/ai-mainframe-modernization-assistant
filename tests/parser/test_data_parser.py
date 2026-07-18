@@ -549,7 +549,12 @@ class TestConditionNameDeclaration:
 
 
 class TestDataDivisionParserErrors:
-    """Malformed inputs raise ParserError."""
+    """Fatal errors raise ParserError; recoverable errors record diagnostics.
+
+    After TASK-017, item-level errors (invalid level, missing data-name,
+    missing period at item end) are recovered via SyntaxDiagnostic.
+    Division/section header errors remain fatal.
+    """
 
     def _parse_expect_error(self, tokens: list[Token]) -> ParserError:
         state = _make_state(tokens)
@@ -569,14 +574,23 @@ class TestDataDivisionParserErrors:
         self._parse_expect_error(tokens)
 
     def test_missing_period_after_data_item(self) -> None:
-        """01 CUSTOMER-REC <eof> → missing period after item."""
+        """01 CUSTOMER-REC <eof> → missing period → diagnostic recorded.
+
+        After TASK-017 the parser records a SyntaxDiagnostic and continues.
+        """
         tokens = (
             _data_header() + _ws_header() + [_num("01"), _id("CUSTOMER-REC"), _eof()]
         )
-        self._parse_expect_error(tokens)
+        state = _make_state(tokens)
+        parser = DataDivisionParser()
+        parser.parse(state)
+        assert state.has_errors
 
     def test_missing_period_after_elementary_item(self) -> None:
-        """05 CUSTOMER-ID PIC 9 <eof> → missing period."""
+        """05 CUSTOMER-ID PIC 9 <eof> → missing period → diagnostic recorded.
+
+        After TASK-017 the parser records a SyntaxDiagnostic and continues.
+        """
         tokens = (
             _data_header()
             + _ws_header()
@@ -584,18 +598,28 @@ class TestDataDivisionParserErrors:
             + _pic_clause("9")
             + [_eof()]
         )
-        self._parse_expect_error(tokens)
+        state = _make_state(tokens)
+        parser = DataDivisionParser()
+        parser.parse(state)
+        assert state.has_errors
 
     def test_invalid_level_number(self) -> None:
-        """Level 99 is not a valid COBOL level number."""
+        """Level 99 is not a valid COBOL level number → diagnostic recorded.
+
+        After TASK-017 the parser records a SyntaxDiagnostic and continues.
+        """
         tokens = (
             _data_header()
             + _ws_header()
             + [_num("99"), _id("INVALID"), _period()]
             + [_eof()]
         )
-        err = self._parse_expect_error(tokens)
-        assert "99" in str(err) or "invalid" in str(err).lower()
+        state = _make_state(tokens)
+        parser = DataDivisionParser()
+        parser.parse(state)
+        assert state.has_errors
+        diag_messages = " ".join(d.message for d in state.diagnostics)
+        assert "99" in diag_messages or "invalid" in diag_messages.lower()
 
     def test_missing_division_keyword(self) -> None:
         """DATA <period> → missing DIVISION keyword."""
@@ -608,9 +632,15 @@ class TestDataDivisionParserErrors:
         self._parse_expect_error(tokens)
 
     def test_missing_data_name_after_level(self) -> None:
-        """01 . → missing data-name after level number."""
+        """01 . → missing data-name → diagnostic recorded.
+
+        After TASK-017 the parser records a SyntaxDiagnostic and continues.
+        """
         tokens = _data_header() + _ws_header() + [_num("01"), _period()] + [_eof()]
-        self._parse_expect_error(tokens)
+        state = _make_state(tokens)
+        parser = DataDivisionParser()
+        parser.parse(state)
+        assert state.has_errors
 
 
 # ---------------------------------------------------------------------------

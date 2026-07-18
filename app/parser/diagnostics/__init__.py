@@ -2,22 +2,26 @@
 Diagnostics Sub-package.
 
 Purpose:
-    Future home of the compiler diagnostic collection and reporting
-    layer.  All parser components emit structured
-    :class:`Diagnostic` records rather than raising exceptions for
-    recoverable errors, enabling the parser to continue past the
-    first error and deliver a complete error report.
+    Compiler diagnostic collection and reporting layer for the COBOL
+    recursive-descent parser.  All parser components emit structured
+    :class:`~app.parser.diagnostics.recovery.SyntaxDiagnostic` records
+    rather than raising exceptions for recoverable errors, enabling the
+    parser to continue past the first error and deliver a complete error
+    report in a single parse pass.
 
 Responsibilities:
-    - Define the ``Diagnostic`` model carrying severity, code,
-      message, and source :class:`~app.parser.lexer.Position`.
-    - Provide a ``DiagnosticSink`` that accumulates diagnostics
-      during a parse pass.
-    - Format diagnostics for IDE Language Server Protocol (LSP)
-      responses and JSON API payloads.
+    - Re-export the public API of :mod:`app.parser.diagnostics.recovery`
+      so that callers can import from this package directly.
 
-Dependencies (future):
-    - :mod:`app.parser.lexer` — ``Position`` value type.
+Exported Names:
+    - :class:`~app.parser.diagnostics.recovery.SyntaxDiagnostic`
+    - :class:`~app.parser.diagnostics.recovery.RecoveryContext`
+    - :class:`~app.parser.diagnostics.recovery.SynchronisationPoint`
+    - :class:`~app.parser.diagnostics.recovery.RecoveryManager`
+    - :func:`~app.parser.diagnostics.recovery.synchronise`
+
+Dependencies:
+    - :mod:`app.parser.diagnostics.recovery` — implementation module.
 
 Author:
     Edith Stark
@@ -25,3 +29,19 @@ Author:
 Project:
     AI-Powered Mainframe Modernization Assistant
 """
+
+from app.parser.diagnostics.recovery import (
+    RecoveryContext,
+    RecoveryManager,
+    SynchronisationPoint,
+    SyntaxDiagnostic,
+    synchronise,
+)
+
+__all__ = [
+    "RecoveryContext",
+    "RecoveryManager",
+    "SynchronisationPoint",
+    "SyntaxDiagnostic",
+    "synchronise",
+]
