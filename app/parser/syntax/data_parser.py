@@ -26,12 +26,15 @@ Responsibilities:
     - Parse top-level data-item declarations (level 01, 05, 77, 88).
     - Parse PIC clauses for elementary items.
     - Parse simple VALUE clauses for 88-level condition-name items.
+    - Recover from invalid level numbers, missing periods, and malformed
+      data items using panic-mode synchronisation via
+      :class:`~app.parser.syntax.parser_state.ParserState`.
     - Construct and return a
       :class:`~app.parser.ast.data.DataDivisionNode` populated with
       :class:`~app.parser.ast.working_storage.WorkingStorageSectionNode`
       and its :class:`~app.parser.ast.data_items.DataItemNode` children.
     - Raise :class:`~app.parser.syntax.parser_exceptions.ParserError`
-      for malformed input.
+      only for fatal conditions (e.g. malformed division header).
 
 Non-responsibilities:
     - FILE SECTION, LINKAGE SECTION, LOCAL-STORAGE, SCREEN SECTION,
@@ -49,6 +52,7 @@ Dependencies:
     - :mod:`app.parser.lexer.token_types` — ``TokenType``.
     - :mod:`app.parser.syntax.parser_state`      — ``ParserState``.
     - :mod:`app.parser.syntax.parser_exceptions` — ``ParserError``.
+    - :mod:`app.parser.diagnostics.recovery`     — ``RecoveryContext``.
     - Python standard library only.
 
 Examples:
@@ -59,6 +63,7 @@ Examples:
         parser = DataDivisionParser()
         node = parser.parse(state)
         # node is DataDivisionNode
+        # state.diagnostics contains any recovered errors
 
 Author:
     Edith Stark
@@ -79,6 +84,7 @@ from app.parser.ast.data_items import (
     GroupItemNode,
 )
 from app.parser.ast.working_storage import WorkingStorageSectionNode
+from app.parser.diagnostics.recovery import RecoveryContext
 from app.parser.lexer.position import Position
 from app.parser.lexer.token import Token
 from app.parser.lexer.token_types import TokenType
@@ -185,6 +191,16 @@ class DataDivisionParser:
     :class:`~app.parser.ast.data.DataDivisionNode` containing the parsed
     sections and items.
 
+    Recovery behaviour:
+        - Invalid level numbers, missing data-names, missing periods, and
+          unsupported clause tokens are recorded as diagnostics and the
+          stream is synchronised to the next period or section/division
+          boundary before resuming.
+        - The division header (``DATA DIVISION .``) and section header
+          (``WORKING-STORAGE SECTION .``) still raise
+          :class:`~app.parser.syntax.parser_exceptions.ParserError` on
+          fatal mismatches.
+
     Examples:
         >>> # (see module docstring for full usage)
         >>> parser = DataDivisionParser()
@@ -212,6 +228,17 @@ class DataDivisionParser:
                 [ VALUE literal ]
                 PERIOD
 
+        Recoverable errors (recorded as diagnostics, parsing continues):
+            - Invalid level number.
+            - Missing data-name.
+            - Missing period at end of data item.
+            - Unexpected token at division or section level.
+
+        Fatal errors (raise :class:`~app.parser.syntax.parser_exceptions.ParserError`):
+            - ``DATA`` keyword missing.
+            - ``DIVISION`` keyword missing after ``DATA``.
+            - Period missing after ``DATA DIVISION``.
+
         Args:
             state:
                 The active :class:`~app.parser.syntax.parser_state.ParserState`.
@@ -223,9 +250,7 @@ class DataDivisionParser:
 
         Raises:
             ParserError:
-                If the header is malformed, a required token is missing,
-                or an unsupported construct is detected at a point where
-                it cannot be silently skipped.
+                If the division header is fatally malformed.
         """
         stream = state.stream
         start: Position = stream.current().position
@@ -278,15 +303,18 @@ class DataDivisionParser:
             if tok.type is TokenType.EOF:
                 break
 
-            # Any other token at the division level is unexpected but we
-            # consume it to avoid an infinite loop and record an error.
-            logger.warning(
+            # Any other token at the division level is unexpected —
+            # record a diagnostic and synchronise.
+            logger.debug(
                 "DataDivisionParser: unexpected token {!r} at division level; "
-                "skipping.",
+                "recovering.",
                 tok.lexeme,
             )
-            state.record_error()
-            stream.advance()
+            state.record_and_synchronise(
+                message=(f"unexpected token {tok.lexeme!r} at DATA DIVISION level"),
+                error_token=tok,
+                context=RecoveryContext.DATA_DIVISION,
+            )
 
         end: Position = stream.current().position
 
@@ -320,7 +348,7 @@ class DataDivisionParser:
             An immutable :class:`~app.parser.ast.working_storage.WorkingStorageSectionNode`.
 
         Raises:
-            ParserError: If the section header is malformed.
+            ParserError: If the section header is fatally malformed.
         """
         stream = state.stream
         start: Position = stream.current().position
@@ -351,7 +379,8 @@ class DataDivisionParser:
         Parse a sequence of data-item declarations.
 
         Continues until a non-numeric / non-data-item token is encountered,
-        signalling the end of the current section.
+        signalling the end of the current section.  Malformed individual
+        items are recovered and parsing resumes with the next level number.
 
         Args:
             state: The active parser state.
@@ -359,9 +388,6 @@ class DataDivisionParser:
         Returns:
             Ordered list of :class:`~app.parser.ast.data_items.DataItemNode`
             instances.
-
-        Raises:
-            ParserError: If a malformed data item is detected.
         """
         stream = state.stream
         items: list[DataItemNode] = []
@@ -384,10 +410,28 @@ class DataDivisionParser:
             if tok.type is TokenType.EOF:
                 break
 
+            # Silently consume stray PERIOD tokens that result from
+            # panic-mode recovery synchronising to a paragraph boundary
+            # (which leaves the period in the stream).
+            if tok.type is TokenType.PERIOD:
+                stream.advance()
+                continue
+
             # A NUMBER token is the level number for the next data item
             if tok.type is TokenType.NUMBER:
-                item = self._parse_data_item(state)
-                items.append(item)
+                try:
+                    item = self._parse_data_item(state)
+                    items.append(item)
+                except ParserError as exc:
+                    logger.debug(
+                        "DataDivisionParser: recovering from data-item error: {}",
+                        exc.message,
+                    )
+                    state.record_and_synchronise(
+                        message=exc.message,
+                        error_token=stream.current(),
+                        context=RecoveryContext.WORKING_STORAGE_SECTION,
+                    )
                 continue
 
             # Anything else — unexpected; stop the section
@@ -670,7 +714,7 @@ class DataDivisionParser:
         Consume and return the picture string tokens.
 
         COBOL picture strings may consist of multiple adjacent tokens
-        (e.g. ``X(30)`` is scanned as ``X``, ``(``, ``30``, ``)``).
+        (e.g. ``X(30)`` is scanned as ``X``, ``(``, ``30``, ``)``)
         This method collects them into a single string until it
         encounters a terminal token (period, ``VALUE``, ``OCCURS``, or
         another recognised clause keyword).
@@ -688,13 +732,26 @@ class DataDivisionParser:
             {"VALUE", "OCCURS", "REDEFINES", "JUSTIFIED", "SYNCHRONIZED"}
         )
 
+        depth: int = 0  # parenthesis nesting depth
+
         while not stream.eof():
             tok = stream.current()
             if tok.type is TokenType.PERIOD:
                 break
             if tok.type is TokenType.KEYWORD and tok.lexeme.upper() in _STOP_KEYWORDS:
                 break
-            # Accumulate picture characters — including (, )
+            # A NUMBER token at nesting depth 0 signals the start of the
+            # next data item's level number — stop the picture string here.
+            # Inside parentheses (depth > 0) numbers are valid (e.g. 9(5)).
+            if tok.type is TokenType.NUMBER and depth == 0:
+                break
+            # Track parenthesis depth so we know when a number is a
+            # picture repeat count vs. a data-item level number.
+            if tok.type is TokenType.LPAREN:
+                depth += 1
+            elif tok.type is TokenType.RPAREN:
+                depth = max(0, depth - 1)
+            # Accumulate picture characters — including (, ), digits inside parens
             parts.append(tok.lexeme)
             stream.advance()
 

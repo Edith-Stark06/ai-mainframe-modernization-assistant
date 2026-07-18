@@ -593,7 +593,11 @@ class TestMultipleParagraphs:
 
 
 class TestProcedureDivisionParserErrors:
-    """Malformed inputs raise ParserError."""
+    """Fatal errors raise ParserError; recoverable errors record diagnostics.
+
+    After TASK-017, statement-level and paragraph-level errors are recovered
+    via SyntaxDiagnostic. Division header errors remain fatal.
+    """
 
     def _parse_expect_error(self, tokens: list[Token]) -> ParserError:
         state = _make_state(tokens)
@@ -611,56 +615,105 @@ class TestProcedureDivisionParserErrors:
         self._parse_expect_error(tokens)
 
     def test_missing_period_after_paragraph_label(self) -> None:
+        """Missing period after paragraph label → diagnostic recorded.
+
+        After TASK-017 the parser records a SyntaxDiagnostic and continues.
+        """
         tokens = _proc_header() + [_id("MAIN-PARA"), _id("SOMETHING"), _eof()]
-        self._parse_expect_error(tokens)
+        state = _make_state(tokens)
+        parser = ProcedureDivisionParser()
+        parser.parse(state)
+        assert state.has_errors
 
     def test_stop_without_run(self) -> None:
+        """STOP <non-RUN> → diagnostic recorded, parsing continues.
+
+        After TASK-017 the parser records a SyntaxDiagnostic and continues.
+        """
         tokens = (
             _proc_header()
             + [_id("MAIN-PARA"), _period()]
             + [_kw("STOP"), _id("SOMETHING"), _period()]
             + [_eof()]
         )
-        self._parse_expect_error(tokens)
+        state = _make_state(tokens)
+        parser = ProcedureDivisionParser()
+        parser.parse(state)
+        assert state.has_errors
 
     def test_move_missing_to(self) -> None:
+        """MOVE without TO → diagnostic recorded, parsing continues.
+
+        After TASK-017 the parser records a SyntaxDiagnostic and continues.
+        """
         tokens = (
             _proc_header()
             + [_id("MAIN-PARA"), _period()]
             + [_kw("MOVE"), _num("1"), _id("WS-COUNT"), _period()]
             + [_eof()]
         )
-        self._parse_expect_error(tokens)
+        state = _make_state(tokens)
+        parser = ProcedureDivisionParser()
+        parser.parse(state)
+        assert state.has_errors
 
     def test_display_missing_period(self) -> None:
+        """DISPLAY without trailing period → diagnostic recorded.
+
+        After TASK-017 the parser records a SyntaxDiagnostic and continues.
+        """
         tokens = (
             _proc_header()
             + [_id("MAIN-PARA"), _period()]
             + [_kw("DISPLAY"), _str_tok('"X"'), _eof()]
         )
-        self._parse_expect_error(tokens)
+        state = _make_state(tokens)
+        parser = ProcedureDivisionParser()
+        parser.parse(state)
+        assert state.has_errors
 
     def test_stop_run_missing_period(self) -> None:
+        """STOP RUN without trailing period → diagnostic recorded.
+
+        After TASK-017 the parser records a SyntaxDiagnostic and continues.
+        """
         tokens = (
             _proc_header()
             + [_id("MAIN-PARA"), _period()]
             + [_kw("STOP"), _kw("RUN"), _eof()]
         )
-        self._parse_expect_error(tokens)
+        state = _make_state(tokens)
+        parser = ProcedureDivisionParser()
+        parser.parse(state)
+        assert state.has_errors
 
     def test_goback_missing_period(self) -> None:
+        """GOBACK without trailing period → diagnostic recorded.
+
+        After TASK-017 the parser records a SyntaxDiagnostic and continues.
+        """
         tokens = (
             _proc_header() + [_id("MAIN-PARA"), _period()] + [_id("GOBACK"), _eof()]
         )
-        self._parse_expect_error(tokens)
+        state = _make_state(tokens)
+        parser = ProcedureDivisionParser()
+        parser.parse(state)
+        assert state.has_errors
 
     def test_move_missing_period(self) -> None:
+        """MOVE ... TO ... without trailing period → diagnostic recorded.
+
+        After TASK-017 the parser records a SyntaxDiagnostic and continues.
+        """
         tokens = (
             _proc_header()
             + [_id("MAIN-PARA"), _period()]
             + [_kw("MOVE"), _num("1"), _id("TO"), _id("WS-COUNT"), _eof()]
         )
-        self._parse_expect_error(tokens)
+        state = _make_state(tokens)
+        parser = ProcedureDivisionParser()
+        parser.parse(state)
+        assert state.has_errors
 
 
 # ---------------------------------------------------------------------------
