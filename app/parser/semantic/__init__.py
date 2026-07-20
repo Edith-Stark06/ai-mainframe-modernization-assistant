@@ -13,6 +13,11 @@ Purpose:
     :class:`~app.parser.semantic.context.SemanticContext` for consumption
     by downstream stages (IR generation, RAG, modernisation).
 
+    The symbol-collection pass is implemented by
+    :class:`~app.parser.semantic.symbol_collector.SymbolCollectorVisitor`,
+    a public, reusable visitor that can be composed into multi-pass
+    pipelines or used independently.
+
 Responsibilities:
     - Register program, variable, and paragraph symbols.
     - Detect duplicate variable and paragraph declarations.
@@ -40,6 +45,7 @@ Public API:
     - :class:`~app.parser.semantic.diagnostics.SemanticSeverity`   — severity enumeration.
     - :class:`~app.parser.semantic.visitors.SemanticVisitor`    — extended visitor base.
     - :func:`~app.parser.semantic.visitors.traverse_program`    — traversal driver.
+    - :class:`~app.parser.semantic.symbol_collector.SymbolCollectorVisitor` — symbol collection pass.
 
 Dependencies:
     - :mod:`app.parser.ast`         — AST input.
@@ -56,6 +62,7 @@ Project:
 from app.parser.semantic.analyzer import SemanticAnalyzer
 from app.parser.semantic.context import SemanticContext, SymbolTable
 from app.parser.semantic.diagnostics import SemanticDiagnostic, SemanticSeverity
+from app.parser.semantic.symbol_collector import SymbolCollectorVisitor
 from app.parser.semantic.symbols import (
     ParagraphSymbol,
     ProgramSymbol,
@@ -74,6 +81,7 @@ __all__ = [
     "SemanticSeverity",
     "SemanticVisitor",
     "Symbol",
+    "SymbolCollectorVisitor",
     "SymbolKind",
     "SymbolTable",
     "VariableSymbol",
