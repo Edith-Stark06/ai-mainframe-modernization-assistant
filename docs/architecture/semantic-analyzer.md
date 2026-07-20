@@ -8,7 +8,8 @@ typed symbol table, and validates structural constraints that cannot be
 expressed by the grammar alone.
 
 This document describes the design, responsibilities, data structures, and
-extension points established by **TASK-018**.
+extension points established by **TASK-018** (foundation) and extended by
+**TASK-019** (symbol-collection visitor).
 
 ---
 
@@ -43,12 +44,13 @@ consumed by all downstream stages.
 
 ```
 app/parser/semantic/
-├── __init__.py       ← Public API surface
-├── symbols.py        ← Symbol hierarchy (SymbolKind, Symbol, subclasses)
-├── diagnostics.py    ← SemanticDiagnostic, SemanticSeverity
-├── context.py        ← SymbolTable, SemanticContext
-├── visitors.py       ← SemanticVisitor, traverse_program
-└── analyzer.py       ← SemanticAnalyzer (entry point)
+├── __init__.py          ← Public API surface
+├── symbols.py           ← Symbol hierarchy (SymbolKind, Symbol, subclasses)
+├── diagnostics.py       ← SemanticDiagnostic, SemanticSeverity
+├── context.py           ← SymbolTable, SemanticContext
+├── visitors.py          ← SemanticVisitor, traverse_program
+├── symbol_collector.py  ← SymbolCollectorVisitor (TASK-019 — symbol-collection pass)
+└── analyzer.py          ← SemanticAnalyzer (entry point)
 ```
 
 ---
@@ -191,6 +193,75 @@ ProgramNode
 
 ---
 
+## Symbol Collection Pass (TASK-019)
+
+### `SymbolCollectorVisitor`
+
+Introduced in TASK-019, `SymbolCollectorVisitor` is the **public, reusable**
+visitor responsible for populating the `SymbolTable`.  It separates the
+symbol-collection *concern* from the orchestration *concern* owned by
+`SemanticAnalyzer`.
+
+**Module**: `app.parser.semantic.symbol_collector`
+
+**Design Goals**
+
+- Modular: the collector has a single, focused responsibility.
+- Composable: it can be used inside a multi-pass pipeline or standalone.
+- Fault-tolerant: duplicate detection never aborts traversal.
+
+**Visited Nodes and Registered Symbols**
+
+| AST Node                     | Symbol Registered          | Diagnostic on Duplicate |
+|------------------------------|---------------------------|-------------------------|
+| `IdentificationDivisionNode` | `ProgramSymbol`           | *(no duplicate expected)*|
+| `ElementaryItemNode`         | `VariableSymbol`          | `SEM001`                |
+| `GroupItemNode`              | `VariableSymbol` (no pic) | `SEM001`                |
+| `ConditionNameNode`          | `VariableSymbol` (lvl 88) | `SEM001`                |
+| `ParagraphNode`              | `ParagraphSymbol`         | `SEM002`                |
+
+**Standalone Usage**
+
+```python
+from app.parser.semantic.context import SymbolTable
+from app.parser.semantic.symbol_collector import SymbolCollectorVisitor
+from app.parser.semantic.visitors import traverse_program
+
+table = SymbolTable()
+diagnostics = []
+collector = SymbolCollectorVisitor(table=table, diagnostics=diagnostics)
+traverse_program(program_node, collector)
+
+table.all_symbols()   # all registered symbols
+diagnostics           # any SEM001 / SEM002 errors
+```
+
+### Two-Layer Architecture
+
+```
+SemanticAnalyzer.analyse(program)
+    │
+    ├─ SymbolTable  (fresh per call)
+    ├─ list[SemanticDiagnostic]  (fresh per call)
+    │
+    └─ SymbolCollectorVisitor ─► traverse_program
+           │
+           ├─ visit_identification_division → ProgramSymbol
+           ├─ visit_elementary_item         → VariableSymbol
+           ├─ visit_group_item              → VariableSymbol
+           ├─ visit_condition_name          → VariableSymbol (level 88)
+           └─ visit_paragraph               → ParagraphSymbol
+
+    ◄─ SemanticContext(symbol_table, diagnostics)
+```
+
+> [!IMPORTANT]
+> `SymbolCollectorVisitor` is now the **canonical symbol-collection
+> implementation**.  `SemanticAnalyzer` delegates entirely to it, making
+> the analyser a thin orchestrator.
+
+---
+
 ## `SemanticAnalyzer`
 
 ### Entry Point
@@ -208,26 +279,26 @@ produces an independent `SemanticContext` backed by a fresh
 
 ### Internal Design
 
-`SemanticAnalyzer` creates an internal `_SymbolRegistrationVisitor`
-that holds references to the mutable `SymbolTable` and diagnostics list.
-`traverse_program` drives the traversal; the visitor populates both
+`SemanticAnalyzer` creates a `SymbolCollectorVisitor` that holds references
+to the mutable `SymbolTable` and diagnostics list.
+`traverse_program` drives the traversal; the collector populates both
 structures via its `visit_*` overrides.
 
 ```
 analyse(program)
     │
-    ├─ SymbolTable  ─────────────────────────────────────────────┐
-    ├─ list[SemanticDiagnostic]  ────────────────────────────────┤
+    ├─ SymbolTable  ─────────────────────────────────────┐
+    ├─ list[SemanticDiagnostic]  ───────────────────────────┤
     │                                                             │
-    └─ _SymbolRegistrationVisitor ──► traverse_program           │
+    └─ SymbolCollectorVisitor ─► traverse_program                  │
            │                                                      │
-           ├─ visit_identification_division → ProgramSymbol      │
-           ├─ visit_elementary_item  → VariableSymbol            │
-           ├─ visit_group_item       → VariableSymbol            │
-           ├─ visit_condition_name   → VariableSymbol (level 88) │
-           └─ visit_paragraph        → ParagraphSymbol           │
-                                                                  │
-    ◄── SemanticContext(symbol_table, diagnostics) ───────────────┘
+           ├─ visit_identification_division → ProgramSymbol       │
+           ├─ visit_elementary_item  → VariableSymbol             │
+           ├─ visit_group_item       → VariableSymbol             │
+           ├─ visit_condition_name   → VariableSymbol (level 88)  │
+           └─ visit_paragraph        → ParagraphSymbol             │
+                                                                   │
+    ◄── SemanticContext(symbol_table, diagnostics) ─────────────┘
 ```
 
 ---
@@ -268,7 +339,7 @@ The following are explicitly **out of scope** for TASK-018:
 | `PerformTargetValidator`    | Validate PERFORM names against declared paragraphs    |
 | `DataReferenceValidator`    | Validate MOVE/IF operands against declared variables  |
 | `UnreferencedSymbolReporter`| Emit WARNING for symbols never referenced             |
-| `SectionSymbol`             | Track SECTION declarations (TASK-019+)                |
+| `SectionSymbol`             | Track SECTION declarations                            |
 | `CopyBookResolver`          | Merge symbols from included COPY books                |
 
 Add new rules by subclassing `SemanticVisitor` and registering the visitor
@@ -278,8 +349,12 @@ in `SemanticAnalyzer.analyse()` — no AST classes need modification.
 
 ## Testing
 
-The test suite lives at `tests/semantic/test_semantic_analyzer.py` and
-covers:
+The test suite lives at:
+
+- `tests/semantic/test_semantic_analyzer.py` — TASK-018 foundation tests.
+- `tests/semantic/test_symbol_collector.py`  — TASK-019 `SymbolCollectorVisitor` tests.
+
+The TASK-018 suite covers:
 
 - `SymbolKind` enum members
 - All three symbol subclasses (construction, kind, immutability)
@@ -290,6 +365,19 @@ covers:
 - `traverse_program` (all division types, graceful None handling)
 - `SemanticAnalyzer` (empty, partial, full programs; duplicate detection;
   reusability; mixed clean/error programs)
+
+The TASK-019 suite covers:
+
+- `SymbolCollectorVisitor` construction and reference storage
+- Program symbol registration (present, absent, uppercasing)
+- Variable symbol registration (elementary, group, condition; multi, empty, order)
+- Paragraph symbol registration (single, multiple, uppercasing)
+- Duplicate detection (SEM001 / SEM002; message content; first survives;
+  traversal continues; position accuracy; mixed duplicates)
+- Empty AST edge cases
+- Representative full COBOL program (all kinds, total count, no spurious errors)
+- Visitor reusability and independence
+- `SemanticAnalyzer` integration regression guard
 
 Run with:
 
