@@ -2,7 +2,7 @@
 Semantic Analyser.
 
 Purpose:
-    Orchestrate the two-pass semantic analysis pipeline over the COBOL AST
+    Orchestrate the three-pass semantic analysis pipeline over the COBOL AST
     produced by the parser.
 
     Pass 1 — :class:`~app.parser.semantic.symbol_collector.SymbolCollectorVisitor`:
@@ -16,13 +16,19 @@ Purpose:
         resolves every identifier reference.  Emits ``SEM003`` / ``SEM004`` /
         ``SEM005`` diagnostics for unresolved references.
 
-    Both passes share the same :class:`~app.parser.semantic.context.SymbolTable`
+    Pass 3 — :class:`~app.parser.semantic.validation.SemanticValidationVisitor`:
+        Traverses the AST once more and enforces structural and semantic
+        constraints.  Emits ``SEM006`` / ``SEM007`` / ``SEM008`` / ``SEM009``
+        diagnostics for rule violations.
+
+    All three passes share the same :class:`~app.parser.semantic.context.SymbolTable`
     and diagnostics list.  The combined result is returned as an immutable
     :class:`~app.parser.semantic.context.SemanticContext`.
 
 Responsibilities:
     - Orchestrate pass 1 (symbol collection).
     - Orchestrate pass 2 (reference resolution).
+    - Orchestrate pass 3 (semantic validation).
     - Return a fully populated :class:`~app.parser.semantic.context.SemanticContext`.
 
 Non-responsibilities:
@@ -30,6 +36,8 @@ Non-responsibilities:
       :class:`~app.parser.semantic.symbol_collector.SymbolCollectorVisitor`).
     - Reference resolution logic (delegated to
       :class:`~app.parser.semantic.reference_resolver.ReferenceResolverVisitor`).
+    - Validation logic (delegated to
+      :class:`~app.parser.semantic.validation.SemanticValidationVisitor`).
     - Type checking or expression analysis.
     - Control-flow analysis.
     - Data-flow analysis.
@@ -43,6 +51,7 @@ Dependencies:
     - :mod:`app.parser.semantic.diagnostics`        — ``SemanticDiagnostic``.
     - :mod:`app.parser.semantic.symbol_collector`   — ``SymbolCollectorVisitor``.
     - :mod:`app.parser.semantic.reference_resolver` — ``ReferenceResolverVisitor``.
+    - :mod:`app.parser.semantic.validation`         — ``SemanticValidationVisitor``.
     - :mod:`app.parser.semantic.visitors`           — ``traverse_program``.
     - Loguru for logging.
 
@@ -79,6 +88,7 @@ from app.parser.semantic.context import SemanticContext, SymbolTable
 from app.parser.semantic.diagnostics import SemanticDiagnostic
 from app.parser.semantic.reference_resolver import ReferenceResolverVisitor
 from app.parser.semantic.symbol_collector import SymbolCollectorVisitor
+from app.parser.semantic.validation import SemanticValidationVisitor
 from app.parser.semantic.visitors import traverse_program
 
 __all__ = ["SemanticAnalyzer"]
@@ -89,9 +99,9 @@ __all__ = ["SemanticAnalyzer"]
 
 class SemanticAnalyzer:
     """
-    Two-pass semantic analysis pipeline for a COBOL compilation unit.
+    Three-pass semantic analysis pipeline for a COBOL compilation unit.
 
-    :class:`SemanticAnalyzer` runs two traversal passes over a
+    :class:`SemanticAnalyzer` runs three traversal passes over a
     :class:`~app.parser.ast.program.ProgramNode`:
 
     **Pass 1 — symbol collection**
@@ -103,7 +113,12 @@ class SemanticAnalyzer:
         resolves identifier references against the populated symbol table
         and emits diagnostics for any undefined references.
 
-    Both passes share the same :class:`~app.parser.semantic.context.SymbolTable`
+    **Pass 3 — semantic validation**
+        :class:`~app.parser.semantic.validation.SemanticValidationVisitor`
+        enforces structural and semantic constraints (PROGRAM-ID presence,
+        non-empty PROCEDURE DIVISION, reserved-word identifiers, etc.).
+
+    All passes share the same :class:`~app.parser.semantic.context.SymbolTable`
     and diagnostics list.  The combined result is returned as an immutable
     :class:`~app.parser.semantic.context.SemanticContext`.
 
@@ -119,7 +134,7 @@ class SemanticAnalyzer:
 
     def analyse(self, program: ProgramNode) -> SemanticContext:
         """
-        Run the two-pass semantic analysis pipeline over *program*.
+        Run the three-pass semantic analysis pipeline over *program*.
 
         This method:
 
@@ -131,7 +146,10 @@ class SemanticAnalyzer:
         3. **Pass 2** — runs :class:`~app.parser.semantic.reference_resolver.ReferenceResolverVisitor`
            via :func:`~app.parser.semantic.visitors.traverse_program` to
            resolve all identifier references against the populated table.
-        4. Returns a :class:`~app.parser.semantic.context.SemanticContext`
+        4. **Pass 3** — runs :class:`~app.parser.semantic.validation.SemanticValidationVisitor`
+           via :func:`~app.parser.semantic.visitors.traverse_program` to
+           validate structural and semantic constraints.
+        5. Returns a :class:`~app.parser.semantic.context.SemanticContext`
            wrapping the populated symbol table and all diagnostics.
 
         Args:
@@ -141,7 +159,8 @@ class SemanticAnalyzer:
 
         Returns:
             An immutable :class:`~app.parser.semantic.context.SemanticContext`
-            containing the symbol table and any diagnostics from both passes.
+            containing the symbol table and any diagnostics from all three
+            passes.
 
         Examples:
             >>> from app.parser.semantic.analyzer import SemanticAnalyzer
@@ -166,7 +185,16 @@ class SemanticAnalyzer:
         resolver = ReferenceResolverVisitor(table=table, diagnostics=diagnostics)
         traverse_program(program, resolver)
         logger.debug(
-            "SemanticAnalyzer: pass 2 complete — {} diagnostic(s) total.",
+            "SemanticAnalyzer: pass 2 complete — {} diagnostic(s) so far.",
+            len(diagnostics),
+        )
+
+        # --- Pass 3: semantic validation ----------------------------------
+        logger.debug("SemanticAnalyzer: pass 3 — semantic validation.")
+        validator = SemanticValidationVisitor(diagnostics=diagnostics)
+        traverse_program(program, validator)
+        logger.debug(
+            "SemanticAnalyzer: pass 3 complete — {} diagnostic(s) total.",
             len(diagnostics),
         )
 
