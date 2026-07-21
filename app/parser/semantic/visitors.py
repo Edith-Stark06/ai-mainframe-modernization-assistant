@@ -22,7 +22,12 @@ Responsibilities:
       ``visit_group_item``,
       ``visit_condition_name``,
       ``visit_procedure_division``,
-      ``visit_paragraph``.
+      ``visit_paragraph``,
+      ``visit_display_statement``,
+      ``visit_move_statement``,
+      ``visit_stop_run_statement``,
+      ``visit_goback_statement``,
+      ``visit_statement`` (generic fallback).
     - Provide :class:`ProgramTraversalMixin` — a mixin that drives the
       full top-down traversal of a :class:`~app.parser.ast.program.ProgramNode`
       using a :class:`SemanticVisitor`, so concrete visitors do not have
@@ -79,6 +84,13 @@ if TYPE_CHECKING:
     from app.parser.ast.paragraphs import ParagraphNode
     from app.parser.ast.procedure import ProcedureDivisionNode
     from app.parser.ast.program import ProgramNode
+    from app.parser.ast.statements import (
+        DisplayStatementNode,
+        GobackStatementNode,
+        MoveStatementNode,
+        StatementNode,
+        StopRunStatementNode,
+    )
     from app.parser.ast.working_storage import WorkingStorageSectionNode
 
 __all__ = [
@@ -231,6 +243,78 @@ class SemanticVisitor(ASTVisitor):
         """
         return None
 
+    # -- Statements ---------------------------------------------------------
+
+    def visit_statement(self, node: StatementNode) -> Any:
+        """
+        Visit a generic :class:`~app.parser.ast.statements.StatementNode`.
+
+        This is the fallback hook called for any statement type that does
+        not have a dedicated ``visit_*`` override.  Concrete statement types
+        (``DISPLAY``, ``MOVE``, etc.) dispatch to their own hook first.
+
+        Args:
+            node: The statement node.
+
+        Returns:
+            ``None`` by default.
+        """
+        return None
+
+    def visit_display_statement(self, node: DisplayStatementNode) -> Any:
+        """
+        Visit a :class:`~app.parser.ast.statements.DisplayStatementNode`.
+
+        Args:
+            node: The ``DISPLAY`` statement node.
+
+        Returns:
+            ``None`` by default.
+        """
+        return None
+
+    def visit_move_statement(self, node: MoveStatementNode) -> Any:
+        """
+        Visit a :class:`~app.parser.ast.statements.MoveStatementNode`.
+
+        The node's :attr:`~app.parser.ast.statements.MoveStatementNode.source`
+        and :attr:`~app.parser.ast.statements.MoveStatementNode.target`
+        attributes carry the raw operand text.  The reference resolver
+        overrides this hook to validate both operands against the symbol
+        table.
+
+        Args:
+            node: The ``MOVE`` statement node.
+
+        Returns:
+            ``None`` by default.
+        """
+        return None
+
+    def visit_stop_run_statement(self, node: StopRunStatementNode) -> Any:
+        """
+        Visit a :class:`~app.parser.ast.statements.StopRunStatementNode`.
+
+        Args:
+            node: The ``STOP RUN`` statement node.
+
+        Returns:
+            ``None`` by default.
+        """
+        return None
+
+    def visit_goback_statement(self, node: GobackStatementNode) -> Any:
+        """
+        Visit a :class:`~app.parser.ast.statements.GobackStatementNode`.
+
+        Args:
+            node: The ``GOBACK`` statement node.
+
+        Returns:
+            ``None`` by default.
+        """
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Traversal driver
@@ -244,7 +328,8 @@ def traverse_program(program: ProgramNode, visitor: SemanticVisitor) -> None:
     This function implements the default traversal strategy used by
     :class:`~app.parser.semantic.analyzer.SemanticAnalyzer`.  It visits
     each division in declaration order, then visits each section and item
-    within that division.
+    within that division, and finally visits each statement within each
+    paragraph.
 
     The traversal order is::
 
@@ -255,6 +340,7 @@ def traverse_program(program: ProgramNode, visitor: SemanticVisitor) -> None:
                 └── DataItemNode   (ElementaryItemNode | GroupItemNode | ConditionNameNode)
         └── ProcedureDivisionNode
             └── ParagraphNode (×N)
+                └── StatementNode (×M)  (DisplayStatementNode | MoveStatementNode | …)
 
     Args:
         program:
@@ -292,3 +378,6 @@ def traverse_program(program: ProgramNode, visitor: SemanticVisitor) -> None:
         visitor.visit_procedure_division(proc_div)
         for para in proc_div.paragraphs:
             para.accept(visitor)
+            # visit statements within the paragraph
+            for stmt in para.statements:
+                stmt.accept(visitor)

@@ -18,6 +18,17 @@ Responsibilities:
     - Provide :class:`SemanticDiagnostic` — an immutable, hashable record
       carrying a message, source position, severity, and a short
       ``code`` string that identifies the rule that was violated.
+    - Maintain :data:`DIAGNOSTIC_CODES` — the registry of all known codes:
+
+      ========  ==========================================
+      Code      Description
+      ========  ==========================================
+      SEM001    Duplicate variable declaration
+      SEM002    Duplicate paragraph declaration
+      SEM003    Undefined variable reference
+      SEM004    Undefined paragraph reference
+      SEM005    Undefined section reference
+      ========  ==========================================
 
 Non-responsibilities:
     - Syntax error reporting (see :mod:`app.parser.diagnostics.recovery`).
@@ -74,8 +85,13 @@ __all__ = [
 # Diagnostic codes — extend this mapping as new rules are added.
 #: Registered diagnostic codes and their human-readable descriptions.
 DIAGNOSTIC_CODES: dict[str, str] = {
+    # Symbol-collection pass (TASK-018 / TASK-019)
     "SEM001": "Duplicate variable declaration",
     "SEM002": "Duplicate paragraph declaration",
+    # Reference-resolution pass (TASK-020)
+    "SEM003": "Undefined variable reference",
+    "SEM004": "Undefined paragraph reference",
+    "SEM005": "Undefined section reference",
 }
 
 
