@@ -8,19 +8,23 @@ Purpose:
     rules, and structural constraint checking.
 
     The semantic analysis pipeline receives an AST produced by the parser,
-    builds a :class:`~app.parser.semantic.context.SymbolTable`, detects
-    duplicate symbol declarations, and returns an immutable
+    runs a two-pass analysis, and returns an immutable
     :class:`~app.parser.semantic.context.SemanticContext` for consumption
     by downstream stages (IR generation, RAG, modernisation).
 
-    The symbol-collection pass is implemented by
-    :class:`~app.parser.semantic.symbol_collector.SymbolCollectorVisitor`,
-    a public, reusable visitor that can be composed into multi-pass
-    pipelines or used independently.
+    **Pass 1** — :class:`~app.parser.semantic.symbol_collector.SymbolCollectorVisitor`
+        builds a :class:`~app.parser.semantic.context.SymbolTable` and detects
+        duplicate symbol declarations.
+
+    **Pass 2** — :class:`~app.parser.semantic.reference_resolver.ReferenceResolverVisitor`
+        resolves identifier references against the populated symbol table
+        and emits diagnostics for any undefined references.
 
 Responsibilities:
     - Register program, variable, and paragraph symbols.
     - Detect duplicate variable and paragraph declarations.
+    - Resolve identifier references in MOVE and DISPLAY statements.
+    - Detect undefined variable, paragraph, and section references.
     - Provide a reusable :class:`~app.parser.semantic.visitors.SemanticVisitor`
       base for future semantic rules.
     - Return a populated :class:`~app.parser.semantic.context.SemanticContext`
@@ -45,7 +49,8 @@ Public API:
     - :class:`~app.parser.semantic.diagnostics.SemanticSeverity`   — severity enumeration.
     - :class:`~app.parser.semantic.visitors.SemanticVisitor`    — extended visitor base.
     - :func:`~app.parser.semantic.visitors.traverse_program`    — traversal driver.
-    - :class:`~app.parser.semantic.symbol_collector.SymbolCollectorVisitor` — symbol collection pass.
+    - :class:`~app.parser.semantic.symbol_collector.SymbolCollectorVisitor`   — pass 1: symbol collection.
+    - :class:`~app.parser.semantic.reference_resolver.ReferenceResolverVisitor` — pass 2: reference resolution.
 
 Dependencies:
     - :mod:`app.parser.ast`         — AST input.
@@ -62,6 +67,7 @@ Project:
 from app.parser.semantic.analyzer import SemanticAnalyzer
 from app.parser.semantic.context import SemanticContext, SymbolTable
 from app.parser.semantic.diagnostics import SemanticDiagnostic, SemanticSeverity
+from app.parser.semantic.reference_resolver import ReferenceResolverVisitor
 from app.parser.semantic.symbol_collector import SymbolCollectorVisitor
 from app.parser.semantic.symbols import (
     ParagraphSymbol,
@@ -75,6 +81,7 @@ from app.parser.semantic.visitors import SemanticVisitor, traverse_program
 __all__ = [
     "ParagraphSymbol",
     "ProgramSymbol",
+    "ReferenceResolverVisitor",
     "SemanticAnalyzer",
     "SemanticContext",
     "SemanticDiagnostic",
