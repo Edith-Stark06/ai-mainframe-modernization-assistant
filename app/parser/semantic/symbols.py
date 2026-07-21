@@ -18,7 +18,8 @@ Responsibilities:
     - Provide :class:`ProgramSymbol` — represents the top-level program name
       declared by the PROGRAM-ID clause.
     - Provide :class:`VariableSymbol` — represents a data item declared in
-      the WORKING-STORAGE SECTION.
+      the WORKING-STORAGE SECTION, optionally carrying a resolved
+      :class:`~app.parser.semantic.types.CobolType`.
     - Provide :class:`ParagraphSymbol` — represents a paragraph label
       declared in the PROCEDURE DIVISION.
 
@@ -26,16 +27,20 @@ Non-responsibilities:
     - Type checking or expression analysis.
     - Symbol resolution (references to other symbols).
     - Control-flow or data-flow analysis.
+    - PIC clause parsing (delegated to
+      :mod:`app.parser.semantic.type_builder`).
 
 Dependencies:
     - :mod:`app.parser.lexer.position` — ``Position`` value type.
+    - :mod:`app.parser.semantic.types` — ``CobolType`` (TYPE_CHECKING only).
     - Python standard library only (``dataclasses``, ``enum``).
 
 Examples:
-    Creating a VariableSymbol::
+    Creating a VariableSymbol with a resolved type::
 
         from app.parser.lexer.position import Position
         from app.parser.semantic.symbols import VariableSymbol, SymbolKind
+        from app.parser.semantic.types import AlphanumericType
 
         pos = Position(line=5, column=4, offset=80, filename="prog.cbl")
         sym = VariableSymbol(
@@ -43,9 +48,10 @@ Examples:
             declared_at=pos,
             level=5,
             picture="9(5)",
+            cobol_type=AlphanumericType(length=5),
         )
         sym.kind is SymbolKind.VARIABLE  # True
-        sym.name                         # "CUSTOMER-ID"
+        sym.cobol_type.category          # 'alphanumeric'
 
 Author:
     Edith Stark
@@ -62,6 +68,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.parser.lexer.position import Position
+    from app.parser.semantic.types import CobolType
 
 __all__ = [
     "ParagraphSymbol",
@@ -180,6 +187,10 @@ class VariableSymbol(Symbol):
     ``picture`` fields carry the structural attributes extracted from the
     AST without performing any type validation.
 
+    After pass 4 (TypeBuilder), the :attr:`cobol_type` field is populated
+    with the resolved :class:`~app.parser.semantic.types.CobolType`.  Prior
+    to that pass it is ``None``.
+
     Attributes:
         name:
             The data-name string (uppercased).
@@ -190,6 +201,10 @@ class VariableSymbol(Symbol):
         picture:
             The picture string (e.g. ``"9(5)"``), or ``None`` if the item
             is a group item or condition-name with no PIC clause.
+        cobol_type:
+            The resolved :class:`~app.parser.semantic.types.CobolType`, or
+            ``None`` if pass 4 has not yet run or the PIC clause could not
+            be interpreted.
 
     Examples:
         >>> from app.parser.lexer.position import Position
@@ -201,10 +216,13 @@ class VariableSymbol(Symbol):
         'variable'
         >>> sym.level
         5
+        >>> sym.cobol_type is None
+        True
     """
 
     level: int
     picture: str | None = None
+    cobol_type: CobolType | None = None
 
     @property
     def kind(self) -> SymbolKind:
