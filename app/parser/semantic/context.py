@@ -204,6 +204,57 @@ class SymbolTable:
             return name.upper() in self._by_name
         return False  # pragma: no cover
 
+    # ------------------------------------------------------------------
+    # Mutation (type annotation pass)
+    # ------------------------------------------------------------------
+
+    def replace_symbol(self, symbol: Symbol) -> bool:
+        """
+        Replace an already-registered symbol with *symbol* (same name).
+
+        This method is called by the type-annotation pass (pass 4) to swap
+        an existing :class:`~app.parser.semantic.symbols.VariableSymbol`
+        for an updated version that carries a resolved
+        :class:`~app.parser.semantic.types.CobolType`.  The name must
+        already exist in the table; if it does not, the method returns
+        ``False`` and makes no changes.
+
+        The insertion order of the replaced symbol is preserved.
+
+        Args:
+            symbol:
+                The replacement :class:`~app.parser.semantic.symbols.Symbol`.
+                Its :attr:`~app.parser.semantic.symbols.Symbol.name` must
+                match (case-insensitively) a symbol already registered.
+
+        Returns:
+            ``True`` if the replacement was performed.
+            ``False`` if no symbol with that name is registered.
+
+        Examples:
+            >>> from app.parser.lexer.position import Position
+            >>> from app.parser.semantic.symbols import VariableSymbol
+            >>> pos = Position(line=1, column=1, offset=0, filename="p.cbl")
+            >>> sym = VariableSymbol(name="WS-X", declared_at=pos, level=77)
+            >>> table = SymbolTable()
+            >>> table.register(sym)
+            True
+            >>> import dataclasses
+            >>> sym2 = dataclasses.replace(sym, picture="9(5)")
+            >>> table.replace_symbol(sym2)
+            True
+            >>> table.lookup("WS-X").picture
+            '9(5)'
+        """
+        key = symbol.name.upper()
+        if key not in self._by_name:
+            return False
+        # Preserve list position.
+        idx = self._all.index(self._by_name[key])
+        self._by_name[key] = symbol
+        self._all[idx] = symbol
+        return True
+
 
 # ===========================================================================
 # SemanticContext  (immutable result)
