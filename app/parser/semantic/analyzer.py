@@ -2,7 +2,7 @@
 Semantic Analyser.
 
 Purpose:
-    Orchestrate the three-pass semantic analysis pipeline over the COBOL AST
+    Orchestrate the four-pass semantic analysis pipeline over the COBOL AST
     produced by the parser.
 
     Pass 1 — :class:`~app.parser.semantic.symbol_collector.SymbolCollectorVisitor`:
@@ -21,14 +21,22 @@ Purpose:
         constraints.  Emits ``SEM006`` / ``SEM007`` / ``SEM008`` / ``SEM009``
         diagnostics for rule violations.
 
-    All three passes share the same :class:`~app.parser.semantic.context.SymbolTable`
-    and diagnostics list.  The combined result is returned as an immutable
+    Pass 4 — :class:`~app.parser.semantic.type_builder.TypeBuilder`:
+        Iterates over the populated symbol table, interprets PIC clause strings
+        stored in :class:`~app.parser.semantic.symbols.VariableSymbol` records,
+        constructs :class:`~app.parser.semantic.types.CobolType` objects, and
+        attaches them back to the symbols.  Does **not** re-traverse the AST.
+
+    All AST-traversal passes share the same
+    :class:`~app.parser.semantic.context.SymbolTable` and diagnostics list.
+    The combined result is returned as an immutable
     :class:`~app.parser.semantic.context.SemanticContext`.
 
 Responsibilities:
     - Orchestrate pass 1 (symbol collection).
     - Orchestrate pass 2 (reference resolution).
     - Orchestrate pass 3 (semantic validation).
+    - Orchestrate pass 4 (type annotation via TypeBuilder).
     - Return a fully populated :class:`~app.parser.semantic.context.SemanticContext`.
 
 Non-responsibilities:
@@ -38,6 +46,8 @@ Non-responsibilities:
       :class:`~app.parser.semantic.reference_resolver.ReferenceResolverVisitor`).
     - Validation logic (delegated to
       :class:`~app.parser.semantic.validation.SemanticValidationVisitor`).
+    - PIC interpretation and type construction (delegated to
+      :class:`~app.parser.semantic.type_builder.TypeBuilder`).
     - Type checking or expression analysis.
     - Control-flow analysis.
     - Data-flow analysis.
@@ -52,6 +62,7 @@ Dependencies:
     - :mod:`app.parser.semantic.symbol_collector`   — ``SymbolCollectorVisitor``.
     - :mod:`app.parser.semantic.reference_resolver` — ``ReferenceResolverVisitor``.
     - :mod:`app.parser.semantic.validation`         — ``SemanticValidationVisitor``.
+    - :mod:`app.parser.semantic.type_builder`       — ``TypeBuilder``.
     - :mod:`app.parser.semantic.visitors`           — ``traverse_program``.
     - Loguru for logging.
 
@@ -88,6 +99,7 @@ from app.parser.semantic.context import SemanticContext, SymbolTable
 from app.parser.semantic.diagnostics import SemanticDiagnostic
 from app.parser.semantic.reference_resolver import ReferenceResolverVisitor
 from app.parser.semantic.symbol_collector import SymbolCollectorVisitor
+from app.parser.semantic.type_builder import TypeBuilder
 from app.parser.semantic.validation import SemanticValidationVisitor
 from app.parser.semantic.visitors import traverse_program
 
@@ -99,9 +111,9 @@ __all__ = ["SemanticAnalyzer"]
 
 class SemanticAnalyzer:
     """
-    Three-pass semantic analysis pipeline for a COBOL compilation unit.
+    Four-pass semantic analysis pipeline for a COBOL compilation unit.
 
-    :class:`SemanticAnalyzer` runs three traversal passes over a
+    :class:`SemanticAnalyzer` runs four passes over a
     :class:`~app.parser.ast.program.ProgramNode`:
 
     **Pass 1 — symbol collection**
@@ -118,8 +130,15 @@ class SemanticAnalyzer:
         enforces structural and semantic constraints (PROGRAM-ID presence,
         non-empty PROCEDURE DIVISION, reserved-word identifiers, etc.).
 
-    All passes share the same :class:`~app.parser.semantic.context.SymbolTable`
-    and diagnostics list.  The combined result is returned as an immutable
+    **Pass 4 — type annotation**
+        :class:`~app.parser.semantic.type_builder.TypeBuilder`
+        interprets PIC clause strings and attaches
+        :class:`~app.parser.semantic.types.CobolType` objects to variable
+        symbols.
+
+    All AST-traversal passes share the same
+    :class:`~app.parser.semantic.context.SymbolTable` and diagnostics list.
+    The combined result is returned as an immutable
     :class:`~app.parser.semantic.context.SemanticContext`.
 
     A single :class:`SemanticAnalyzer` instance may be reused across
@@ -134,7 +153,7 @@ class SemanticAnalyzer:
 
     def analyse(self, program: ProgramNode) -> SemanticContext:
         """
-        Run the three-pass semantic analysis pipeline over *program*.
+        Run the four-pass semantic analysis pipeline over *program*.
 
         This method:
 
@@ -149,7 +168,11 @@ class SemanticAnalyzer:
         4. **Pass 3** — runs :class:`~app.parser.semantic.validation.SemanticValidationVisitor`
            via :func:`~app.parser.semantic.visitors.traverse_program` to
            validate structural and semantic constraints.
-        5. Returns a :class:`~app.parser.semantic.context.SemanticContext`
+        5. **Pass 4** — runs :class:`~app.parser.semantic.type_builder.TypeBuilder`
+           to interpret PIC clauses and attach
+           :class:`~app.parser.semantic.types.CobolType` objects to variable
+           symbols.
+        6. Returns a :class:`~app.parser.semantic.context.SemanticContext`
            wrapping the populated symbol table and all diagnostics.
 
         Args:
@@ -159,8 +182,7 @@ class SemanticAnalyzer:
 
         Returns:
             An immutable :class:`~app.parser.semantic.context.SemanticContext`
-            containing the symbol table and any diagnostics from all three
-            passes.
+            containing the symbol table and any diagnostics from all passes.
 
         Examples:
             >>> from app.parser.semantic.analyzer import SemanticAnalyzer
@@ -197,5 +219,11 @@ class SemanticAnalyzer:
             "SemanticAnalyzer: pass 3 complete — {} diagnostic(s) total.",
             len(diagnostics),
         )
+
+        # --- Pass 4: type annotation (TypeBuilder) ------------------------
+        logger.debug("SemanticAnalyzer: pass 4 — type annotation.")
+        type_builder = TypeBuilder(table=table)
+        type_builder.build()
+        logger.debug("SemanticAnalyzer: pass 4 complete — types attached.")
 
         return SemanticContext(symbol_table=table, diagnostics=diagnostics)

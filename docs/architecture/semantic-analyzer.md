@@ -555,3 +555,135 @@ The TASK-021 test suite covers:
 - `SemanticAnalyzer` three-pass integration: all codes in context, reusability, cross-pass coexistence
 - Standalone composition with `SymbolCollectorVisitor`
 - Parameterised reserved-word spot-checks (16 keywords)
+
+---
+
+## COBOL Data Type Model (TASK-022)
+
+### Overview
+
+TASK-022 introduces a **semantic type system** for COBOL data items, independent
+of the parser AST.  The type objects model the storage layout and interpretation
+of each data item as understood by the semantic analyser — separate from the raw
+PIC clause string captured in the AST.
+
+### New Modules
+
+| Module | Purpose |
+|--------|---------|
+| `app.parser.semantic.types` | `CobolType` abstract base and concrete type classes |
+| `app.parser.semantic.type_builder` | Pass 4: interprets PIC clauses, builds types, attaches to symbols |
+
+### Type Hierarchy
+
+`
+CobolType (ABC)
++-- NumericType       — PIC 9 / PIC S9 (signed, decimal, COMP, COMP-3)
++-- AlphanumericType  — PIC X (character strings)
++-- GroupType         — group records (no PIC clause)
+`
+
+All type classes are **frozen dataclasses** (immutable and hashable).
+
+### UsageType Enum
+
+`python
+class UsageType(Enum):
+    DISPLAY    # default character representation
+    COMP       # binary (alias: COMP-4, BINARY)
+    COMP_1     # single-precision float
+    COMP_2     # double-precision float
+    COMP_3     # packed decimal (alias: PACKED-DECIMAL)
+    COMP_5     # native binary
+    INDEX      # index data items
+    POINTER    # USAGE POINTER
+`
+
+### VariableSymbol Enhancement
+
+`VariableSymbol` (in `symbols.py`) now carries an optional
+`cobol_type: CobolType | None` field.  It defaults to `None` before pass 4
+runs, and is populated by `TypeBuilder` via `dataclasses.replace()` +
+`SymbolTable.replace_symbol()`.
+
+### SymbolTable Enhancement
+
+`SymbolTable.replace_symbol(symbol)` was added to allow pass 4 to swap an
+existing symbol for an updated copy carrying a resolved `CobolType` while
+preserving insertion order.
+
+### Four-Pass Pipeline (Updated)
+
+`
+SemanticAnalyzer.analyse(program)
+ |
+ +-->> PASS 1: SymbolCollectorVisitor   (AST traversal)
+ |          registers all symbols; detects SEM001/SEM002
+ |
+ +-->> PASS 2: ReferenceResolverVisitor (AST traversal)
+ |          resolves MOVE/DISPLAY refs; emits SEM003/SEM004/SEM005
+ |
+ +-->> PASS 3: SemanticValidationVisitor (AST traversal)
+ |          checks PROGRAM-ID, empty PROC DIV, reserved words; emits SEM006-SEM009
+ |
+ +-->> PASS 4: TypeBuilder              (SymbolTable iteration, no AST re-traversal)
+           interprets PIC clauses; attaches CobolType to VariableSymbols
+`
+
+> [!IMPORTANT]
+> Pass 4 does **not** re-traverse the AST. It operates entirely on the already-populated `SymbolTable`.
+
+### PIC Clause Interpretation
+
+| PIC Pattern | Resulting Type |
+|-------------|----------------|
+| `9` / `9(n)` | `NumericType(digits=n, signed=False, decimal_places=0)` |
+| `S9(n)` | `NumericType(digits=n, signed=True)` |
+| `9(n)V9(m)` | `NumericType(digits=n+m, decimal_places=m)` |
+| `S9(n)V9(m)` | `NumericType(digits=n+m, signed=True, decimal_places=m)` |
+| `X` / `X(n)` | `AlphanumericType(length=n)` |
+| `XX...` (bare) | `AlphanumericType(length=len)` |
+| absent (group/88) | `GroupType()` |
+| unrecognised | `None` (warning logged; no crash) |
+
+### Extensibility
+
+New COBOL features can be added without modifying existing types:
+
+| Feature | Extension path |
+|---------|----------------|
+| OCCURS | Add `ArrayType(element_type, occurs)` subclass |
+| REDEFINES | Add `RedefinesType(target_name)` subclass |
+| POINTER | Add to `UsageType.POINTER`; extend `TypeBuilder._infer_usage()` |
+| PIC N (National) | Add `NationalType(length)`; extend `_parse_pic` |
+| PIC U (UTF-8) | Add `Utf8Type(length)`; extend `_parse_pic` |
+| Explicit USAGE | Extend `TypeBuilder._infer_usage(usage_str)` |
+
+### TASK-022 Test Suite
+
+The `tests/semantic/test_type_builder.py` suite covers:
+
+- `UsageType` enum: all values, aliases, uniqueness.
+- `CobolType` abstract base: all three concrete subtypes.
+- `NumericType`: digits, signed, decimal_places, usage, is_integer,
+  total_digits, immutability, equality, hashing, `dataclasses.replace()`.
+- `AlphanumericType`: length, usage default, immutability, equality.
+- `GroupType`: member_names default, storage, immutability.
+- `VariableSymbol.cobol_type`: default None, set at construction,
+  existing fields unaffected, frozen, `dataclasses.replace()`.
+- `SymbolTable.replace_symbol()`: success/failure, lookup after replace,
+  insertion order, length unchanged.
+- `TypeBuilder._parse_numeric_pic()`: 9 parametrised patterns.
+- `TypeBuilder._parse_alpha_pic()`: 6 parametrised patterns.
+- `TypeBuilder._infer_usage()`: DISPLAY default.
+- `TypeBuilder.usage_from_string()`: 11 known usages + unknown fallback +
+  case-insensitivity + whitespace.
+- `TypeBuilder.build()`: all PIC categories, empty table, already-typed
+  skip, unrecognised PIC, mixed table.
+- AST-traversal integration (SymbolCollectorVisitor + TypeBuilder).
+- `SemanticAnalyzer` four-pass integration: all type categories, mixed WS,
+  no pass-4 diagnostics, cross-pass coexistence, reusability.
+- Parametrised spot-checks: 7 numeric PIC patterns × full pipeline;
+  5 alpha PIC patterns × full pipeline.
+- COMP / COMP-3 usage attachment.
+- Public API exports.
