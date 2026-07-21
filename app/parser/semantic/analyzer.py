@@ -27,6 +27,11 @@ Purpose:
         constructs :class:`~app.parser.semantic.types.CobolType` objects, and
         attaches them back to the symbols.  Does **not** re-traverse the AST.
 
+    Pass 5 — :class:`~app.parser.semantic.type_checker.TypeCheckerVisitor`:
+        Traverses the AST once more and validates that statements operate on
+        compatible semantic types.  Emits ``SEM010`` / ``SEM011`` / ``SEM012`` /
+        ``SEM013`` diagnostics for type violations.
+
     All AST-traversal passes share the same
     :class:`~app.parser.semantic.context.SymbolTable` and diagnostics list.
     The combined result is returned as an immutable
@@ -37,6 +42,7 @@ Responsibilities:
     - Orchestrate pass 2 (reference resolution).
     - Orchestrate pass 3 (semantic validation).
     - Orchestrate pass 4 (type annotation via TypeBuilder).
+    - Orchestrate pass 5 (type checking via TypeCheckerVisitor).
     - Return a fully populated :class:`~app.parser.semantic.context.SemanticContext`.
 
 Non-responsibilities:
@@ -63,6 +69,7 @@ Dependencies:
     - :mod:`app.parser.semantic.reference_resolver` — ``ReferenceResolverVisitor``.
     - :mod:`app.parser.semantic.validation`         — ``SemanticValidationVisitor``.
     - :mod:`app.parser.semantic.type_builder`       — ``TypeBuilder``.
+    - :mod:`app.parser.semantic.type_checker`       — ``TypeCheckerVisitor``.
     - :mod:`app.parser.semantic.visitors`           — ``traverse_program``.
     - Loguru for logging.
 
@@ -100,6 +107,7 @@ from app.parser.semantic.diagnostics import SemanticDiagnostic
 from app.parser.semantic.reference_resolver import ReferenceResolverVisitor
 from app.parser.semantic.symbol_collector import SymbolCollectorVisitor
 from app.parser.semantic.type_builder import TypeBuilder
+from app.parser.semantic.type_checker import TypeCheckerVisitor
 from app.parser.semantic.validation import SemanticValidationVisitor
 from app.parser.semantic.visitors import traverse_program
 
@@ -135,6 +143,11 @@ class SemanticAnalyzer:
         interprets PIC clause strings and attaches
         :class:`~app.parser.semantic.types.CobolType` objects to variable
         symbols.
+
+    **Pass 5 — type checking**
+        :class:`~app.parser.semantic.type_checker.TypeCheckerVisitor`
+        validates that statements operate on compatible semantic types and
+        emits diagnostics for any type violations.
 
     All AST-traversal passes share the same
     :class:`~app.parser.semantic.context.SymbolTable` and diagnostics list.
@@ -172,7 +185,10 @@ class SemanticAnalyzer:
            to interpret PIC clauses and attach
            :class:`~app.parser.semantic.types.CobolType` objects to variable
            symbols.
-        6. Returns a :class:`~app.parser.semantic.context.SemanticContext`
+        6. **Pass 5** — runs :class:`~app.parser.semantic.type_checker.TypeCheckerVisitor`
+           via :func:`~app.parser.semantic.visitors.traverse_program` to
+           validate type compatibility of statements.
+        7. Returns a :class:`~app.parser.semantic.context.SemanticContext`
            wrapping the populated symbol table and all diagnostics.
 
         Args:
@@ -225,5 +241,14 @@ class SemanticAnalyzer:
         type_builder = TypeBuilder(table=table)
         type_builder.build()
         logger.debug("SemanticAnalyzer: pass 4 complete — types attached.")
+
+        # --- Pass 5: type checking ----------------------------------------
+        logger.debug("SemanticAnalyzer: pass 5 — type checking.")
+        checker = TypeCheckerVisitor(table=table, diagnostics=diagnostics)
+        traverse_program(program, checker)
+        logger.debug(
+            "SemanticAnalyzer: pass 5 complete — {} diagnostic(s) total.",
+            len(diagnostics),
+        )
 
         return SemanticContext(symbol_table=table, diagnostics=diagnostics)
