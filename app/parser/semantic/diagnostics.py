@@ -20,15 +20,19 @@ Responsibilities:
       ``code`` string that identifies the rule that was violated.
     - Maintain :data:`DIAGNOSTIC_CODES` — the registry of all known codes:
 
-      ========  ==========================================
+      ========  =====================================================
       Code      Description
-      ========  ==========================================
+      ========  =====================================================
       SEM001    Duplicate variable declaration
       SEM002    Duplicate paragraph declaration
       SEM003    Undefined variable reference
       SEM004    Undefined paragraph reference
       SEM005    Undefined section reference
-      ========  ==========================================
+      SEM006    Missing or empty PROGRAM-ID
+      SEM007    Empty PROCEDURE DIVISION
+      SEM008    Reserved word used as identifier
+      SEM009    Invalid static CALL target
+      ========  =====================================================
 
 Non-responsibilities:
     - Syntax error reporting (see :mod:`app.parser.diagnostics.recovery`).
@@ -92,6 +96,11 @@ DIAGNOSTIC_CODES: dict[str, str] = {
     "SEM003": "Undefined variable reference",
     "SEM004": "Undefined paragraph reference",
     "SEM005": "Undefined section reference",
+    # Semantic-validation pass (TASK-021)
+    "SEM006": "Missing or empty PROGRAM-ID",
+    "SEM007": "Empty PROCEDURE DIVISION",
+    "SEM008": "Reserved word used as identifier",
+    "SEM009": "Invalid static CALL target",
 }
 
 

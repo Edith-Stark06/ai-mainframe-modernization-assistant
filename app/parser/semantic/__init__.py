@@ -8,7 +8,7 @@ Purpose:
     rules, and structural constraint checking.
 
     The semantic analysis pipeline receives an AST produced by the parser,
-    runs a two-pass analysis, and returns an immutable
+    runs a three-pass analysis, and returns an immutable
     :class:`~app.parser.semantic.context.SemanticContext` for consumption
     by downstream stages (IR generation, RAG, modernisation).
 
@@ -20,11 +20,16 @@ Purpose:
         resolves identifier references against the populated symbol table
         and emits diagnostics for any undefined references.
 
+    **Pass 3** — :class:`~app.parser.semantic.validation.SemanticValidationVisitor`
+        enforces structural and semantic constraints (PROGRAM-ID presence,
+        non-empty PROCEDURE DIVISION, reserved-word identifiers, etc.).
+
 Responsibilities:
     - Register program, variable, and paragraph symbols.
     - Detect duplicate variable and paragraph declarations.
     - Resolve identifier references in MOVE and DISPLAY statements.
     - Detect undefined variable, paragraph, and section references.
+    - Validate structural and semantic constraints.
     - Provide a reusable :class:`~app.parser.semantic.visitors.SemanticVisitor`
       base for future semantic rules.
     - Return a populated :class:`~app.parser.semantic.context.SemanticContext`
@@ -51,6 +56,7 @@ Public API:
     - :func:`~app.parser.semantic.visitors.traverse_program`    — traversal driver.
     - :class:`~app.parser.semantic.symbol_collector.SymbolCollectorVisitor`   — pass 1: symbol collection.
     - :class:`~app.parser.semantic.reference_resolver.ReferenceResolverVisitor` — pass 2: reference resolution.
+    - :class:`~app.parser.semantic.validation.SemanticValidationVisitor`        — pass 3: semantic validation.
 
 Dependencies:
     - :mod:`app.parser.ast`         — AST input.
@@ -76,6 +82,7 @@ from app.parser.semantic.symbols import (
     SymbolKind,
     VariableSymbol,
 )
+from app.parser.semantic.validation import SemanticValidationVisitor
 from app.parser.semantic.visitors import SemanticVisitor, traverse_program
 
 __all__ = [
@@ -86,6 +93,7 @@ __all__ = [
     "SemanticContext",
     "SemanticDiagnostic",
     "SemanticSeverity",
+    "SemanticValidationVisitor",
     "SemanticVisitor",
     "Symbol",
     "SymbolCollectorVisitor",
