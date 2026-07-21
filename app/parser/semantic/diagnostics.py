@@ -32,6 +32,10 @@ Responsibilities:
       SEM007    Empty PROCEDURE DIVISION
       SEM008    Reserved word used as identifier
       SEM009    Invalid static CALL target
+      SEM010    Incompatible MOVE (alphanumeric source to numeric target)
+      SEM011    Invalid arithmetic operand (non-numeric type)
+      SEM012    Missing semantic type (variable not typed by TypeBuilder)
+      SEM013    Unsupported operation on this type
       ========  =====================================================
 
 Non-responsibilities:
@@ -101,6 +105,11 @@ DIAGNOSTIC_CODES: dict[str, str] = {
     "SEM007": "Empty PROCEDURE DIVISION",
     "SEM008": "Reserved word used as identifier",
     "SEM009": "Invalid static CALL target",
+    # Type-checking pass (TASK-023)
+    "SEM010": "Incompatible MOVE (alphanumeric source to numeric target)",
+    "SEM011": "Invalid arithmetic operand (non-numeric type)",
+    "SEM012": "Missing semantic type (variable not typed by TypeBuilder)",
+    "SEM013": "Unsupported operation on this type",
 }
 
 

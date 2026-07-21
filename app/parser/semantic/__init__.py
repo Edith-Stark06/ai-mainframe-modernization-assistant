@@ -29,6 +29,10 @@ Purpose:
         :class:`~app.parser.semantic.types.CobolType` objects to variable
         symbols.
 
+    **Pass 5** — :class:`~app.parser.semantic.type_checker.TypeCheckerVisitor`
+        validates that statements operate on compatible semantic types and
+        emits diagnostics for type violations.
+
 Responsibilities:
     - Register program, variable, and paragraph symbols.
     - Detect duplicate variable and paragraph declarations.
@@ -66,6 +70,7 @@ Public API:
     - :class:`~app.parser.semantic.reference_resolver.ReferenceResolverVisitor` — pass 2.
     - :class:`~app.parser.semantic.validation.SemanticValidationVisitor`        — pass 3.
     - :class:`~app.parser.semantic.type_builder.TypeBuilder`                    — pass 4.
+    - :class:`~app.parser.semantic.type_checker.TypeCheckerVisitor`             — pass 5.
     - :class:`~app.parser.semantic.types.CobolType`             — abstract type base.
     - :class:`~app.parser.semantic.types.NumericType`           — numeric type.
     - :class:`~app.parser.semantic.types.AlphanumericType`      — alphanumeric type.
@@ -97,6 +102,7 @@ from app.parser.semantic.symbols import (
     VariableSymbol,
 )
 from app.parser.semantic.type_builder import TypeBuilder
+from app.parser.semantic.type_checker import TypeCheckerVisitor
 from app.parser.semantic.types import (
     AlphanumericType,
     CobolType,
@@ -126,6 +132,7 @@ __all__ = [
     "SymbolKind",
     "SymbolTable",
     "TypeBuilder",
+    "TypeCheckerVisitor",
     "UsageType",
     "VariableSymbol",
     "traverse_program",
