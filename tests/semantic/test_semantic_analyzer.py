@@ -697,11 +697,19 @@ class TestSemanticAnalyzerEmpty:
         assert ctx.error_count == 0
         assert len(ctx.symbol_table) == 0
 
-    def test_missing_program_id_no_crash(self) -> None:
-        """A program with an identification division but no PROGRAM-ID does not crash."""
+    def test_missing_program_id_emits_sem006(self) -> None:
+        """A program with an identification division but no PROGRAM-ID emits SEM006.
+
+        Previously this test asserted ``not ctx.has_errors`` because pass 3
+        (SemanticValidationVisitor) did not yet exist.  With TASK-021 pass 3
+        correctly flags missing PROGRAM-ID as SEM006.
+        """
         program = _program(ident=_ident_div(program_name=None))
         ctx = SemanticAnalyzer().analyse(program)
-        assert not ctx.has_errors
+        # Pass 3 emits SEM006 for the missing PROGRAM-ID.
+        codes = {d.code for d in ctx.diagnostics}
+        assert "SEM006" in codes
+        # Symbol table still has no program symbol (pass 1 couldn't register one).
         assert len(ctx.symbol_table.symbols_of_kind(SymbolKind.PROGRAM)) == 0
 
 
