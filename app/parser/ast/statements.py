@@ -54,6 +54,7 @@ from dataclasses import dataclass
 from app.parser.ast.node import ASTNode
 
 __all__ = [
+    "AcceptStatementNode",
     "DisplayStatementNode",
     "GobackStatementNode",
     "MoveStatementNode",
@@ -144,6 +145,55 @@ class DisplayStatementNode(StatementNode):
             The return value of the visitor method, or ``None``.
         """
         visit = getattr(visitor, "visit_display_statement", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class AcceptStatementNode(StatementNode):
+    """
+    Immutable AST node for a COBOL ``ACCEPT`` statement.
+
+    Captures the target operand token from immediately after ``ACCEPT`` up to
+    the terminating period as a single string.
+
+    COBOL syntax example::
+
+        ACCEPT WS-DATE.
+        ACCEPT WS-INPUT.
+
+    Attributes:
+        start_position:
+            Source position of the ``ACCEPT`` keyword.
+        end_position:
+            Source position of the terminating period.
+        target:
+            The raw operand text (e.g. ``'WS-DATE'``).
+
+    Examples:
+        >>> from app.parser.lexer.position import Position
+        >>> pos = Position(line=11, column=4, offset=220, filename="x.cbl")
+        >>> node = AcceptStatementNode(
+        ...     start_position=pos, end_position=pos, target="WS-DATE",
+        ... )
+        >>> node.target
+        'WS-DATE'
+    """
+
+    target: str
+
+    def accept(self, visitor: object) -> object:
+        """
+        Dispatch to ``visitor.visit_accept_statement(self)`` if available.
+
+        Args:
+            visitor: Any visitor object.
+
+        Returns:
+            The return value of the visitor method, or ``None``.
+        """
+        visit = getattr(visitor, "visit_accept_statement", None)
         if callable(visit):
             return visit(self)
         return None
