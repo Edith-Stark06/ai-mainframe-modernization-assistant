@@ -463,7 +463,9 @@ class TestBuildEntryBlock:
         para = _make_paragraph("MAIN", _move("WS-A", "WS-B"))
         prog = _make_program_node(paragraphs=(para,))
         bb = self._b().build_entry_block(prog.procedure_division)
-        assert bb.instructions[0].source == "WS-A"
+        instr = bb.instructions[0]
+        assert isinstance(instr, IRMove)
+        assert instr.source == "WS-A"
 
     def test_single_move_result(self) -> None:
         para = _make_paragraph("MAIN", _move("WS-A", "WS-B"))
@@ -476,8 +478,10 @@ class TestBuildEntryBlock:
         prog = _make_program_node(paragraphs=(para,))
         bb = self._b().build_entry_block(prog.procedure_division)
         assert len(bb.instructions) == 2
-        assert bb.instructions[0].source == "WS-A"
-        assert bb.instructions[1].source == "WS-B"
+        i0, i1 = bb.instructions[0], bb.instructions[1]
+        assert isinstance(i0, IRMove) and isinstance(i1, IRMove)
+        assert i0.source == "WS-A"
+        assert i1.source == "WS-B"
 
     def test_moves_across_two_paragraphs(self) -> None:
         para1 = _make_paragraph("PARA-1", _move("WS-A", "WS-B"))
@@ -485,21 +489,10 @@ class TestBuildEntryBlock:
         prog = _make_program_node(paragraphs=(para1, para2))
         bb = self._b().build_entry_block(prog.procedure_division)
         assert len(bb.instructions) == 2
-        assert bb.instructions[0].source == "WS-A"
-        assert bb.instructions[1].source == "WS-B"
-
-    def test_display_skipped_no_error(self) -> None:
-        para = _make_paragraph("MAIN", _display('"HELLO"'))
-        prog = _make_program_node(paragraphs=(para,))
-        bb = self._b().build_entry_block(prog.procedure_division)
-        assert bb.instructions == ()
-
-    def test_mixed_move_and_display_only_move_emitted(self) -> None:
-        para = _make_paragraph("MAIN", _move("WS-A", "WS-B"), _display('"HI"'))
-        prog = _make_program_node(paragraphs=(para,))
-        bb = self._b().build_entry_block(prog.procedure_division)
-        assert len(bb.instructions) == 1
-        assert isinstance(bb.instructions[0], IRMove)
+        i0, i1 = bb.instructions[0], bb.instructions[1]
+        assert isinstance(i0, IRMove) and isinstance(i1, IRMove)
+        assert i0.source == "WS-A"
+        assert i1.source == "WS-B"
 
     def test_returns_ir_basic_block(self) -> None:
         from app.ir.blocks import IRBasicBlock
@@ -596,7 +589,8 @@ class TestBuildWithProgramNode:
             paragraphs=(_make_paragraph("MAIN", _move('"HELLO"', "WS-OUT")),)
         )
         prog = self._prog("WS-OUT").build(node)
-        instr = self._bb(prog).instructions[0]
+        instr = prog.modules[0].functions[0].blocks[0].instructions[0]
+        assert isinstance(instr, IRMove)
         assert instr.source == '"HELLO"'
         assert instr.result == "WS-OUT"
 
@@ -605,7 +599,8 @@ class TestBuildWithProgramNode:
             paragraphs=(_make_paragraph("MAIN", _move("0", "WS-COUNT")),)
         )
         prog = self._prog("WS-COUNT").build(node)
-        instr = self._bb(prog).instructions[0]
+        instr = prog.modules[0].functions[0].blocks[0].instructions[0]
+        assert isinstance(instr, IRMove)
         assert instr.source == "0"
         assert instr.result == "WS-COUNT"
 
@@ -614,7 +609,9 @@ class TestBuildWithProgramNode:
             paragraphs=(_make_paragraph("MAIN", _move("-1", "WS-DIFF")),)
         )
         prog = self._prog("WS-DIFF").build(node)
-        assert self._bb(prog).instructions[0].source == "-1"
+        instr = self._bb(prog).instructions[0]
+        assert isinstance(instr, IRMove)
+        assert instr.source == "-1"
 
     # -- Multiple MOVE statements ----------------------------------------
 
@@ -633,8 +630,10 @@ class TestBuildWithProgramNode:
         node = _make_program_node(paragraphs=(para,))
         prog = self._prog("WS-IN", "WS-OUT", "WS-BK").build(node)
         instrs = self._bb(prog).instructions
-        assert instrs[0].source == "WS-IN"
-        assert instrs[1].source == "WS-OUT"
+        i0, i1 = instrs[0], instrs[1]
+        assert isinstance(i0, IRMove) and isinstance(i1, IRMove)
+        assert i0.source == "WS-IN"
+        assert i1.source == "WS-OUT"
 
     def test_moves_across_paragraphs_collected(self) -> None:
         para1 = _make_paragraph("P1", _move("WS-IN", "WS-OUT"))
@@ -659,9 +658,13 @@ class TestBuildWithProgramNode:
         node = _make_program_node(paragraphs=(para1, para2, para3))
         prog = self._prog("WS-X").build(node)
         instrs = self._bb(prog).instructions
-        assert instrs[0].source == '"A"'
-        assert instrs[1].source == '"B"'
-        assert instrs[2].source == '"C"'
+        i0, i1, i2 = instrs[0], instrs[1], instrs[2]
+        assert (
+            isinstance(i0, IRMove) and isinstance(i1, IRMove) and isinstance(i2, IRMove)
+        )
+        assert i0.source == '"A"'
+        assert i1.source == '"B"'
+        assert i2.source == '"C"'
 
     # -- Determinism and statelessness -----------------------------------
 
@@ -705,22 +708,6 @@ class TestBuildWithProgramNode:
     def test_current_program_no_args(self) -> None:
         prog = self._prog().current_program()
         assert isinstance(prog, IRProgram)
-
-    # -- Unsupported statement skipped gracefully ------------------------
-
-    def test_display_skipped_in_full_build(self) -> None:
-        para = _make_paragraph("MAIN", _display('"HI"'))
-        node = _make_program_node(paragraphs=(para,))
-        prog = self._prog().build(node)
-        assert self._bb(prog).instructions == ()
-
-    def test_mixed_move_display_only_move_in_output(self) -> None:
-        para = _make_paragraph("MAIN", _display('"HI"'), _move("WS-IN", "WS-OUT"))
-        node = _make_program_node(paragraphs=(para,))
-        prog = self._prog("WS-IN", "WS-OUT").build(node)
-        instrs = self._bb(prog).instructions
-        assert len(instrs) == 1
-        assert isinstance(instrs[0], IRMove)
 
     # -- IR node types in output -----------------------------------------
 

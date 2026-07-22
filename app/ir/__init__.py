@@ -21,6 +21,8 @@ Instruction hierarchy:
 
     * :class:`~app.ir.instructions.IRAssignment` — literal value assignment.
     * :class:`~app.ir.instructions.IRMove`        — operand-to-operand copy.
+    * :class:`~app.ir.instructions.IRDisplay`     — console output (DISPLAY).
+    * :class:`~app.ir.instructions.IRAccept`      — console input (ACCEPT).
     * :class:`~app.ir.instructions.IRCall`        — function/paragraph invocation.
     * :class:`~app.ir.instructions.IRReturn`      — function exit.
     * :class:`~app.ir.instructions.IRBranch`      — conditional/unconditional jump.
@@ -54,9 +56,11 @@ Project:
 from app.ir.blocks import IRBasicBlock
 from app.ir.builder import IRBuilder
 from app.ir.instructions import (
+    IRAccept,
     IRAssignment,
     IRBranch,
     IRCall,
+    IRDisplay,
     IRInstruction,
     IRMove,
     IRReturn,
@@ -66,11 +70,13 @@ from app.ir.program import IRFunction, IRModule, IRProgram
 from app.ir.visitors import IRVisitor, traverse_ir
 
 __all__ = [
+    "IRAccept",
     "IRAssignment",
     "IRBasicBlock",
     "IRBranch",
     "IRBuilder",
     "IRCall",
+    "IRDisplay",
     "IRFunction",
     "IRInstruction",
     "IRModule",
