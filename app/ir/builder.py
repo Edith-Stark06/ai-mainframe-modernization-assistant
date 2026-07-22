@@ -160,6 +160,7 @@ from app.ir.instructions import (
 from app.ir.program import IRFunction, IRModule, IRProgram
 from app.parser.semantic.context import SemanticContext
 from app.parser.semantic.symbols import ProgramSymbol, SymbolKind
+from app.parser.semantic.diagnostics import SemanticDiagnostic, SemanticSeverity
 
 if TYPE_CHECKING:
     from app.parser.ast.paragraphs import ParagraphNode
@@ -168,6 +169,7 @@ if TYPE_CHECKING:
     from app.parser.ast.statements import (
         AcceptStatementNode,
         AddStatementNode,
+        CallStatementNode,
         DisplayStatementNode,
         DivideStatementNode,
         GoToStatementNode,
@@ -544,9 +546,10 @@ class IRBuilder:
             An :class:`~app.ir.instructions.IRInstruction` if the statement was
             supported; ``None`` otherwise.
         """
-        from app.parser.ast.statements import (  # noqa: PLC0415
+        from app.parser.ast.statements import (
             AcceptStatementNode,
             AddStatementNode,
+            CallStatementNode,
             DisplayStatementNode,
             DivideStatementNode,
             GoToStatementNode,
@@ -601,6 +604,11 @@ class IRBuilder:
         if isinstance(stmt, GoToStatementNode):
             self.build_go_to_statement(stmt)
             return None
+        if isinstance(stmt, CallStatementNode):
+            instr_call = self.build_call_instruction(stmt)
+            if instr_call:
+                self._current_instructions.append(instr_call)
+            return instr_call
 
         logger.debug(
             "IRBuilder._translate_statement(): skipping unsupported "
@@ -978,3 +986,34 @@ class IRBuilder:
         if program_node is None:
             return None
         return program_node.procedure_division
+
+    def build_call_instruction(self, stmt: CallStatementNode) -> IRCall | None:
+        """
+        Lower a single ``CallStatementNode`` into an
+        :class:`~app.ir.instructions.IRCall`.
+        """
+        if not stmt.target:
+            self._context._diagnostics.append(
+                SemanticDiagnostic(
+                    severity=SemanticSeverity.ERROR,
+                    message="Missing target in CALL statement.",
+                    position=stmt.start_position,
+                    code="SEM009",
+                )
+            )
+            return None
+
+        target = self.build_operand(stmt.target)
+        if target.startswith('"') and target.endswith('"'):
+            target = target[1:-1]
+        elif target.startswith("'") and target.endswith("'"):
+            target = target[1:-1]
+
+        args = []
+        for arg in stmt.arguments:
+            args.append(self.build_operand(arg))
+
+        return IRCall(
+            target=target,
+            args=tuple(args),
+        )
