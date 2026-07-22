@@ -68,13 +68,17 @@ from app.ir.nodes import IRNode, IRNodeKind
 
 __all__ = [
     "IRAccept",
+    "IRAdd",
     "IRAssignment",
     "IRBranch",
     "IRCall",
     "IRDisplay",
+    "IRDivide",
     "IRInstruction",
     "IRMove",
+    "IRMultiply",
     "IRReturn",
+    "IRSubtract",
 ]
 
 
@@ -171,6 +175,70 @@ class IRAssignment(IRInstruction):
     def accept(self, visitor: Any) -> Any:
         """Dispatch to ``visitor.visit_assignment(self)``."""
         visit = getattr(visitor, "visit_assignment", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class IRAdd(IRInstruction):
+    """
+    Compute the sum of two operands.
+    """
+
+    left: str = field(default="")
+    right: str = field(default="")
+
+    def accept(self, visitor: Any) -> Any:
+        visit = getattr(visitor, "visit_add", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class IRSubtract(IRInstruction):
+    """
+    Compute the difference between two operands.
+    """
+
+    left: str = field(default="")
+    right: str = field(default="")
+
+    def accept(self, visitor: Any) -> Any:
+        visit = getattr(visitor, "visit_subtract", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class IRMultiply(IRInstruction):
+    """
+    Compute the product of two operands.
+    """
+
+    left: str = field(default="")
+    right: str = field(default="")
+
+    def accept(self, visitor: Any) -> Any:
+        visit = getattr(visitor, "visit_multiply", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class IRDivide(IRInstruction):
+    """
+    Compute the quotient of two operands.
+    """
+
+    left: str = field(default="")
+    right: str = field(default="")
+
+    def accept(self, visitor: Any) -> Any:
+        visit = getattr(visitor, "visit_divide", None)
         if callable(visit):
             return visit(self)
         return None
