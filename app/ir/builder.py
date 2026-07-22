@@ -147,9 +147,12 @@ from app.ir.blocks import IRBasicBlock
 from app.ir.instructions import (
     IRAccept,
     IRAdd,
+    IRCall,
+    IRConditionalBranch,
     IRDisplay,
     IRDivide,
     IRInstruction,
+    IRJump,
     IRMove,
     IRMultiply,
     IRSubtract,
@@ -167,8 +170,11 @@ if TYPE_CHECKING:
         AddStatementNode,
         DisplayStatementNode,
         DivideStatementNode,
+        GoToStatementNode,
+        IfStatementNode,
         MoveStatementNode,
         MultiplyStatementNode,
+        PerformStatementNode,
         StatementNode,
         SubtractStatementNode,
     )
@@ -249,9 +255,13 @@ class IRBuilder:
         """
         if not isinstance(context, SemanticContext):
             raise TypeError(
-                f"IRBuilder requires a SemanticContext, got {type(context).__name__!r}."
+                f"context must be a SemanticContext, got {type(context).__name__}"
             )
-        self._context: SemanticContext = context
+        self._context = context
+        self._blocks: list[IRBasicBlock] = []
+        self._current_instructions: list[IRInstruction] = []
+        self._current_label: str = _ENTRY_BLOCK_LABEL
+        self._block_counter: int = 0
         logger.debug("IRBuilder: initialised with semantic context.")
 
         if context.has_errors:
@@ -412,13 +422,13 @@ class IRBuilder:
             An :class:`~app.ir.program.IRFunction` containing one entry block.
         """
         entry_block = self.build_entry_block(proc_div)
+        blocks = tuple(self._blocks) if self._blocks else (entry_block,)
         logger.debug(
-            "IRBuilder.build_function(): entry block label={!r}, "
-            "instruction count={}.",
-            entry_block.label,
-            len(entry_block),
+            "IRBuilder.build_function(): entry block label={!r}, " "total blocks={}.",
+            blocks[0].label,
+            len(blocks),
         )
-        return IRFunction(name=function_name, blocks=(entry_block,))
+        return IRFunction(name=function_name, blocks=blocks)
 
     def build_entry_block(
         self,
@@ -454,26 +464,56 @@ class IRBuilder:
             containing zero or more :class:`~app.ir.instructions.IRInstruction`
             instructions.
         """
-        instructions: list[IRInstruction] = []
+        self._blocks = []
+        self._current_instructions = []
+        self._current_label = _ENTRY_BLOCK_LABEL
+        self._block_counter = 0
 
         if proc_div is not None:
             for para in proc_div.paragraphs:
-                instructions.extend(self._translate_paragraph(para))
+                self._translate_paragraph(para)
+
+        self._flush_block()
+        blocks = tuple(self._blocks)
 
         logger.debug(
-            "IRBuilder.build_entry_block(): emitted {} instruction(s).",
-            len(instructions),
+            "IRBuilder.build_entry_block(): emitted {} blocks.",
+            len(blocks),
         )
-        return IRBasicBlock(
-            label=_ENTRY_BLOCK_LABEL,
-            instructions=tuple(instructions),
+        # To not break tests that expect a single block from build_entry_block,
+        # we return the first block (which is always the entry block).
+        # Functions should use blocks from `_blocks` in build_function.
+        return (
+            blocks[0]
+            if blocks
+            else IRBasicBlock(label=_ENTRY_BLOCK_LABEL, instructions=())
         )
+
+    # ------------------------------------------------------------------
+    # Block management
+    # ------------------------------------------------------------------
+
+    def _generate_label(self, prefix: str) -> str:
+        self._block_counter += 1
+        return f"{prefix}_{self._block_counter}"
+
+    def _flush_block(self) -> None:
+        block = IRBasicBlock(
+            label=self._current_label,
+            instructions=tuple(self._current_instructions),
+        )
+        self._blocks.append(block)
+        self._current_instructions = []
+
+    def _start_block(self, label: str) -> None:
+        self._flush_block()
+        self._current_label = label
 
     # ------------------------------------------------------------------
     # Statement translation helpers
     # ------------------------------------------------------------------
 
-    def _translate_paragraph(self, para: ParagraphNode) -> list[IRInstruction]:
+    def _translate_paragraph(self, para: ParagraphNode) -> None:
         """
         Translate supported statements in a paragraph into IR instructions.
 
@@ -483,16 +523,9 @@ class IRBuilder:
             para:
                 The :class:`~app.parser.ast.paragraphs.ParagraphNode` to
                 translate.
-
-        Returns:
-            An ordered list of :class:`~app.ir.instructions.IRInstruction` objects.
         """
-        result: list[IRInstruction] = []
         for stmt in para.statements:
-            ir_instr = self._translate_statement(stmt)
-            if ir_instr is not None:
-                result.append(ir_instr)
-        return result
+            self._translate_statement(stmt)
 
     def _translate_statement(self, stmt: StatementNode) -> IRInstruction | None:
         """
@@ -516,25 +549,58 @@ class IRBuilder:
             AddStatementNode,
             DisplayStatementNode,
             DivideStatementNode,
+            GoToStatementNode,
+            IfStatementNode,
             MoveStatementNode,
             MultiplyStatementNode,
+            PerformStatementNode,
             SubtractStatementNode,
         )
 
         if isinstance(stmt, MoveStatementNode):
-            return self.build_move_instruction(stmt)
+            instr_move = self.build_move_instruction(stmt)
+            if instr_move:
+                self._current_instructions.append(instr_move)
+            return instr_move
         if isinstance(stmt, DisplayStatementNode):
-            return self.build_display_instruction(stmt)
+            instr_disp = self.build_display_instruction(stmt)
+            if instr_disp:
+                self._current_instructions.append(instr_disp)
+            return instr_disp
         if isinstance(stmt, AcceptStatementNode):
-            return self.build_accept_instruction(stmt)
+            instr_acc = self.build_accept_instruction(stmt)
+            if instr_acc:
+                self._current_instructions.append(instr_acc)
+            return instr_acc
         if isinstance(stmt, AddStatementNode):
-            return self.build_add_instruction(stmt)
+            instr_add = self.build_add_instruction(stmt)
+            if instr_add:
+                self._current_instructions.append(instr_add)
+            return instr_add
         if isinstance(stmt, SubtractStatementNode):
-            return self.build_subtract_instruction(stmt)
+            instr_sub = self.build_subtract_instruction(stmt)
+            if instr_sub:
+                self._current_instructions.append(instr_sub)
+            return instr_sub
         if isinstance(stmt, MultiplyStatementNode):
-            return self.build_multiply_instruction(stmt)
+            instr_mul = self.build_multiply_instruction(stmt)
+            if instr_mul:
+                self._current_instructions.append(instr_mul)
+            return instr_mul
         if isinstance(stmt, DivideStatementNode):
-            return self.build_divide_instruction(stmt)
+            instr_div = self.build_divide_instruction(stmt)
+            if instr_div:
+                self._current_instructions.append(instr_div)
+            return instr_div
+        if isinstance(stmt, IfStatementNode):
+            self.build_if_statement(stmt)
+            return None
+        if isinstance(stmt, PerformStatementNode):
+            self.build_perform_statement(stmt)
+            return None
+        if isinstance(stmt, GoToStatementNode):
+            self.build_go_to_statement(stmt)
+            return None
 
         logger.debug(
             "IRBuilder._translate_statement(): skipping unsupported "
@@ -663,6 +729,58 @@ class IRBuilder:
             ir_right,
         )
         return IRDivide(left=ir_left, right=ir_right)
+
+    def build_if_statement(self, stmt: IfStatementNode) -> None:
+        """
+        Lower a single ``IfStatementNode`` into a control flow graph.
+        """
+        if not stmt.condition:
+            logger.warning("Incomplete IF node: missing condition. Continuing.")
+            condition_operand = ""
+        else:
+            condition_operand = self.build_operand(stmt.condition)
+
+        then_label = self._generate_label("if_then")
+        merge_label = self._generate_label("if_merge")
+        else_label = (
+            self._generate_label("if_else") if stmt.else_statements else merge_label
+        )
+
+        branch = IRConditionalBranch(
+            condition=condition_operand, then_target=then_label, else_target=else_label
+        )
+        self._current_instructions.append(branch)
+
+        self._start_block(then_label)
+        for then_stmt in stmt.then_statements:
+            self._translate_statement(then_stmt)
+        self._current_instructions.append(IRJump(target=merge_label))
+
+        if stmt.else_statements:
+            self._start_block(else_label)
+            for else_stmt in stmt.else_statements:
+                self._translate_statement(else_stmt)
+            self._current_instructions.append(IRJump(target=merge_label))
+
+        self._start_block(merge_label)
+
+    def build_perform_statement(self, stmt: PerformStatementNode) -> None:
+        """
+        Lower a single ``PerformStatementNode`` into an ``IRCall``.
+        """
+        if not stmt.target:
+            logger.warning("Unsupported PERFORM form: missing target. Continuing.")
+        else:
+            self._current_instructions.append(IRCall(target=stmt.target))
+
+    def build_go_to_statement(self, stmt: GoToStatementNode) -> None:
+        """
+        Lower a single ``GoToStatementNode`` into an ``IRJump``.
+        """
+        if not stmt.target:
+            logger.warning("Unresolved target in GO TO statement. Continuing.")
+        else:
+            self._current_instructions.append(IRJump(target=stmt.target))
 
     # ------------------------------------------------------------------
     # Operand translation helpers (reusable by future passes)

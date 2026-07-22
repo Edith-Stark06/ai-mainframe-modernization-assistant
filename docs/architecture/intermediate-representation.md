@@ -249,19 +249,31 @@ IRReturn()                       # void return
 |-------|-------------|
 | `operand` | Operand to return (`""` for void) |
 
-### IRBranch
+### IRConditionalBranch
 
-Transfer control, conditionally or unconditionally.
+Transfer control to one of two target blocks based on a guard condition.
 
 ```python
-IRBranch(target="MAIN-EXIT")                       # unconditional
-IRBranch(target="EOF-HANDLER", condition="WS-EOF") # conditional
+IRConditionalBranch(condition="WS-EOF", then_target="EOF-HANDLER", else_target="MAIN-EXIT")
+```
+
+| Field | Description |
+|-------|-------------|
+| `condition` | Guard operand |
+| `then_target` | Label to jump to if condition is true |
+| `else_target` | Label to jump to if condition is false |
+
+### IRJump
+
+Unconditionally transfer control to a target block.
+
+```python
+IRJump(target="MAIN-EXIT")
 ```
 
 | Field | Description |
 |-------|-------------|
 | `target` | Label to jump to |
-| `condition` | Guard operand (`""` = unconditional) |
 
 ---
 
@@ -285,7 +297,8 @@ class IRVisitor:
     def visit_accept(self, node: IRAccept) -> Any: ...
     def visit_call(self, node: IRCall) -> Any: ...
     def visit_return(self, node: IRReturn) -> Any: ...
-    def visit_branch(self, node: IRBranch) -> Any: ...
+    def visit_conditional_branch(self, node: IRConditionalBranch) -> Any: ...
+    def visit_jump(self, node: IRJump) -> Any: ...
     def visit_instruction(self, node: IRInstruction) -> Any: ...  # fallback
 ```
 
@@ -316,7 +329,8 @@ class InstructionCounter(IRVisitor):
     def visit_assignment(self, node): self.count += 1
     def visit_call(self, node):       self.count += 1
     def visit_return(self, node):     self.count += 1
-    def visit_branch(self, node):     self.count += 1
+    def visit_conditional_branch(self, node): self.count += 1
+    def visit_jump(self, node):               self.count += 1
 
 counter = InstructionCounter()
 traverse_ir(program, counter)
@@ -445,14 +459,30 @@ Subclass `IRBuilder` and override any naming helper to customise conventions
 
 | Extension | Where to add |
 |-----------|-------------|
-| **✅ TASK-026** Translate MOVE statements | `build_entry_block()` — iterates paragraphs, emits `IRMove` |
-| Translate DISPLAY statements | `build_entry_block()` — emit `IRCall` |
-| Translate IF / EVALUATE | `build_function()` — emit additional `IRBasicBlock` + `IRBranch` |
-| Translate PERFORM | `build_function()` — emit `IRCall` |
-| Translate GO TO | `build_function()` — emit unconditional `IRBranch` |
-| Translate arithmetic | `build_entry_block()` — emit `IRAssignment` |
-| Multiple paragraphs → multiple functions | `build_module()` — iterate `ParagraphSymbol` list |
-| Nested programs → multiple modules | `build_program()` — iterate nested `ProgramSymbol` list |
+| **✅ TASK-027** Translate DISPLAY / ACCEPT statements | `_translate_statement()` — emits `IRDisplay` / `IRAccept` |
+| **✅ TASK-028** Translate Arithmetic statements | `_translate_statement()` — emits `IRAdd`, `IRSubtract`, `IRMultiply`, `IRDivide` |
+| **✅ TASK-029** Translate Control Flow statements | `_translate_statement()` — emits `IRConditionalBranch`, `IRJump`, `IRCall`, generates basic blocks |
+| Translate STOP RUN / GOBACK | `_translate_statement()` — emit `IRReturn` |
+
+---
+
+## Control-Flow Graph Construction (TASK-029)
+
+`IRBuilder` tracks control flow state during AST traversal to emit multi-block `IRFunction`s:
+
+1. **Stateful Traversal**:
+   - Maintains a current active basic block (initially `entry`).
+   - Translates statements iteratively into `_current_instructions`.
+2. **Branch Lowering**:
+   - Encounters an `IfStatementNode`.
+   - Generates unique block labels (e.g., `if_then_1`, `if_else_1`, `if_merge_1`).
+   - Emits an `IRConditionalBranch` in the active block pointing to `then` and `else` blocks.
+   - Starts translation inside the `then` block, appending an `IRJump` to the `merge` block when finished.
+   - Starts translation inside the `else` block (if present), appending an `IRJump` to the `merge` block when finished.
+   - Finalizes the `IF` statement by starting the `merge` block as the new active block.
+3. **Graph Finalisation**:
+   - Flushes the current block and collects all populated `IRBasicBlock` instances.
+   - Packages blocks sequentially into the parent `IRFunction`.
 
 ---
 
