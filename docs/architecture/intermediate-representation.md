@@ -28,7 +28,7 @@ COBOL Source
   Semantic Analyser
       │  (SemanticContext — symbol table, types, diagnostics)
       ▼
-  IR Builder  (TASK-024 scaffold; translation in TASK-025+)
+  IR Builder  (structural translation implemented in TASK-025)
       │  (IRProgram)
       ▼
   IR Optimiser  (future)
@@ -39,11 +39,6 @@ COBOL Source
       ▼
   Java / Spring Boot Output
 ```
-
-> [!NOTE]
-> The `IRBuilder` introduced in TASK-024 is a scaffold. It accepts a
-> `SemanticContext` and returns an empty `IRProgram`. Translation logic
-> will be added in TASK-025 and later tasks.
 
 ---
 
@@ -57,7 +52,7 @@ app/ir/
 ├── blocks.py         — IRBasicBlock
 ├── program.py        — IRProgram, IRModule, IRFunction
 ├── visitors.py       — IRVisitor base + traverse_ir()
-└── builder.py        — IRBuilder scaffold
+└── builder.py        — IRBuilder (structural translation)
 ```
 
 ---
@@ -362,10 +357,64 @@ without requiring a parser.
 
 ---
 
-## TASK-024 Test Coverage
+## AST-to-IR Translation Pipeline (TASK-025)
 
-The `tests/ir/test_ir_foundation.py` suite covers (161 tests):
+### Overview
 
+`IRBuilder.build()` translates a `SemanticContext` into a structured
+`IRProgram` using four focused helper methods:
+
+| Method | Input | Output |
+|--------|-------|--------|
+| `build_program(prog_name)` | Program name string | `IRProgram` with one `IRModule` |
+| `build_module(module_name)` | Module name string | `IRModule` with one `IRFunction` |
+| `build_function(function_name)` | Function name string | `IRFunction` with one entry `IRBasicBlock` |
+| `build_entry_block()` | — | Empty `IRBasicBlock(label="entry")` |
+
+### Translation Mapping
+
+```
+SemanticContext
+     │
+     ├─ ProgramSymbol.name ─────────────────────────► IRProgram.name
+     │                                                 IRModule.name
+     │
+     └─ (always)  ──────────────────────────────────► IRFunction("__entry__")
+                                                       IRBasicBlock("entry")
+```
+
+### Naming Helpers
+
+Naming is delegated to three overridable methods:
+
+| Method | Default | Purpose |
+|--------|---------|--------|
+| `_program_name()` | First `ProgramSymbol.name`, or `""` | Derives IRProgram name |
+| `_module_name(prog_name)` | `prog_name` (identity) | Derives IRModule name |
+| `_function_name()` | `"__entry__"` | Derives entry function name |
+
+Subclass `IRBuilder` and override any naming helper to customise conventions
+(e.g. Java package prefixes) without touching orchestration logic.
+
+### Extension Points for Future Tasks
+
+| Extension | Where to add |
+|-----------|-------------|
+| Translate MOVE / DISPLAY statements | `build_entry_block()` — emit `IRMove` / `IRCall` |
+| Translate IF / EVALUATE | `build_function()` — emit additional `IRBasicBlock` + `IRBranch` |
+| Translate PERFORM | `build_function()` — emit `IRCall` |
+| Translate GO TO | `build_function()` — emit unconditional `IRBranch` |
+| Translate arithmetic | `build_entry_block()` — emit `IRAssignment` |
+| Multiple paragraphs → multiple functions | `build_module()` — iterate `ParagraphSymbol` list |
+| Nested programs → multiple modules | `build_program()` — iterate nested `ProgramSymbol` list |
+
+---
+
+## TASK-024 + TASK-025 Test Coverage
+
+The `tests/ir/test_ir_foundation.py` suite covers (221 tests):
+
+**TASK-024 — IR Foundation (161 tests):**
 - `IRNodeKind`: all 5 values, uniqueness.
 - `IRNode`: cannot instantiate abstract class.
 - `IRBasicBlock`: construction, label/name sync, `len()`, kind, frozen, hashable, equality, `accept()`.
@@ -373,7 +422,21 @@ The `tests/ir/test_ir_foundation.py` suite covers (161 tests):
 - `IRAssignment`, `IRMove`, `IRCall`, `IRReturn`, `IRBranch`: construction, defaults, fields, frozen, hashable, equality, `accept()` dispatch, no-method fallback.
 - `IRFunction`, `IRModule`, `IRProgram`: construction, defaults, `len()`, kind, frozen, hashable, `accept()`.
 - `IRVisitor`: all hooks return `None` by default; subclass can override.
-- `traverse_ir()`: visit order (program → module → function → block → instruction), all instruction types dispatched, empty nodes at every level, multi-module/function/block programs, instruction-counting visitor.
-- `IRBuilder`: valid context accepted, `TypeError` for wrong input, `context` property, `build()` returns `IRProgram`, empty result, reusability, context-with-errors accepted (warning logged).
-- Instruction hierarchy isinstance checks (all types are `IRInstruction` and `IRNode`).
-- Public API exports (all 15 types exported from `app.ir`).
+- `traverse_ir()`: visit order, all instruction types dispatched, empty nodes, multi-level programs, counting visitor.
+- `IRBuilder`: input validation, `context` property, `build()` returns `IRProgram`, reusability, error-context tolerance.
+- Instruction hierarchy isinstance checks; public API exports.
+
+**TASK-025 — Translation Foundation (60 tests):**
+- Empty context → one unnamed module with one `__entry__` function and one `"entry"` block.
+- Named `ProgramSymbol` → correct name propagation at every IR level.
+- Multiple program name variations.
+- IR node kinds at each level.
+- `build()` determinism and statelessness.
+- Traversal order via `traverse_ir()`.
+- Error-context tolerance (context with semantic errors still produces full IR structure).
+- Individual helper methods: `build_program`, `build_module`, `build_function`, `build_entry_block`.
+- Naming helpers: `_program_name`, `_module_name`, `_function_name`.
+- Subclass extensibility: override naming, override entry block generation.
+- Structure invariants: frozen, hashable, correct types at each level.
+- Context with paragraphs and variables: still one module, correct program name.
+- `current_program()` contract.
