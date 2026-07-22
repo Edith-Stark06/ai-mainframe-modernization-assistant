@@ -78,13 +78,17 @@ if TYPE_CHECKING:
     from app.ir.blocks import IRBasicBlock
     from app.ir.instructions import (
         IRAccept,
+        IRAdd,
         IRAssignment,
         IRBranch,
         IRCall,
         IRDisplay,
+        IRDivide,
         IRInstruction,
         IRMove,
+        IRMultiply,
         IRReturn,
+        IRSubtract,
     )
     from app.ir.program import IRFunction, IRModule, IRProgram
 
@@ -120,6 +124,10 @@ class IRVisitor:
     ``visit_move``                    :class:`~app.ir.instructions.IRMove`
     ``visit_display``                 :class:`~app.ir.instructions.IRDisplay`
     ``visit_accept``                  :class:`~app.ir.instructions.IRAccept`
+    ``visit_add``                     :class:`~app.ir.instructions.IRAdd`
+    ``visit_subtract``                :class:`~app.ir.instructions.IRSubtract`
+    ``visit_multiply``                :class:`~app.ir.instructions.IRMultiply`
+    ``visit_divide``                  :class:`~app.ir.instructions.IRDivide`
     ``visit_call``                    :class:`~app.ir.instructions.IRCall`
     ``visit_return``                  :class:`~app.ir.instructions.IRReturn`
     ``visit_branch``                  :class:`~app.ir.instructions.IRBranch`
@@ -202,10 +210,34 @@ class IRVisitor:
         Visit an :class:`~app.ir.instructions.IRAssignment`.
 
         Args:
-            node: The assignment instruction.
+            node: The assignment instruction node.
 
         Returns:
             ``None`` by default.
+        """
+        return None
+
+    def visit_add(self, node: IRAdd) -> Any:
+        """
+        Visit an :class:`~app.ir.instructions.IRAdd`.
+        """
+        return None
+
+    def visit_subtract(self, node: IRSubtract) -> Any:
+        """
+        Visit an :class:`~app.ir.instructions.IRSubtract`.
+        """
+        return None
+
+    def visit_multiply(self, node: IRMultiply) -> Any:
+        """
+        Visit an :class:`~app.ir.instructions.IRMultiply`.
+        """
+        return None
+
+    def visit_divide(self, node: IRDivide) -> Any:
+        """
+        Visit an :class:`~app.ir.instructions.IRDivide`.
         """
         return None
 

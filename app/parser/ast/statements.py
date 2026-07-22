@@ -55,11 +55,15 @@ from app.parser.ast.node import ASTNode
 
 __all__ = [
     "AcceptStatementNode",
+    "AddStatementNode",
     "DisplayStatementNode",
+    "DivideStatementNode",
     "GobackStatementNode",
     "MoveStatementNode",
+    "MultiplyStatementNode",
     "StatementNode",
     "StopRunStatementNode",
+    "SubtractStatementNode",
 ]
 
 
@@ -249,6 +253,70 @@ class MoveStatementNode(StatementNode):
             The return value of the visitor method, or ``None``.
         """
         visit = getattr(visitor, "visit_move_statement", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class AddStatementNode(StatementNode):
+    """
+    Immutable AST node for a COBOL ``ADD ... TO ...`` statement.
+    """
+
+    left: str
+    right: str
+
+    def accept(self, visitor: object) -> object:
+        visit = getattr(visitor, "visit_add_statement", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class SubtractStatementNode(StatementNode):
+    """
+    Immutable AST node for a COBOL ``SUBTRACT ... FROM ...`` statement.
+    """
+
+    left: str
+    right: str
+
+    def accept(self, visitor: object) -> object:
+        visit = getattr(visitor, "visit_subtract_statement", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class MultiplyStatementNode(StatementNode):
+    """
+    Immutable AST node for a COBOL ``MULTIPLY ... BY ...`` statement.
+    """
+
+    left: str
+    right: str
+
+    def accept(self, visitor: object) -> object:
+        visit = getattr(visitor, "visit_multiply_statement", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class DivideStatementNode(StatementNode):
+    """
+    Immutable AST node for a COBOL ``DIVIDE ... INTO ...`` statement.
+    """
+
+    left: str
+    right: str
+
+    def accept(self, visitor: object) -> object:
+        visit = getattr(visitor, "visit_divide_statement", None)
         if callable(visit):
             return visit(self)
         return None

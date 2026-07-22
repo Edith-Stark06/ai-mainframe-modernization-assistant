@@ -144,7 +144,16 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from app.ir.blocks import IRBasicBlock
-from app.ir.instructions import IRAccept, IRDisplay, IRInstruction, IRMove
+from app.ir.instructions import (
+    IRAccept,
+    IRAdd,
+    IRDisplay,
+    IRDivide,
+    IRInstruction,
+    IRMove,
+    IRMultiply,
+    IRSubtract,
+)
 from app.ir.program import IRFunction, IRModule, IRProgram
 from app.parser.semantic.context import SemanticContext
 from app.parser.semantic.symbols import ProgramSymbol, SymbolKind
@@ -155,9 +164,13 @@ if TYPE_CHECKING:
     from app.parser.ast.program import ProgramNode
     from app.parser.ast.statements import (
         AcceptStatementNode,
+        AddStatementNode,
         DisplayStatementNode,
+        DivideStatementNode,
         MoveStatementNode,
+        MultiplyStatementNode,
         StatementNode,
+        SubtractStatementNode,
     )
 
 __all__ = ["IRBuilder"]
@@ -500,8 +513,12 @@ class IRBuilder:
         """
         from app.parser.ast.statements import (  # noqa: PLC0415
             AcceptStatementNode,
+            AddStatementNode,
             DisplayStatementNode,
+            DivideStatementNode,
             MoveStatementNode,
+            MultiplyStatementNode,
+            SubtractStatementNode,
         )
 
         if isinstance(stmt, MoveStatementNode):
@@ -510,6 +527,14 @@ class IRBuilder:
             return self.build_display_instruction(stmt)
         if isinstance(stmt, AcceptStatementNode):
             return self.build_accept_instruction(stmt)
+        if isinstance(stmt, AddStatementNode):
+            return self.build_add_instruction(stmt)
+        if isinstance(stmt, SubtractStatementNode):
+            return self.build_subtract_instruction(stmt)
+        if isinstance(stmt, MultiplyStatementNode):
+            return self.build_multiply_instruction(stmt)
+        if isinstance(stmt, DivideStatementNode):
+            return self.build_divide_instruction(stmt)
 
         logger.debug(
             "IRBuilder._translate_statement(): skipping unsupported "
@@ -590,6 +615,54 @@ class IRBuilder:
             ir_target,
         )
         return IRAccept(result=ir_target)
+
+    def build_add_instruction(self, stmt: AddStatementNode) -> IRAdd:
+        ir_left = self.build_operand(stmt.left)
+        ir_right = self.build_operand(stmt.right)
+        logger.debug(
+            "IRBuilder.build_add_instruction(): ADD {!r} TO {!r} → IRAdd(left={!r}, right={!r}).",
+            stmt.left,
+            stmt.right,
+            ir_left,
+            ir_right,
+        )
+        return IRAdd(left=ir_left, right=ir_right)
+
+    def build_subtract_instruction(self, stmt: SubtractStatementNode) -> IRSubtract:
+        ir_left = self.build_operand(stmt.left)
+        ir_right = self.build_operand(stmt.right)
+        logger.debug(
+            "IRBuilder.build_subtract_instruction(): SUBTRACT {!r} FROM {!r} → IRSubtract(left={!r}, right={!r}).",
+            stmt.left,
+            stmt.right,
+            ir_left,
+            ir_right,
+        )
+        return IRSubtract(left=ir_left, right=ir_right)
+
+    def build_multiply_instruction(self, stmt: MultiplyStatementNode) -> IRMultiply:
+        ir_left = self.build_operand(stmt.left)
+        ir_right = self.build_operand(stmt.right)
+        logger.debug(
+            "IRBuilder.build_multiply_instruction(): MULTIPLY {!r} BY {!r} → IRMultiply(left={!r}, right={!r}).",
+            stmt.left,
+            stmt.right,
+            ir_left,
+            ir_right,
+        )
+        return IRMultiply(left=ir_left, right=ir_right)
+
+    def build_divide_instruction(self, stmt: DivideStatementNode) -> IRDivide:
+        ir_left = self.build_operand(stmt.left)
+        ir_right = self.build_operand(stmt.right)
+        logger.debug(
+            "IRBuilder.build_divide_instruction(): DIVIDE {!r} INTO {!r} → IRDivide(left={!r}, right={!r}).",
+            stmt.left,
+            stmt.right,
+            ir_left,
+            ir_right,
+        )
+        return IRDivide(left=ir_left, right=ir_right)
 
     # ------------------------------------------------------------------
     # Operand translation helpers (reusable by future passes)
