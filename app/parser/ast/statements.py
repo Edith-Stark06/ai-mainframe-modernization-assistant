@@ -56,6 +56,7 @@ from app.parser.ast.node import ASTNode
 __all__ = [
     "AcceptStatementNode",
     "AddStatementNode",
+    "CallStatementNode",
     "DisplayStatementNode",
     "DivideStatementNode",
     "GoToStatementNode",
@@ -447,6 +448,22 @@ class GoToStatementNode(StatementNode):
 
     def accept(self, visitor: object) -> object:
         visit = getattr(visitor, "visit_go_to_statement", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class CallStatementNode(StatementNode):
+    """
+    Immutable AST node for a COBOL ``CALL`` statement.
+    """
+
+    target: str
+    arguments: tuple[str, ...] = ()
+
+    def accept(self, visitor: object) -> object:
+        visit = getattr(visitor, "visit_call_statement", None)
         if callable(visit):
             return visit(self)
         return None

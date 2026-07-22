@@ -459,10 +459,11 @@ Subclass `IRBuilder` and override any naming helper to customise conventions
 
 | Extension | Where to add |
 |-----------|-------------|
-| **✅ TASK-027** Translate DISPLAY / ACCEPT statements | `_translate_statement()` — emits `IRDisplay` / `IRAccept` |
-| **✅ TASK-028** Translate Arithmetic statements | `_translate_statement()` — emits `IRAdd`, `IRSubtract`, `IRMultiply`, `IRDivide` |
-| **✅ TASK-029** Translate Control Flow statements | `_translate_statement()` — emits `IRConditionalBranch`, `IRJump`, `IRCall`, generates basic blocks |
-| Translate STOP RUN / GOBACK | `_translate_statement()` — emit `IRReturn` |
+| **✅ TASK-027** Translate DISPLAY / ACCEPT statements | `_translate_statement()` → emits `IRDisplay` / `IRAccept` |
+| **✅ TASK-028** Translate Arithmetic statements | `_translate_statement()` → emits `IRAdd`, `IRSubtract`, `IRMultiply`, `IRDivide` |
+| **✅ TASK-029** Translate Control Flow statements | `_translate_statement()` → emits `IRConditionalBranch`, `IRJump`, generates basic blocks |
+| **✅ TASK-030** Translate CALL statements | `_translate_statement()` → emits `IRCall` |
+| Translate STOP RUN / GOBACK | `_translate_statement()` → emit `IRReturn` |
 
 ---
 
