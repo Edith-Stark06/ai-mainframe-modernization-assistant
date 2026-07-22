@@ -70,11 +70,12 @@ __all__ = [
     "IRAccept",
     "IRAdd",
     "IRAssignment",
-    "IRBranch",
     "IRCall",
+    "IRConditionalBranch",
     "IRDisplay",
     "IRDivide",
     "IRInstruction",
+    "IRJump",
     "IRMove",
     "IRMultiply",
     "IRReturn",
@@ -358,42 +359,52 @@ class IRReturn(IRInstruction):
 
 
 @dataclass(frozen=True)
-class IRBranch(IRInstruction):
+class IRConditionalBranch(IRInstruction):
     """
-    Transfer control to a target label, conditionally or unconditionally.
+    Conditionally transfer control to one of two target blocks.
 
-    :class:`IRBranch` models both unconditional jumps (``condition = ""``)
-    and conditional branches (``condition`` names a boolean-valued operand).
+    Attributes:
+        result:
+            Unused (always ``""``); inherited from :class:`IRInstruction`.
+        condition:
+            Name of the operand that controls the branch.
+        then_target:
+            Name of the basic block to jump to if condition is true.
+        else_target:
+            Name of the basic block to jump to if condition is false.
+        comment:
+            Optional annotation.
+    """
+
+    condition: str = field(default="")
+    then_target: str = field(default="")
+    else_target: str = field(default="")
+
+    def accept(self, visitor: Any) -> Any:
+        visit = getattr(visitor, "visit_conditional_branch", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class IRJump(IRInstruction):
+    """
+    Unconditionally transfer control to a target block.
 
     Attributes:
         result:
             Unused (always ``""``); inherited from :class:`IRInstruction`.
         target:
-            Name of the label or basic block to jump to.
-        condition:
-            Name of the operand that controls the branch.  Empty string
-            denotes an unconditional branch.
+            Name of the basic block to jump to.
         comment:
             Optional annotation.
-
-    Examples:
-        >>> from app.ir.instructions import IRBranch
-        >>> jmp = IRBranch(target="MAIN-EXIT")
-        >>> jmp.target
-        'MAIN-EXIT'
-        >>> jmp.condition
-        ''
-        >>> cond = IRBranch(target="EOF-HANDLER", condition="WS-EOF-FLAG")
-        >>> cond.condition
-        'WS-EOF-FLAG'
     """
 
     target: str = field(default="")
-    condition: str = field(default="")
 
     def accept(self, visitor: Any) -> Any:
-        """Dispatch to ``visitor.visit_branch(self)``."""
-        visit = getattr(visitor, "visit_branch", None)
+        visit = getattr(visitor, "visit_jump", None)
         if callable(visit):
             return visit(self)
         return None

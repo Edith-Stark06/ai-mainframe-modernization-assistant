@@ -145,11 +145,12 @@ import pytest
 from app.ir import (
     IRAssignment,
     IRBasicBlock,
-    IRBranch,
     IRBuilder,
     IRCall,
+    IRConditionalBranch,
     IRFunction,
     IRInstruction,
+    IRJump,
     IRModule,
     IRMove,
     IRNode,
@@ -176,8 +177,8 @@ def _simple_program(name: str = "PROG") -> IRProgram:
     move = IRMove(result="WS-OUT", source="WS-IN")
     call = IRCall(target="PROCESS-RECORD", args=("ARG1",))
     ret = IRReturn(operand="WS-RESULT")
-    branch = IRBranch(target="EOF-HANDLER", condition="WS-EOF-FLAG")
-    bb = IRBasicBlock(label="entry", instructions=(assign, move, call, ret, branch))
+    jump = IRJump(target="EOF-HANDLER")
+    bb = IRBasicBlock(label="entry", instructions=(assign, move, call, ret, jump))
     fn = IRFunction(name="MAIN", blocks=(bb,))
     mod = IRModule(name="MODULE-A", functions=(fn,))
     return IRProgram(name=name, modules=(mod,))
@@ -503,60 +504,55 @@ class TestIRReturn:
 
 
 # ===========================================================================
-# IRBranch
+# IRConditionalBranch and IRJump
 # ===========================================================================
 
 
-class TestIRBranch:
-    """IRBranch construction, immutability, visitor dispatch."""
+class TestBranching:
+    """Branching instruction construction and behaviour."""
 
-    def test_target_stored(self) -> None:
-        assert IRBranch(target="MAIN-EXIT").target == "MAIN-EXIT"
+    def test_conditional_branch(self) -> None:
+        cond = IRConditionalBranch(
+            condition="WS-FLAG", then_target="TRUE-BLOCK", else_target="FALSE-BLOCK"
+        )
+        assert cond.condition == "WS-FLAG"
+        assert cond.then_target == "TRUE-BLOCK"
+        assert cond.else_target == "FALSE-BLOCK"
 
-    def test_condition_default_empty(self) -> None:
-        assert IRBranch(target="X").condition == ""
+    def test_jump(self) -> None:
+        jmp = IRJump(target="EXIT-BLOCK")
+        assert jmp.target == "EXIT-BLOCK"
 
-    def test_condition_stored(self) -> None:
-        assert IRBranch(target="X", condition="WS-FLAG").condition == "WS-FLAG"
-
-    def test_unconditional_branch_no_condition(self) -> None:
-        b = IRBranch(target="MAIN-EXIT")
-        assert b.condition == ""
-
-    def test_conditional_branch_has_condition(self) -> None:
-        b = IRBranch(target="EOF-HANDLER", condition="WS-EOF-FLAG")
-        assert b.condition == "WS-EOF-FLAG"
-
-    def test_kind_is_instruction(self) -> None:
-        assert IRBranch(target="X").kind is IRNodeKind.INSTRUCTION
-
-    def test_frozen(self) -> None:
-        b = IRBranch(target="X")
-        with pytest.raises((AttributeError, TypeError)):
-            b.target = "Y"  # type: ignore[misc]
+    def test_kinds(self) -> None:
+        assert (
+            IRConditionalBranch(condition="C", then_target="T", else_target="F").kind
+            is IRNodeKind.INSTRUCTION
+        )
+        assert IRJump(target="T").kind is IRNodeKind.INSTRUCTION
 
     def test_hashable(self) -> None:
-        s = {IRBranch(target="X", condition="C"), IRBranch(target="X", condition="C")}
+        s = {
+            IRConditionalBranch(condition="WS-EOF", then_target="L1", else_target="L2"),
+            IRConditionalBranch(condition="WS-EOF", then_target="L1", else_target="L2"),
+        }
         assert len(s) == 1
 
-    def test_equality(self) -> None:
-        assert IRBranch(target="X", condition="C") == IRBranch(
-            target="X", condition="C"
-        )
-
     def test_accept_dispatches(self) -> None:
-        called = []
+        called: list[IRInstruction] = []
 
         class V(IRVisitor):
-            def visit_branch(self, node: IRBranch) -> None:
+            def visit_conditional_branch(self, node: IRConditionalBranch) -> None:
                 called.append(node)
 
-        b = IRBranch(target="X")
-        b.accept(V())
-        assert b in called
+            def visit_jump(self, node: IRJump) -> None:
+                called.append(node)
 
-    def test_accept_no_method_returns_none(self) -> None:
-        assert IRBranch(target="X").accept(object()) is None
+        cond = IRConditionalBranch(condition="C", then_target="T", else_target="F")
+        jmp = IRJump(target="T")
+        cond.accept(V())
+        jmp.accept(V())
+        assert cond in called
+        assert jmp in called
 
 
 # ===========================================================================
@@ -741,8 +737,11 @@ class TestIRVisitorNoops:
     def test_visit_return_returns_none(self) -> None:
         assert self._v.visit_return(IRReturn()) is None  # type: ignore[arg-type]
 
-    def test_visit_branch_returns_none(self) -> None:
-        assert self._v.visit_branch(IRBranch(target="X")) is None  # type: ignore[arg-type]
+    def test_visit_conditional_branch_returns_none(self) -> None:
+        assert self._v.visit_conditional_branch(IRConditionalBranch(condition="C", then_target="T", else_target="F")) is None  # type: ignore[arg-type]
+
+    def test_visit_jump_returns_none(self) -> None:
+        assert self._v.visit_jump(IRJump(target="T")) is None  # type: ignore[arg-type]
 
     def test_visit_instruction_returns_none(self) -> None:
         assert self._v.visit_instruction(IRAssignment()) is None  # type: ignore[arg-type]
@@ -785,8 +784,11 @@ class TestTraverseIr:
             def visit_return(self, node: IRReturn) -> None:
                 log.append(f"return:{node.operand}")
 
-            def visit_branch(self, node: IRBranch) -> None:
-                log.append(f"branch:{node.target}")
+            def visit_conditional_branch(self, node: IRConditionalBranch) -> None:
+                log.append(f"conditional_branch:{node.then_target}")
+
+            def visit_jump(self, node: IRJump) -> None:
+                log.append(f"jump:{node.target}")
 
         return log, Recorder()
 
@@ -829,7 +831,7 @@ class TestTraverseIr:
         assert "move" in types_seen
         assert "call" in types_seen
         assert "return" in types_seen
-        assert "branch" in types_seen
+        assert "jump" in types_seen
 
     def test_full_visit_order(self) -> None:
         log, visitor = self._recording_visitor()
@@ -893,7 +895,7 @@ class TestTraverseIr:
             "move": 0,
             "call": 0,
             "return": 0,
-            "branch": 0,
+            "jump": 0,
         }
 
         class Counter(IRVisitor):
@@ -909,8 +911,8 @@ class TestTraverseIr:
             def visit_return(self, node: IRReturn) -> None:
                 counts["return"] += 1
 
-            def visit_branch(self, node: IRBranch) -> None:
-                counts["branch"] += 1
+            def visit_jump(self, node: IRJump) -> None:
+                counts["jump"] += 1
 
         traverse_ir(_simple_program(), Counter())
         for k, v in counts.items():
@@ -1007,7 +1009,7 @@ class TestInstructionHierarchy:
             IRMove(result="A", source="B"),
             IRCall(target="FN"),
             IRReturn(operand="X"),
-            IRBranch(target="L"),
+            IRJump(target="L"),
         ],
     )
     def test_is_ir_instruction(self, inst: IRInstruction) -> None:
@@ -1020,7 +1022,7 @@ class TestInstructionHierarchy:
             IRMove(result="A", source="B"),
             IRCall(target="FN"),
             IRReturn(operand="X"),
-            IRBranch(target="L"),
+            IRJump(target="L"),
         ],
     )
     def test_is_ir_node(self, inst: IRInstruction) -> None:
@@ -1033,7 +1035,7 @@ class TestInstructionHierarchy:
             IRMove(result="A", source="B"),
             IRCall(target="FN"),
             IRReturn(operand="X"),
-            IRBranch(target="L"),
+            IRJump(target="L"),
         ],
     )
     def test_kind_is_instruction(self, inst: IRInstruction) -> None:
@@ -1093,10 +1095,15 @@ class TestPublicApiExports:
 
         assert R is IRReturn
 
-    def test_ir_branch_exported(self) -> None:
-        from app.ir import IRBranch as BR  # noqa: PLC0415
+    def test_ir_conditional_branch_exported(self) -> None:
+        from app.ir import IRConditionalBranch as CB  # noqa: PLC0415
 
-        assert BR is IRBranch
+        assert CB is IRConditionalBranch
+
+    def test_ir_jump_exported(self) -> None:
+        from app.ir import IRJump as J  # noqa: PLC0415
+
+        assert J is IRJump
 
     def test_ir_builder_exported(self) -> None:
         from app.ir import IRBuilder as B  # noqa: PLC0415
