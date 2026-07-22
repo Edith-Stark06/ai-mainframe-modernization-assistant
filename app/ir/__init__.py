@@ -23,9 +23,10 @@ Instruction hierarchy:
     * :class:`~app.ir.instructions.IRMove`        — operand-to-operand copy.
     * :class:`~app.ir.instructions.IRDisplay`     — console output (DISPLAY).
     * :class:`~app.ir.instructions.IRAccept`      — console input (ACCEPT).
-    * :class:`~app.ir.instructions.IRCall`        — function/paragraph invocation.
-    * :class:`~app.ir.instructions.IRReturn`      — function exit.
-    * :class:`~app.ir.instructions.IRBranch`      — conditional/unconditional jump.
+    * :class:`~app.ir.instructions.IRCall`        — function invocation.
+    * :class:`~app.ir.instructions.IRReturn`      — exit function (optionally returning a value).
+    * :class:`~app.ir.instructions.IRConditionalBranch` — conditional jump.
+    * :class:`~app.ir.instructions.IRJump`        — unconditional jump.
 
 Visitor framework:
 
@@ -57,13 +58,18 @@ from app.ir.blocks import IRBasicBlock
 from app.ir.builder import IRBuilder
 from app.ir.instructions import (
     IRAccept,
+    IRAdd,
     IRAssignment,
-    IRBranch,
     IRCall,
+    IRConditionalBranch,
     IRDisplay,
+    IRDivide,
     IRInstruction,
+    IRJump,
     IRMove,
+    IRMultiply,
     IRReturn,
+    IRSubtract,
 )
 from app.ir.nodes import IRNode, IRNodeKind
 from app.ir.program import IRFunction, IRModule, IRProgram
@@ -71,20 +77,25 @@ from app.ir.visitors import IRVisitor, traverse_ir
 
 __all__ = [
     "IRAccept",
+    "IRAdd",
     "IRAssignment",
-    "IRBasicBlock",
-    "IRBranch",
-    "IRBuilder",
     "IRCall",
+    "IRConditionalBranch",
     "IRDisplay",
-    "IRFunction",
+    "IRDivide",
     "IRInstruction",
-    "IRModule",
+    "IRJump",
     "IRMove",
+    "IRMultiply",
+    "IRReturn",
+    "IRSubtract",
+    "IRBasicBlock",
+    "IRBuilder",
+    "IRFunction",
+    "IRModule",
     "IRNode",
     "IRNodeKind",
     "IRProgram",
-    "IRReturn",
     "IRVisitor",
     "traverse_ir",
 ]
