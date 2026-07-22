@@ -366,21 +366,23 @@ without requiring a parser.
 
 | Method | Input | Output |
 |--------|-------|--------|
-| `build_program(prog_name)` | Program name string | `IRProgram` with one `IRModule` |
-| `build_module(module_name)` | Module name string | `IRModule` with one `IRFunction` |
-| `build_function(function_name)` | Function name string | `IRFunction` with one entry `IRBasicBlock` |
-| `build_entry_block()` | — | Empty `IRBasicBlock(label="entry")` |
+| `build_program(prog_name, proc_div?)` | Program name + optional AST | `IRProgram` with one `IRModule` |
+| `build_module(module_name, proc_div?)` | Module name + optional AST | `IRModule` with one `IRFunction` |
+| `build_function(function_name, proc_div?)` | Function name + optional AST | `IRFunction` with one entry `IRBasicBlock` |
+| `build_entry_block(proc_div?)` | Optional `ProcedureDivisionNode` | `IRBasicBlock` with translated `IRMove` instructions |
 
 ### Translation Mapping
 
 ```
-SemanticContext
+ProgramNode + SemanticContext
      │
      ├─ ProgramSymbol.name ─────────────────────────► IRProgram.name
      │                                                 IRModule.name
      │
-     └─ (always)  ──────────────────────────────────► IRFunction("__entry__")
-                                                       IRBasicBlock("entry")
+     ├─ (always)  ──────────────────────────────────► IRFunction("__entry__")
+     │
+     └─ ProcedureDivision.paragraphs[*].statements
+          └─ MoveStatementNode(source, target) ──► IRMove(source, result)
 ```
 
 ### Naming Helpers
@@ -400,7 +402,8 @@ Subclass `IRBuilder` and override any naming helper to customise conventions
 
 | Extension | Where to add |
 |-----------|-------------|
-| Translate MOVE / DISPLAY statements | `build_entry_block()` — emit `IRMove` / `IRCall` |
+| **✅ TASK-026** Translate MOVE statements | `build_entry_block()` — iterates paragraphs, emits `IRMove` |
+| Translate DISPLAY statements | `build_entry_block()` — emit `IRCall` |
 | Translate IF / EVALUATE | `build_function()` — emit additional `IRBasicBlock` + `IRBranch` |
 | Translate PERFORM | `build_function()` — emit `IRCall` |
 | Translate GO TO | `build_function()` — emit unconditional `IRBranch` |
@@ -440,3 +443,81 @@ The `tests/ir/test_ir_foundation.py` suite covers (221 tests):
 - Structure invariants: frozen, hashable, correct types at each level.
 - Context with paragraphs and variables: still one module, correct program name.
 - `current_program()` contract.
+
+---
+
+## MOVE Statement Lowering (TASK-026)
+
+### Overview
+
+`build_entry_block(proc_div)` accepts a `ProcedureDivisionNode` and iterates
+all paragraphs in source order, translating each `MoveStatementNode` into an
+`IRMove` instruction.
+
+```
+ProcedureDivisionNode
+  └─ ParagraphNode("MAIN-PARA")
+       ├─ MoveStatementNode(source="WS-IN",   target="WS-OUT") ► IRMove(source="WS-IN",   result="WS-OUT")
+       ├─ MoveStatementNode(source='"HELLO"', target="WS-OUT") ► IRMove(source='"HELLO"', result="WS-OUT")
+       └─ MoveStatementNode(source="0",       target="WS-CNT") ► IRMove(source="0",       result="WS-CNT")
+```
+
+Unsupported statement types (DISPLAY, STOP RUN, GOBACK, etc.) are **logged at
+DEBUG level and skipped**; translation continues with the remaining statements.
+
+### Operand Translation
+
+The three operand helpers provide a reusable classification layer:
+
+| Helper | Classification rule | IR form |
+|--------|--------------------|---------| 
+| `build_operand(text)` | Dispatcher — calls one of the two below | — |
+| `build_literal(text)` | Quoted string (`"..."`) or numeric (`42`, `-1`, `3.14`) | literal text unchanged |
+| `build_variable_reference(name)` | Any other token | `SymbolTable.lookup(upper(name)).name` |
+
+**Variable reference lookup flow:**
+
+```
+build_operand("ws-count")
+  → build_variable_reference("ws-count")
+  → SymbolTable.lookup("WS-COUNT")
+      ├─ found  → return sym.name  ("WS-COUNT")
+      └─ not found → return upper("ws-count")  ("WS-COUNT")  + DEBUG log
+```
+
+No re-parsing or semantic validation is performed during operand translation —
+the `SymbolTable` already contains resolved symbols from earlier passes.
+
+### New Methods (TASK-026)
+
+| Method | Signature | Purpose |
+|--------|-----------|--------|
+| `build_move_instruction` | `(stmt: MoveStatementNode) -> IRMove` | Lower one MOVE statement |
+| `build_operand` | `(text: str) -> str` | Classify and translate an operand |
+| `build_variable_reference` | `(name: str) -> str` | Variable lookup with normalisation |
+| `build_literal` | `(text: str) -> str` | Return literal text unchanged |
+| `_is_numeric_literal` | `(text: str) -> bool` | Numeric token classification |
+| `_translate_paragraph` | `(para: ParagraphNode) -> list[IRMove]` | Per-paragraph translation |
+| `_translate_statement` | `(stmt: StatementNode) -> IRMove \| None` | Per-statement dispatch |
+| `_extract_procedure_division` | `(node: ProgramNode \| None) -> ProcedureDivisionNode \| None` | Safe AST extraction |
+
+---
+
+## Test Coverage Summary
+
+| Task | File | Tests |
+|------|------|-------|
+| TASK-024 — IR Foundation | `test_ir_foundation.py` | 161 |
+| TASK-025 — Translation Foundation | `test_ir_foundation.py` | 60 |
+| TASK-026 — MOVE Translation | `test_ir_move_translation.py` | 92 |
+| **Total** | | **313+** |
+
+### `tests/ir/test_ir_move_translation.py` (TASK-026, 92 tests)
+
+- `_is_numeric_literal()`: plain integers, signed, decimal, empty, alphabetic, double-dot.
+- `build_literal()`: string, numeric, zero, negative, decimal, empty-quotes.
+- `build_variable_reference()`: known symbol, unknown symbol, case normalisation.
+- `build_operand()`: quoted string → literal, numeric → literal, identifier → variable.
+- `build_move_instruction()`: var→var, literal→var, numeric→var; frozen, hashable.
+- `build_entry_block()`: None / empty proc_div, single MOVE, multi-MOVE order, cross-paragraph, DISPLAY skipped, mixed MOVE+DISPLAY.
+- `build()` pipeline: no node, no proc div, empty proc div, single MOVE, two MOVEs, five MOVEs, cross-paragraph ordering, determinism, statelessness, name propagation, backward compat, unsupported-skip, structural invariants.

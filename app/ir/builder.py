@@ -1,113 +1,134 @@
 """
-IR Builder — AST-to-IR Translation Foundation.
+IR Builder — AST-to-IR Translation with MOVE Statement Lowering.
 
 Purpose:
     Provide :class:`IRBuilder` — the primary entry point for the AST-to-IR
     translation pipeline.  The builder accepts a validated
-    :class:`~app.parser.semantic.context.SemanticContext` and translates the
-    *structural* elements of the compiled COBOL program into a complete
-    :class:`~app.ir.program.IRProgram`.
+    :class:`~app.parser.semantic.context.SemanticContext` and an optional
+    :class:`~app.parser.ast.program.ProgramNode`, and translates the COBOL
+    program structure (TASK-025) plus executable MOVE statements (TASK-026)
+    into a complete :class:`~app.ir.program.IRProgram`.
 
-    TASK-025 implements the structural translation foundation:
+    TASK-025 established the structural translation framework:
+        * One :class:`~app.ir.program.IRModule` per COBOL program.
+        * One :class:`~app.ir.program.IRFunction` (``"__entry__"``) per module.
+        * One :class:`~app.ir.blocks.IRBasicBlock` (``"entry"``) per function.
 
-    * One :class:`~app.ir.program.IRModule` per COBOL program (keyed by the
-      ``PROGRAM-ID`` name from the
-      :class:`~app.parser.semantic.symbols.ProgramSymbol`).
-    * One :class:`~app.ir.program.IRFunction` per module (an ``"__entry__"``
-      function that represents the program's top-level execution body).
-    * One :class:`~app.ir.blocks.IRBasicBlock` (labelled ``"entry"``) as the
-      initial block of the entry function.  Future tasks will populate this
-      block by emitting instructions for MOVE, DISPLAY, CALL, etc.
+    TASK-026 extends the builder to lower executable COBOL ``MOVE`` statements
+    into :class:`~app.ir.instructions.IRMove` instructions and append them to
+    the entry basic block in source order.
 
-    The builder is composed of focused helper methods, one per IR node level,
-    so that future tasks can extend individual helpers without touching the
-    overall orchestration logic.
+    The builder also introduces reusable operand-translation helpers
+    (:meth:`build_operand`, :meth:`build_variable_reference`,
+    :meth:`build_literal`) designed for reuse by future arithmetic and CALL
+    translation passes.
 
 Translation pipeline::
 
-    SemanticContext
+    ProgramNode + SemanticContext
          │
-         ▼  build()
-    IRProgram                ← build_program()
+         ▼  build(program_node)
+    IRProgram                       ← build_program()
          │
          ▼  (one per ProgramSymbol)
-    IRModule                 ← build_module()
+    IRModule                        ← build_module()
          │
          ▼  (always one entry function)
-    IRFunction               ← build_function()
+    IRFunction("__entry__")         ← build_function()
          │
-         ▼  (always one entry block)
-    IRBasicBlock("entry")    ← build_entry_block()
+         ▼  (entry block with translated MOVE statements)
+    IRBasicBlock("entry")           ← build_entry_block(procedure_division)
          │
-         ▼  (future tasks: MOVE, DISPLAY, CALL, IF, PERFORM, …)
-    IRInstruction *
+         ├── IRMove(source, result)  ← build_move_instruction()
+         ├── IRMove(source, result)
+         ╎   ...
+         └── (future: DISPLAY, CALL, arithmetic, IF, PERFORM, GO TO)
+
+Operand translation::
+
+    COBOL operand text
+         │
+         ▼  build_operand(text)
+         ├── if quoted string ("...") → build_literal() → literal text
+         ├── if numeric literal       → build_literal() → literal text
+         └── if identifier            → build_variable_reference() → var name
 
 Responsibilities:
     - Validate the supplied :class:`~app.parser.semantic.context.SemanticContext`.
-    - Derive a program name from the first ``PROGRAM-ID`` symbol; fall back to
-      an empty string if no program symbol is present.
-    - Derive module / function names from paragraph and program symbols.
-    - Emit lifecycle log events via Loguru at ``DEBUG`` level.
-    - Log a ``WARNING`` if the context contains semantic errors, but continue
-      translation so that downstream tools receive a partial IR.
-    - Remain fully stateless between calls to :meth:`build` so that the same
-      :class:`IRBuilder` instance can be called multiple times and always
-      returns a freshly-constructed :class:`~app.ir.program.IRProgram`.
+    - Accept an optional :class:`~app.parser.ast.program.ProgramNode`; when
+      provided, walk its PROCEDURE DIVISION to emit MOVE instructions.
+    - Translate each ``MoveStatementNode`` into one ``IRMove`` instruction.
+    - Emit a structured IR translation warning for unsupported statements while
+      continuing translation.
+    - Expose reusable operand helpers: :meth:`build_operand`,
+      :meth:`build_variable_reference`, :meth:`build_literal`.
+    - Remain stateless between :meth:`build` calls.
+    - Log lifecycle events via Loguru.
 
 Non-responsibilities:
-    - AST traversal (no references to ``app.parser.ast``).
-    - Executable-statement translation (MOVE, DISPLAY, CALL, IF, PERFORM,
-      GO TO, arithmetic) — deferred to TASK-026+.
+    - DISPLAY, ACCEPT, CALL, IF, PERFORM, GO TO, arithmetic (TASK-027+).
     - Java code generation.
+    - Re-parsing identifiers (uses resolved symbols from SymbolTable).
     - Optimisation passes.
-    - Type coercion or implicit conversion.
 
 Extension points for future tasks:
-    - :meth:`build_entry_block` — add instruction emission here per
-      statement type.
-    - :meth:`build_function` — add multi-block support (IF, PERFORM,
-      GO TO) by building additional :class:`~app.ir.blocks.IRBasicBlock`
-      instances and adding them to the function's block tuple.
-    - :meth:`build_module` — add multiple functions per module when
-      COBOL sections or nested programs are supported.
-    - :meth:`_program_name` / :meth:`_module_name` / :meth:`_function_name` —
-      override naming conventions without touching orchestration logic.
+    - :meth:`build_entry_block` — iterate through ``ProcedureDivisionNode``
+      paragraphs; add new ``elif`` branches for DISPLAY, CALL, PERFORM, etc.
+    - :meth:`build_operand` — extend literal/variable detection for typed
+      operands (``IROperand`` value type) as types mature.
+    - :meth:`build_function` — add multi-block support (IF, PERFORM, GO TO).
+    - :meth:`build_module` — emit one ``IRFunction`` per paragraph for
+      section-level granularity.
 
 Dependencies:
-    - :mod:`app.parser.semantic.context`   — ``SemanticContext``.
-    - :mod:`app.parser.semantic.symbols`   — ``ProgramSymbol``, ``SymbolKind``.
-    - :mod:`app.ir.blocks`                 — ``IRBasicBlock``.
-    - :mod:`app.ir.program`                — ``IRProgram``, ``IRModule``,
-                                             ``IRFunction``.
+    - :mod:`app.parser.semantic.context`     — ``SemanticContext``.
+    - :mod:`app.parser.semantic.symbols`     — ``ProgramSymbol``, ``SymbolKind``.
+    - :mod:`app.parser.ast.program`          — ``ProgramNode`` (TYPE_CHECKING).
+    - :mod:`app.parser.ast.procedure`        — ``ProcedureDivisionNode``
+                                               (TYPE_CHECKING).
+    - :mod:`app.parser.ast.statements`       — ``MoveStatementNode``
+                                               (TYPE_CHECKING).
+    - :mod:`app.ir.blocks`                   — ``IRBasicBlock``.
+    - :mod:`app.ir.instructions`             — ``IRMove``.
+    - :mod:`app.ir.program`                  — ``IRProgram``, ``IRModule``,
+                                               ``IRFunction``.
     - Loguru for structured logging.
 
 Examples:
-    Translating a clean semantic context::
-
-        from app.parser.semantic.context import SemanticContext, SymbolTable
-        from app.ir.builder import IRBuilder
-
-        ctx = SemanticContext(symbol_table=SymbolTable(), diagnostics=[])
-        prog = IRBuilder(context=ctx).build()
-        # Empty program (no ProgramSymbol registered) → one empty module.
-        len(prog)               # 1
-        prog.modules[0].name    # ''
-
-    Translating a context with a named program::
+    Translating a program with MOVE statements::
 
         from app.parser.lexer.position import Position
-        from app.parser.semantic.symbols import ProgramSymbol
+        from app.parser.ast.program import ProgramNode
+        from app.parser.ast.procedure import ProcedureDivisionNode
+        from app.parser.ast.paragraphs import ParagraphNode
+        from app.parser.ast.statements import MoveStatementNode
         from app.parser.semantic.context import SemanticContext, SymbolTable
+        from app.parser.semantic.symbols import ProgramSymbol
+        from app.ir.builder import IRBuilder
 
         pos = Position(line=1, column=1, offset=0, filename="p.cbl")
+        move = MoveStatementNode(
+            start_position=pos, end_position=pos,
+            source="WS-IN", target="WS-OUT",
+        )
+        para = ParagraphNode(
+            start_position=pos, end_position=pos,
+            name="MAIN-PARA", statements=(move,),
+        )
+        proc = ProcedureDivisionNode(
+            start_position=pos, end_position=pos, paragraphs=(para,),
+        )
+        program_node = ProgramNode(
+            start_position=pos, end_position=pos,
+            procedure_division=proc,
+        )
         table = SymbolTable()
         table.register(ProgramSymbol(name="PAYROLL", declared_at=pos))
         ctx = SemanticContext(symbol_table=table, diagnostics=[])
-        prog = IRBuilder(context=ctx).build()
-        prog.name                          # 'PAYROLL'
-        prog.modules[0].name               # 'PAYROLL'
-        prog.modules[0].functions[0].name  # '__entry__'
-        prog.modules[0].functions[0].blocks[0].label  # 'entry'
+
+        prog = IRBuilder(context=ctx).build(program_node)
+        bb = prog.modules[0].functions[0].blocks[0]
+        bb.instructions[0]  # IRMove(source='WS-IN', result='WS-OUT')
 
 Author:
     Edith Stark
@@ -118,12 +139,21 @@ Project:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from loguru import logger
 
 from app.ir.blocks import IRBasicBlock
+from app.ir.instructions import IRMove
 from app.ir.program import IRFunction, IRModule, IRProgram
 from app.parser.semantic.context import SemanticContext
 from app.parser.semantic.symbols import ProgramSymbol, SymbolKind
+
+if TYPE_CHECKING:
+    from app.parser.ast.paragraphs import ParagraphNode
+    from app.parser.ast.procedure import ProcedureDivisionNode
+    from app.parser.ast.program import ProgramNode
+    from app.parser.ast.statements import MoveStatementNode, StatementNode
 
 __all__ = ["IRBuilder"]
 
@@ -137,14 +167,10 @@ _ENTRY_BLOCK_LABEL: str = "entry"
 class IRBuilder:
     """
     Translate a validated :class:`~app.parser.semantic.context.SemanticContext`
-    into an :class:`~app.ir.program.IRProgram`.
+    and optional :class:`~app.parser.ast.program.ProgramNode` into an
+    :class:`~app.ir.program.IRProgram`.
 
-    :class:`IRBuilder` is the bridge between the semantic analysis pipeline
-    (passes 1–5) and the IR.  It reads the populated
-    :class:`~app.parser.semantic.context.SymbolTable` and constructs a
-    structurally correct IR tree.
-
-    **TASK-025 translation scope:**
+    **TASK-025 + TASK-026 translation scope:**
 
     +----------------------------+-------------------------------+
     | Input element              | Output IR                     |
@@ -158,7 +184,9 @@ class IRBuilder:
     +----------------------------+-------------------------------+
     | Entry function (always)    | ``IRBasicBlock("entry")``     |
     +----------------------------+-------------------------------+
-    | COBOL statements           | *(deferred to TASK-026+)*     |
+    | ``MoveStatementNode``      | ``IRMove(source, result)``    |
+    +----------------------------+-------------------------------+
+    | Unsupported statements     | Warning log + skip            |
     +----------------------------+-------------------------------+
 
     The builder is **stateless** between :meth:`build` calls — each call
@@ -177,10 +205,8 @@ class IRBuilder:
         >>> prog = IRBuilder(context=ctx).build()
         >>> isinstance(prog, IRProgram)
         True
-        >>> len(prog)
-        1
-        >>> prog.modules[0].functions[0].blocks[0].label
-        'entry'
+        >>> prog.modules[0].functions[0].blocks[0].instructions
+        ()
     """
 
     def __init__(self, context: SemanticContext) -> None:
@@ -228,138 +254,381 @@ class IRBuilder:
         """
         return self._context
 
-    def build(self) -> IRProgram:
+    def build(self, program_node: ProgramNode | None = None) -> IRProgram:
         """
         Translate the semantic context into a fully-structured
         :class:`~app.ir.program.IRProgram`.
 
-        **Translation pipeline (TASK-025):**
-
-        1. Resolve the program name from the first
-           :class:`~app.parser.semantic.symbols.ProgramSymbol` in the symbol
-           table, or fall back to ``""`` if none is registered.
-        2. Delegate to :meth:`build_program` to construct the
-           :class:`~app.ir.program.IRProgram` with exactly one
-           :class:`~app.ir.program.IRModule`.
-        3. Return the freshly-constructed program.
+        When *program_node* is supplied the builder walks the
+        ``PROCEDURE DIVISION`` and emits
+        :class:`~app.ir.instructions.IRMove` instructions for every
+        ``MOVE`` statement encountered.  When *program_node* is ``None``
+        (or has no ``PROCEDURE DIVISION``) the entry basic block is empty.
 
         The method is safe to call multiple times; each call returns a new,
         independent :class:`~app.ir.program.IRProgram`.
 
+        Args:
+            program_node:
+                Optional :class:`~app.parser.ast.program.ProgramNode` whose
+                ``PROCEDURE DIVISION`` should be translated.  Pass ``None``
+                to generate the structural IR skeleton only.
+
         Returns:
             A complete :class:`~app.ir.program.IRProgram` reflecting the
-            structural content of the semantic context.
+            structural content of the semantic context and, if supplied,
+            the executable MOVE statements in the program node.
         """
         prog_name = self._program_name()
-        logger.debug("IRBuilder.build(): program_name={!r}.", prog_name)
-        program = self.build_program(prog_name)
+        proc_div = self._extract_procedure_division(program_node)
+        logger.debug(
+            "IRBuilder.build(): program_name={!r}, procedure_division={!r}.",
+            prog_name,
+            type(proc_div).__name__ if proc_div is not None else "None",
+        )
+        program = self.build_program(prog_name, proc_div)
         logger.debug(
             "IRBuilder.build(): built IRProgram with {} module(s).", len(program)
         )
         return program
 
-    def current_program(self) -> IRProgram:
+    def current_program(self, program_node: ProgramNode | None = None) -> IRProgram:
         """
         Return the :class:`~app.ir.program.IRProgram` constructed so far.
 
         This method is a convenience accessor for incremental builders that
         emit IR in stages.  It delegates to :meth:`build`.
 
+        Args:
+            program_node:
+                Optional :class:`~app.parser.ast.program.ProgramNode` passed
+                through to :meth:`build`.
+
         Returns:
             The partially or fully constructed
             :class:`~app.ir.program.IRProgram`.
         """
-        return self.build()
+        return self.build(program_node)
 
     # ------------------------------------------------------------------
     # Structural helpers — one per IR node level
     # ------------------------------------------------------------------
 
-    def build_program(self, prog_name: str) -> IRProgram:
+    def build_program(
+        self,
+        prog_name: str,
+        proc_div: ProcedureDivisionNode | None = None,
+    ) -> IRProgram:
         """
         Construct the top-level :class:`~app.ir.program.IRProgram`.
 
         Creates exactly one :class:`~app.ir.program.IRModule` by calling
-        :meth:`build_module`.  Future tasks may extend this method to produce
-        multiple modules when COBOL nested programs or COPY books introduce
-        additional compilation units.
+        :meth:`build_module`.
 
         Args:
             prog_name:
                 Human-readable program name (from the PROGRAM-ID clause or
                 the empty string if absent).
+            proc_div:
+                Optional :class:`~app.parser.ast.procedure.ProcedureDivisionNode`
+                to translate.
 
         Returns:
             A :class:`~app.ir.program.IRProgram` containing one module.
         """
-        module = self.build_module(self._module_name(prog_name))
+        module = self.build_module(self._module_name(prog_name), proc_div)
         logger.debug("IRBuilder.build_program(): module name={!r}.", module.name)
         return IRProgram(name=prog_name, modules=(module,))
 
-    def build_module(self, module_name: str) -> IRModule:
+    def build_module(
+        self,
+        module_name: str,
+        proc_div: ProcedureDivisionNode | None = None,
+    ) -> IRModule:
         """
         Construct an :class:`~app.ir.program.IRModule` for a single COBOL
         program or compilation unit.
 
         Creates exactly one :class:`~app.ir.program.IRFunction` by calling
-        :meth:`build_function`.  Future tasks may extend this method to
-        produce multiple functions per module (e.g. one per COBOL section).
+        :meth:`build_function`.
 
         Args:
             module_name:
-                Human-readable module name (typically the program name).
+                Human-readable module name.
+            proc_div:
+                Optional :class:`~app.parser.ast.procedure.ProcedureDivisionNode`
+                to translate.
 
         Returns:
             An :class:`~app.ir.program.IRModule` containing one entry function.
         """
-        function = self.build_function(self._function_name())
+        function = self.build_function(self._function_name(), proc_div)
         logger.debug("IRBuilder.build_module(): function name={!r}.", function.name)
         return IRModule(name=module_name, functions=(function,))
 
-    def build_function(self, function_name: str) -> IRFunction:
+    def build_function(
+        self,
+        function_name: str,
+        proc_div: ProcedureDivisionNode | None = None,
+    ) -> IRFunction:
         """
         Construct the entry :class:`~app.ir.program.IRFunction`.
 
         Creates one :class:`~app.ir.blocks.IRBasicBlock` by calling
-        :meth:`build_entry_block`.  Future tasks may extend this method to
-        produce additional basic blocks for control-flow constructs (IF,
-        PERFORM, GO TO).
+        :meth:`build_entry_block`.  The block is populated with
+        :class:`~app.ir.instructions.IRMove` instructions derived from
+        the MOVE statements found in *proc_div* (if supplied).
 
         Args:
             function_name:
-                Name of the function (defaults to ``"__entry__"``).
+                Name of the function.
+            proc_div:
+                Optional :class:`~app.parser.ast.procedure.ProcedureDivisionNode`
+                to translate.
 
         Returns:
             An :class:`~app.ir.program.IRFunction` containing one entry block.
         """
-        entry_block = self.build_entry_block()
+        entry_block = self.build_entry_block(proc_div)
         logger.debug(
-            "IRBuilder.build_function(): entry block label={!r}.",
+            "IRBuilder.build_function(): entry block label={!r}, "
+            "instruction count={}.",
             entry_block.label,
+            len(entry_block),
         )
         return IRFunction(name=function_name, blocks=(entry_block,))
 
-    def build_entry_block(self) -> IRBasicBlock:
+    def build_entry_block(
+        self,
+        proc_div: ProcedureDivisionNode | None = None,
+    ) -> IRBasicBlock:
         """
         Construct the entry :class:`~app.ir.blocks.IRBasicBlock`.
 
-        The entry block is currently always empty.  Future tasks (TASK-026+)
-        will extend this method to emit :class:`~app.ir.instructions.IRInstruction`
-        objects for each COBOL statement encountered in the PROCEDURE DIVISION:
+        When *proc_div* is supplied the builder iterates all paragraphs and
+        their statements in source order, emitting one
+        :class:`~app.ir.instructions.IRMove` per ``MOVE`` statement.
+        Unsupported statement types emit a ``DEBUG``-level log and are
+        skipped; translation continues.
 
-        * MOVE statement → :class:`~app.ir.instructions.IRMove`
-        * DISPLAY statement → :class:`~app.ir.instructions.IRCall`
-        * CALL statement → :class:`~app.ir.instructions.IRCall`
-        * STOP RUN / GOBACK → :class:`~app.ir.instructions.IRReturn`
-        * Arithmetic statements → :class:`~app.ir.instructions.IRAssignment`
-        * IF / EVALUATE → additional :class:`~app.ir.blocks.IRBasicBlock`
-          instances + :class:`~app.ir.instructions.IRBranch`
+        Extension guide for future tasks:
+
+        * **DISPLAY** — add ``elif isinstance(stmt, DisplayStatementNode):``
+          and emit :class:`~app.ir.instructions.IRCall`.
+        * **STOP RUN / GOBACK** — emit :class:`~app.ir.instructions.IRReturn`.
+        * **IF / EVALUATE** — emit additional ``IRBasicBlock`` instances +
+          :class:`~app.ir.instructions.IRBranch`; wire them into the function
+          rather than this block alone.
+        * **PERFORM / CALL** — emit :class:`~app.ir.instructions.IRCall`.
+        * **Arithmetic** — emit :class:`~app.ir.instructions.IRAssignment`.
+
+        Args:
+            proc_div:
+                Optional :class:`~app.parser.ast.procedure.ProcedureDivisionNode`
+                whose paragraphs and statements are translated.
 
         Returns:
-            An empty :class:`~app.ir.blocks.IRBasicBlock` labelled ``"entry"``.
+            An :class:`~app.ir.blocks.IRBasicBlock` labelled ``"entry"``
+            containing zero or more :class:`~app.ir.instructions.IRMove`
+            instructions.
         """
-        logger.debug("IRBuilder.build_entry_block(): creating empty entry block.")
-        return IRBasicBlock(label=_ENTRY_BLOCK_LABEL)
+        instructions: list[IRMove] = []
+
+        if proc_div is not None:
+            for para in proc_div.paragraphs:
+                instructions.extend(self._translate_paragraph(para))
+
+        logger.debug(
+            "IRBuilder.build_entry_block(): emitted {} instruction(s).",
+            len(instructions),
+        )
+        return IRBasicBlock(
+            label=_ENTRY_BLOCK_LABEL,
+            instructions=tuple(instructions),
+        )
+
+    # ------------------------------------------------------------------
+    # Statement translation helpers
+    # ------------------------------------------------------------------
+
+    def _translate_paragraph(self, para: ParagraphNode) -> list[IRMove]:
+        """
+        Translate all MOVE statements in a paragraph into IRMove instructions.
+
+        Non-MOVE statements are logged at DEBUG level and skipped.
+
+        Args:
+            para:
+                The :class:`~app.parser.ast.paragraphs.ParagraphNode` to
+                translate.
+
+        Returns:
+            An ordered list of :class:`~app.ir.instructions.IRMove` objects.
+        """
+        result: list[IRMove] = []
+        for stmt in para.statements:
+            ir_instr = self._translate_statement(stmt)
+            if ir_instr is not None:
+                result.append(ir_instr)
+        return result
+
+    def _translate_statement(self, stmt: StatementNode) -> IRMove | None:
+        """
+        Translate a single statement into an IR instruction.
+
+        Currently only :class:`~app.parser.ast.statements.MoveStatementNode`
+        is handled.  All other statement types are logged and skipped,
+        returning ``None``.
+
+        Args:
+            stmt:
+                The :class:`~app.parser.ast.statements.StatementNode` to
+                translate.
+
+        Returns:
+            An :class:`~app.ir.instructions.IRMove` if the statement was a
+            valid MOVE; ``None`` otherwise.
+        """
+        from app.parser.ast.statements import MoveStatementNode  # noqa: PLC0415
+
+        if isinstance(stmt, MoveStatementNode):
+            return self.build_move_instruction(stmt)
+
+        logger.debug(
+            "IRBuilder._translate_statement(): skipping unsupported "
+            "statement type {!r}.",
+            type(stmt).__name__,
+        )
+        return None
+
+    def build_move_instruction(self, stmt: MoveStatementNode) -> IRMove:
+        """
+        Lower a single ``MoveStatementNode`` into an
+        :class:`~app.ir.instructions.IRMove`.
+
+        The COBOL ``MOVE source TO target`` maps to::
+
+            IRMove(source=build_operand(source), result=build_operand(target))
+
+        Args:
+            stmt:
+                The :class:`~app.parser.ast.statements.MoveStatementNode`
+                to lower.
+
+        Returns:
+            An :class:`~app.ir.instructions.IRMove` instruction.
+        """
+        ir_source = self.build_operand(stmt.source)
+        ir_target = self.build_operand(stmt.target)
+        logger.debug(
+            "IRBuilder.build_move_instruction(): MOVE {!r} TO {!r} "
+            "→ IRMove(source={!r}, result={!r}).",
+            stmt.source,
+            stmt.target,
+            ir_source,
+            ir_target,
+        )
+        return IRMove(source=ir_source, result=ir_target)
+
+    # ------------------------------------------------------------------
+    # Operand translation helpers (reusable by future passes)
+    # ------------------------------------------------------------------
+
+    def build_operand(self, text: str) -> str:
+        """
+        Translate a raw COBOL operand text token into an IR operand string.
+
+        Classification logic:
+
+        1. If *text* is enclosed in double quotes (``"..."``), treat as a
+           string literal → :meth:`build_literal`.
+        2. If *text* is a pure numeric string (including leading sign), treat
+           as a numeric literal → :meth:`build_literal`.
+        3. Otherwise treat as a variable reference → :meth:`build_variable_reference`.
+
+        This classification is intentionally simple and covers the common cases
+        present in real COBOL MOVE statements.  Future tasks may enrich this
+        with type information from the :class:`SymbolTable`.
+
+        Args:
+            text:
+                Raw operand text from the AST node (e.g. ``'WS-NAME'``,
+                ``'"HELLO"'``, ``'42'``, ``'-1'``).
+
+        Returns:
+            A canonical IR operand string.
+
+        Examples:
+            >>> b = IRBuilder(context=ctx)
+            >>> b.build_operand('"HELLO"')
+            '"HELLO"'
+            >>> b.build_operand('42')
+            '42'
+            >>> b.build_operand('WS-COUNT')
+            'WS-COUNT'
+        """
+        stripped = text.strip()
+        if stripped.startswith('"') and stripped.endswith('"') and len(stripped) >= 2:
+            return self.build_literal(stripped)
+        if self._is_numeric_literal(stripped):
+            return self.build_literal(stripped)
+        return self.build_variable_reference(stripped)
+
+    def build_variable_reference(self, name: str) -> str:
+        """
+        Translate a COBOL identifier into an IR variable-reference operand.
+
+        The identifier is looked up in the :class:`SymbolTable`.  If found,
+        the canonical (registered) name is used; if not found, the uppercased
+        text is used as-is and a ``DEBUG`` log is emitted.  No error is raised
+        here — semantic validation has already been performed by earlier passes.
+
+        Args:
+            name:
+                The identifier text from the AST node.
+
+        Returns:
+            The canonical IR operand string for this variable.
+
+        Examples:
+            >>> b.build_variable_reference('ws-count')
+            'WS-COUNT'
+        """
+        canonical = name.upper()
+        sym = self._context.symbol_table.lookup(canonical)
+        if sym is not None:
+            canonical = sym.name
+        else:
+            logger.debug(
+                "IRBuilder.build_variable_reference(): {!r} not found in "
+                "symbol table; using uppercased name as operand.",
+                name,
+            )
+        return canonical
+
+    def build_literal(self, text: str) -> str:
+        """
+        Translate a COBOL literal token into an IR literal operand.
+
+        The literal is returned as-is (its string form is already the IR
+        representation).  Future tasks may convert this to a typed
+        ``IRLiteral`` value object.
+
+        Args:
+            text:
+                The raw literal text (e.g. ``'"HELLO"'``, ``'42'``,
+                ``'-1'``).
+
+        Returns:
+            The literal text unchanged.
+
+        Examples:
+            >>> b.build_literal('"HELLO"')
+            '"HELLO"'
+            >>> b.build_literal('0')
+            '0'
+        """
+        return text
 
     # ------------------------------------------------------------------
     # Naming helpers — override to customise naming conventions
@@ -387,8 +656,7 @@ class IRBuilder:
         """
         Derive the module name from the program name.
 
-        By default the module name equals the program name.  Override this
-        method to apply custom naming (e.g. Java class-name conventions).
+        By default the module name equals the program name.
 
         Args:
             prog_name:
@@ -403,10 +671,58 @@ class IRBuilder:
         """
         Derive the name for the entry function.
 
-        Returns the constant ``"__entry__"``.  Override to use a different
-        naming scheme (e.g. derive from the first paragraph name).
-
         Returns:
-            The entry-function name string.
+            ``"__entry__"``.
         """
         return _ENTRY_FUNCTION_NAME
+
+    # ------------------------------------------------------------------
+    # Private utility
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_numeric_literal(text: str) -> bool:
+        """
+        Return ``True`` if *text* represents a COBOL numeric literal.
+
+        Handles:
+        * Plain integers: ``'0'``, ``'42'``, ``'100'``.
+        * Signed integers: ``'-1'``, ``'+5'``.
+        * Decimal numbers: ``'3.14'``, ``'-0.5'``.
+
+        Args:
+            text:
+                Stripped operand text.
+
+        Returns:
+            ``True`` if *text* is a numeric literal, ``False`` otherwise.
+        """
+        if not text:
+            return False
+        candidate = text.lstrip("+-")
+        if not candidate:
+            return False
+        # Allow at most one decimal point.
+        parts = candidate.split(".")
+        if len(parts) > 2:
+            return False
+        return all(p.isdigit() for p in parts if p)
+
+    @staticmethod
+    def _extract_procedure_division(
+        program_node: ProgramNode | None,
+    ) -> ProcedureDivisionNode | None:
+        """
+        Safely extract the ``PROCEDURE DIVISION`` node from *program_node*.
+
+        Args:
+            program_node:
+                The optional :class:`~app.parser.ast.program.ProgramNode`.
+
+        Returns:
+            The :class:`~app.parser.ast.procedure.ProcedureDivisionNode`, or
+            ``None`` if *program_node* is ``None`` or has no procedure division.
+        """
+        if program_node is None:
+            return None
+        return program_node.procedure_division
