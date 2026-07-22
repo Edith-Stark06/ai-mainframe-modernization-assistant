@@ -93,6 +93,7 @@ from app.parser.ast.statements import (
     SubtractStatementNode,
     MultiplyStatementNode,
     DivideStatementNode,
+    CallStatementNode,
 )
 from app.parser.diagnostics.recovery import RecoveryContext
 from app.parser.lexer.position import Position
@@ -131,6 +132,7 @@ _STATEMENT_LEXEMES: frozenset[str] = frozenset(
         "SUBTRACT",
         "MULTIPLY",
         "DIVIDE",
+        "CALL",
     }
 )
 
@@ -493,6 +495,8 @@ class ProcedureDivisionParser:
             return self._parse_multiply(state)
         if upper == "DIVIDE":
             return self._parse_divide(state)
+        if upper == "CALL":
+            return self._parse_call(state)
 
         raise ParserError(
             f"unsupported statement keyword {upper!r}",
@@ -953,6 +957,51 @@ class ProcedureDivisionParser:
 
         return DivideStatementNode(
             start_position=start, end_position=end, left=left, right=right
+        )
+
+    def _parse_call(self, state: ParserState) -> CallStatementNode:
+        stream = state.stream
+        start: Position = stream.current().position
+        stream.advance()  # consume CALL
+
+        target_parts: list[str] = []
+        while not stream.eof():
+            tok = stream.current()
+            if tok.type is TokenType.PERIOD or tok.lexeme.upper() == "USING":
+                break
+            target_parts.append(tok.lexeme)
+            stream.advance()
+
+        if not target_parts:
+            tok = stream.current()
+            raise ParserError(
+                "expected target after CALL",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+
+        target = " ".join(target_parts)
+        arguments: list[str] = []
+
+        tok = stream.current()
+        if tok.lexeme.upper() == "USING":
+            stream.advance()  # consume USING
+            while not stream.eof():
+                tok = stream.current()
+                if tok.type is TokenType.PERIOD:
+                    break
+                arguments.append(tok.lexeme)
+                stream.advance()
+
+        end: Position = stream.current().position
+        self._consume_period(state, "CALL")
+
+        return CallStatementNode(
+            start_position=start,
+            end_position=end,
+            target=target,
+            arguments=tuple(arguments),
         )
 
     def _consume_period(self, state: ParserState, context: str) -> None:
