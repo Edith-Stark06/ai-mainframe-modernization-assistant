@@ -1492,9 +1492,15 @@ class TestIRBuilderTranslation:
 
     def test_subclass_can_override_build_entry_block(self) -> None:
         """Subclass overrides build_entry_block to pre-populate instructions."""
+        from app.parser.ast.procedure import (  # noqa: PLC0415
+            ProcedureDivisionNode,
+        )
 
         class InstrBuilder(IRBuilder):
-            def build_entry_block(self) -> IRBasicBlock:
+            def build_entry_block(
+                self,
+                proc_div: ProcedureDivisionNode | None = None,
+            ) -> IRBasicBlock:
                 return IRBasicBlock(
                     label="entry",
                     instructions=(IRReturn(operand=""),),
