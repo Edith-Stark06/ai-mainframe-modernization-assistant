@@ -205,7 +205,23 @@ IRAccept(result="WS-INPUT")
 
 | Field | Description |
 |-------|-------------|
-| `result` | Target variable name |
+| `result` | Name of the destination variable |
+
+### Arithmetic Instructions (IRAdd, IRSubtract, IRMultiply, IRDivide)
+
+Compute the arithmetic result of two operands.
+These map to `ADD ... TO`, `SUBTRACT ... FROM`, `MULTIPLY ... BY`, and `DIVIDE ... INTO`.
+
+```python
+IRAdd(left="100", right="WS-AMOUNT")
+IRSubtract(left="WS-TAX", right="WS-NET")
+```
+
+| Field | Description |
+|-------|-------------|
+| `left` | Source operand name (or literal) |
+| `right` | Target operand name (or literal) |
+
 
 ### IRCall
 
