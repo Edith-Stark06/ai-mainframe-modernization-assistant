@@ -17,6 +17,9 @@ Responsibilities:
       and an optional human-readable ``comment``.
     - :class:`IRAssignment` — assigns a constant or computed value to a name.
     - :class:`IRMove`       — copies the value of one named operand to another.
+    - :class:`IRDisplay`    — writes one operand value to the console (DISPLAY).
+    - :class:`IRAccept`     — reads one value from the console into a variable
+      (ACCEPT).
     - :class:`IRCall`       — represents a (potentially impure) function call
       with zero or more arguments; result may be discarded.
     - :class:`IRReturn`     — terminates the enclosing function; carries an
@@ -64,9 +67,11 @@ from typing import Any
 from app.ir.nodes import IRNode, IRNodeKind
 
 __all__ = [
+    "IRAccept",
     "IRAssignment",
     "IRBranch",
     "IRCall",
+    "IRDisplay",
     "IRInstruction",
     "IRMove",
     "IRReturn",
@@ -321,6 +326,77 @@ class IRBranch(IRInstruction):
     def accept(self, visitor: Any) -> Any:
         """Dispatch to ``visitor.visit_branch(self)``."""
         visit = getattr(visitor, "visit_branch", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class IRDisplay(IRInstruction):
+    """
+    Write one operand value to the standard output console.
+
+    :class:`IRDisplay` corresponds to a COBOL ``DISPLAY operand`` statement.
+    The operand may be a string literal, a numeric literal, or a variable
+    reference.  The instruction produces no result value (``result = ""``).
+
+    Attributes:
+        result:
+            Always ``""``; inherited from :class:`IRInstruction`.
+        operand:
+            The IR operand to display (a variable name or literal text).
+        comment:
+            Optional annotation.
+
+    Examples:
+        >>> from app.ir.instructions import IRDisplay
+        >>> d = IRDisplay(operand='"HELLO WORLD"')
+        >>> d.operand
+        '"HELLO WORLD"'
+        >>> d.result
+        ''
+        >>> d2 = IRDisplay(operand="WS-NAME")
+        >>> d2.operand
+        'WS-NAME'
+    """
+
+    operand: str = field(default="")
+
+    def accept(self, visitor: Any) -> Any:
+        """Dispatch to ``visitor.visit_display(self)``."""
+        visit = getattr(visitor, "visit_display", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class IRAccept(IRInstruction):
+    """
+    Read one value from the standard input console into a variable.
+
+    :class:`IRAccept` corresponds to a COBOL ``ACCEPT identifier`` statement.
+    The instruction reads a value into the named ``result`` operand; there is
+    no source operand (the source is always the console / system environment).
+
+    Attributes:
+        result:
+            Name of the variable that receives the input (e.g. ``"WS-NAME"``).
+        comment:
+            Optional annotation.
+
+    Examples:
+        >>> from app.ir.instructions import IRAccept
+        >>> a = IRAccept(result="WS-NAME")
+        >>> a.result
+        'WS-NAME'
+        >>> IRAccept().result
+        ''
+    """
+
+    def accept(self, visitor: Any) -> Any:
+        """Dispatch to ``visitor.visit_accept(self)``."""
+        visit = getattr(visitor, "visit_accept", None)
         if callable(visit):
             return visit(self)
         return None
