@@ -144,7 +144,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from app.ir.blocks import IRBasicBlock
-from app.ir.instructions import IRMove
+from app.ir.instructions import IRAccept, IRDisplay, IRInstruction, IRMove
 from app.ir.program import IRFunction, IRModule, IRProgram
 from app.parser.semantic.context import SemanticContext
 from app.parser.semantic.symbols import ProgramSymbol, SymbolKind
@@ -153,7 +153,12 @@ if TYPE_CHECKING:
     from app.parser.ast.paragraphs import ParagraphNode
     from app.parser.ast.procedure import ProcedureDivisionNode
     from app.parser.ast.program import ProgramNode
-    from app.parser.ast.statements import MoveStatementNode, StatementNode
+    from app.parser.ast.statements import (
+        AcceptStatementNode,
+        DisplayStatementNode,
+        MoveStatementNode,
+        StatementNode,
+    )
 
 __all__ = ["IRBuilder"]
 
@@ -185,6 +190,10 @@ class IRBuilder:
     | Entry function (always)    | ``IRBasicBlock("entry")``     |
     +----------------------------+-------------------------------+
     | ``MoveStatementNode``      | ``IRMove(source, result)``    |
+    +----------------------------+-------------------------------+
+    | ``DisplayStatementNode``   | ``IRDisplay(operand)``        |
+    +----------------------------+-------------------------------+
+    | ``AcceptStatementNode``    | ``IRAccept(result)``          |
     +----------------------------+-------------------------------+
     | Unsupported statements     | Warning log + skip            |
     +----------------------------+-------------------------------+
@@ -429,10 +438,10 @@ class IRBuilder:
 
         Returns:
             An :class:`~app.ir.blocks.IRBasicBlock` labelled ``"entry"``
-            containing zero or more :class:`~app.ir.instructions.IRMove`
+            containing zero or more :class:`~app.ir.instructions.IRInstruction`
             instructions.
         """
-        instructions: list[IRMove] = []
+        instructions: list[IRInstruction] = []
 
         if proc_div is not None:
             for para in proc_div.paragraphs:
@@ -451,11 +460,11 @@ class IRBuilder:
     # Statement translation helpers
     # ------------------------------------------------------------------
 
-    def _translate_paragraph(self, para: ParagraphNode) -> list[IRMove]:
+    def _translate_paragraph(self, para: ParagraphNode) -> list[IRInstruction]:
         """
-        Translate all MOVE statements in a paragraph into IRMove instructions.
+        Translate supported statements in a paragraph into IR instructions.
 
-        Non-MOVE statements are logged at DEBUG level and skipped.
+        Unsupported statements are logged at DEBUG level and skipped.
 
         Args:
             para:
@@ -463,16 +472,16 @@ class IRBuilder:
                 translate.
 
         Returns:
-            An ordered list of :class:`~app.ir.instructions.IRMove` objects.
+            An ordered list of :class:`~app.ir.instructions.IRInstruction` objects.
         """
-        result: list[IRMove] = []
+        result: list[IRInstruction] = []
         for stmt in para.statements:
             ir_instr = self._translate_statement(stmt)
             if ir_instr is not None:
                 result.append(ir_instr)
         return result
 
-    def _translate_statement(self, stmt: StatementNode) -> IRMove | None:
+    def _translate_statement(self, stmt: StatementNode) -> IRInstruction | None:
         """
         Translate a single statement into an IR instruction.
 
@@ -486,13 +495,21 @@ class IRBuilder:
                 translate.
 
         Returns:
-            An :class:`~app.ir.instructions.IRMove` if the statement was a
-            valid MOVE; ``None`` otherwise.
+            An :class:`~app.ir.instructions.IRInstruction` if the statement was
+            supported; ``None`` otherwise.
         """
-        from app.parser.ast.statements import MoveStatementNode  # noqa: PLC0415
+        from app.parser.ast.statements import (  # noqa: PLC0415
+            AcceptStatementNode,
+            DisplayStatementNode,
+            MoveStatementNode,
+        )
 
         if isinstance(stmt, MoveStatementNode):
             return self.build_move_instruction(stmt)
+        if isinstance(stmt, DisplayStatementNode):
+            return self.build_display_instruction(stmt)
+        if isinstance(stmt, AcceptStatementNode):
+            return self.build_accept_instruction(stmt)
 
         logger.debug(
             "IRBuilder._translate_statement(): skipping unsupported "
@@ -529,6 +546,50 @@ class IRBuilder:
             ir_target,
         )
         return IRMove(source=ir_source, result=ir_target)
+
+    def build_display_instruction(self, stmt: DisplayStatementNode) -> IRDisplay:
+        """
+        Lower a single ``DisplayStatementNode`` into an
+        :class:`~app.ir.instructions.IRDisplay`.
+
+        Args:
+            stmt:
+                The :class:`~app.parser.ast.statements.DisplayStatementNode`
+                to lower.
+
+        Returns:
+            An :class:`~app.ir.instructions.IRDisplay` instruction.
+        """
+        ir_operand = self.build_operand(stmt.operand)
+        logger.debug(
+            "IRBuilder.build_display_instruction(): DISPLAY {!r} "
+            "→ IRDisplay(operand={!r}).",
+            stmt.operand,
+            ir_operand,
+        )
+        return IRDisplay(operand=ir_operand)
+
+    def build_accept_instruction(self, stmt: AcceptStatementNode) -> IRAccept:
+        """
+        Lower a single ``AcceptStatementNode`` into an
+        :class:`~app.ir.instructions.IRAccept`.
+
+        Args:
+            stmt:
+                The :class:`~app.parser.ast.statements.AcceptStatementNode`
+                to lower.
+
+        Returns:
+            An :class:`~app.ir.instructions.IRAccept` instruction.
+        """
+        ir_target = self.build_variable_reference(stmt.target.strip())
+        logger.debug(
+            "IRBuilder.build_accept_instruction(): ACCEPT {!r} "
+            "→ IRAccept(result={!r}).",
+            stmt.target,
+            ir_target,
+        )
+        return IRAccept(result=ir_target)
 
     # ------------------------------------------------------------------
     # Operand translation helpers (reusable by future passes)

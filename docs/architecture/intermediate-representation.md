@@ -182,6 +182,31 @@ IRMove(result="WS-TARGET", source="WS-SOURCE")
 |-------|-------------|
 | `source` | Source operand name |
 
+### IRDisplay
+
+Write an operand value to the console output.
+
+```python
+IRDisplay(operand='"HELLO WORLD"')
+IRDisplay(operand="WS-NAME")
+```
+
+| Field | Description |
+|-------|-------------|
+| `operand` | Variable name or literal text |
+
+### IRAccept
+
+Read input from the console into a variable.
+
+```python
+IRAccept(result="WS-INPUT")
+```
+
+| Field | Description |
+|-------|-------------|
+| `result` | Target variable name |
+
 ### IRCall
 
 Invoke a named function or paragraph.
@@ -240,6 +265,8 @@ class IRVisitor:
     def visit_basic_block(self, node: IRBasicBlock) -> Any: ...
     def visit_assignment(self, node: IRAssignment) -> Any: ...
     def visit_move(self, node: IRMove) -> Any: ...
+    def visit_display(self, node: IRDisplay) -> Any: ...
+    def visit_accept(self, node: IRAccept) -> Any: ...
     def visit_call(self, node: IRCall) -> Any: ...
     def visit_return(self, node: IRReturn) -> Any: ...
     def visit_branch(self, node: IRBranch) -> Any: ...

@@ -77,9 +77,11 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from app.ir.blocks import IRBasicBlock
     from app.ir.instructions import (
+        IRAccept,
         IRAssignment,
         IRBranch,
         IRCall,
+        IRDisplay,
         IRInstruction,
         IRMove,
         IRReturn,
@@ -116,6 +118,8 @@ class IRVisitor:
     ``visit_basic_block``             :class:`~app.ir.blocks.IRBasicBlock`
     ``visit_assignment``              :class:`~app.ir.instructions.IRAssignment`
     ``visit_move``                    :class:`~app.ir.instructions.IRMove`
+    ``visit_display``                 :class:`~app.ir.instructions.IRDisplay`
+    ``visit_accept``                  :class:`~app.ir.instructions.IRAccept`
     ``visit_call``                    :class:`~app.ir.instructions.IRCall`
     ``visit_return``                  :class:`~app.ir.instructions.IRReturn`
     ``visit_branch``                  :class:`~app.ir.instructions.IRBranch`
@@ -247,6 +251,30 @@ class IRVisitor:
 
         Args:
             node: The branch instruction.
+
+        Returns:
+            ``None`` by default.
+        """
+        return None
+
+    def visit_display(self, node: IRDisplay) -> Any:
+        """
+        Visit an :class:`~app.ir.instructions.IRDisplay`.
+
+        Args:
+            node: The display instruction.
+
+        Returns:
+            ``None`` by default.
+        """
+        return None
+
+    def visit_accept(self, node: IRAccept) -> Any:
+        """
+        Visit an :class:`~app.ir.instructions.IRAccept`.
+
+        Args:
+            node: The accept instruction.
 
         Returns:
             ``None`` by default.
