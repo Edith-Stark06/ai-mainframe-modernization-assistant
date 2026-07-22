@@ -80,11 +80,12 @@ if TYPE_CHECKING:
         IRAccept,
         IRAdd,
         IRAssignment,
-        IRBranch,
         IRCall,
+        IRConditionalBranch,
         IRDisplay,
         IRDivide,
         IRInstruction,
+        IRJump,
         IRMove,
         IRMultiply,
         IRReturn,
@@ -130,7 +131,8 @@ class IRVisitor:
     ``visit_divide``                  :class:`~app.ir.instructions.IRDivide`
     ``visit_call``                    :class:`~app.ir.instructions.IRCall`
     ``visit_return``                  :class:`~app.ir.instructions.IRReturn`
-    ``visit_branch``                  :class:`~app.ir.instructions.IRBranch`
+    ``visit_conditional_branch``      :class:`~app.ir.instructions.IRConditionalBranch`
+    ``visit_jump``                    :class:`~app.ir.instructions.IRJump`
     ``visit_instruction`` (fallback)  :class:`~app.ir.instructions.IRInstruction`
     ================================  =====================================
 
@@ -277,12 +279,24 @@ class IRVisitor:
         """
         return None
 
-    def visit_branch(self, node: IRBranch) -> Any:
+    def visit_conditional_branch(self, node: IRConditionalBranch) -> Any:
         """
-        Visit an :class:`~app.ir.instructions.IRBranch`.
+        Visit an :class:`~app.ir.instructions.IRConditionalBranch`.
 
         Args:
-            node: The branch instruction.
+            node: The conditional branch instruction.
+
+        Returns:
+            ``None`` by default.
+        """
+        return None
+
+    def visit_jump(self, node: IRJump) -> Any:
+        """
+        Visit an :class:`~app.ir.instructions.IRJump`.
+
+        Args:
+            node: The jump instruction.
 
         Returns:
             ``None`` by default.

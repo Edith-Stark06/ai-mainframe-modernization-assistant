@@ -58,9 +58,12 @@ __all__ = [
     "AddStatementNode",
     "DisplayStatementNode",
     "DivideStatementNode",
+    "GoToStatementNode",
     "GobackStatementNode",
+    "IfStatementNode",
     "MoveStatementNode",
     "MultiplyStatementNode",
+    "PerformStatementNode",
     "StatementNode",
     "StopRunStatementNode",
     "SubtractStatementNode",
@@ -397,6 +400,53 @@ class GobackStatementNode(StatementNode):
             The return value of the visitor method, or ``None``.
         """
         visit = getattr(visitor, "visit_goback_statement", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class IfStatementNode(StatementNode):
+    """
+    Immutable AST node for a COBOL ``IF`` statement.
+    """
+
+    condition: str
+    then_statements: tuple[StatementNode, ...]
+    else_statements: tuple[StatementNode, ...] = ()
+
+    def accept(self, visitor: object) -> object:
+        visit = getattr(visitor, "visit_if_statement", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class PerformStatementNode(StatementNode):
+    """
+    Immutable AST node for a COBOL ``PERFORM`` statement.
+    """
+
+    target: str
+
+    def accept(self, visitor: object) -> object:
+        visit = getattr(visitor, "visit_perform_statement", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class GoToStatementNode(StatementNode):
+    """
+    Immutable AST node for a COBOL ``GO TO`` statement.
+    """
+
+    target: str
+
+    def accept(self, visitor: object) -> object:
+        visit = getattr(visitor, "visit_go_to_statement", None)
         if callable(visit):
             return visit(self)
         return None
