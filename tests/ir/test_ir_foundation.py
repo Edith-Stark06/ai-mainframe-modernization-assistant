@@ -923,7 +923,7 @@ class TestTraverseIr:
 
 
 class TestIRBuilder:
-    """IRBuilder scaffold initialisation and behaviour."""
+    """IRBuilder initialisation and behaviour (TASK-024 + TASK-025)."""
 
     def test_accepts_valid_context(self) -> None:
         ctx = _empty_ctx()
@@ -951,10 +951,11 @@ class TestIRBuilder:
         result = IRBuilder(context=ctx).build()
         assert isinstance(result, IRProgram)
 
-    def test_build_returns_empty_program(self) -> None:
+    def test_build_returns_one_module(self) -> None:
+        """TASK-025: build() always returns exactly one module."""
         ctx = _empty_ctx()
         prog = IRBuilder(context=ctx).build()
-        assert len(prog) == 0
+        assert len(prog) == 1
 
     def test_build_callable_multiple_times(self) -> None:
         ctx = _empty_ctx()
@@ -1121,3 +1122,460 @@ class TestPublicApiExports:
         from app.ir import IRNode as N  # noqa: PLC0415
 
         assert N is IRNode
+
+
+# ===========================================================================
+# TASK-025: IRBuilder — AST-to-IR Translation Foundation
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+
+def _pos(line: int = 1):  # returns Position  # noqa: ANN201
+    from app.parser.lexer.position import Position  # noqa: PLC0415
+
+    return Position(line=line, column=1, offset=0, filename="test.cbl")
+
+
+def _ctx_with_program(name: str) -> SemanticContext:
+    """Return a SemanticContext that contains one ProgramSymbol."""
+    from app.parser.semantic.symbols import ProgramSymbol  # noqa: PLC0415
+
+    table = SymbolTable()
+    table.register(ProgramSymbol(name=name, declared_at=_pos()))
+    return SemanticContext(symbol_table=table, diagnostics=[])
+
+
+def _ctx_with_paragraphs(*names: str) -> SemanticContext:
+    """Return a SemanticContext with one ProgramSymbol + N ParagraphSymbols."""
+    from app.parser.semantic.symbols import (  # noqa: PLC0415
+        ParagraphSymbol,
+        ProgramSymbol,
+    )
+
+    table = SymbolTable()
+    table.register(ProgramSymbol(name="TESTPROG", declared_at=_pos()))
+    for i, n in enumerate(names, start=10):
+        table.register(ParagraphSymbol(name=n, declared_at=_pos(line=i)))
+    return SemanticContext(symbol_table=table, diagnostics=[])
+
+
+class TestIRBuilderTranslation:
+    """
+    TASK-025: IRBuilder.build() translation tests.
+
+    Covers:
+    - Empty context (no ProgramSymbol) → one unnamed module.
+    - Named program → correct names at every IR level.
+    - One module per context.
+    - One entry function per module.
+    - One entry basic block per function (labelled "entry").
+    - Entry block is initially empty (no instructions).
+    - build() is deterministic across multiple calls.
+    - build() is stateless (two calls return equal but distinct objects).
+    - IRProgram is traversable via traverse_ir.
+    - Context with semantic errors doesn't raise.
+    - Helper method contracts (build_program, build_module, build_function,
+      build_entry_block).
+    - Naming helpers (_program_name, _module_name, _function_name).
+    - Subclass can override naming without changing orchestration.
+    """
+
+    # ------------------------------------------------------------------
+    # Empty context (no ProgramSymbol)
+    # ------------------------------------------------------------------
+
+    def test_empty_ctx_produces_ir_program(self) -> None:
+        prog = IRBuilder(context=_empty_ctx()).build()
+        assert isinstance(prog, IRProgram)
+
+    def test_empty_ctx_program_name_is_empty(self) -> None:
+        prog = IRBuilder(context=_empty_ctx()).build()
+        assert prog.name == ""
+
+    def test_empty_ctx_has_one_module(self) -> None:
+        prog = IRBuilder(context=_empty_ctx()).build()
+        assert len(prog) == 1
+
+    def test_empty_ctx_module_name_is_empty(self) -> None:
+        prog = IRBuilder(context=_empty_ctx()).build()
+        assert prog.modules[0].name == ""
+
+    def test_empty_ctx_module_has_one_function(self) -> None:
+        prog = IRBuilder(context=_empty_ctx()).build()
+        assert len(prog.modules[0]) == 1
+
+    def test_empty_ctx_function_name_is_entry(self) -> None:
+        prog = IRBuilder(context=_empty_ctx()).build()
+        assert prog.modules[0].functions[0].name == "__entry__"
+
+    def test_empty_ctx_function_has_one_block(self) -> None:
+        prog = IRBuilder(context=_empty_ctx()).build()
+        assert len(prog.modules[0].functions[0]) == 1
+
+    def test_empty_ctx_entry_block_label(self) -> None:
+        prog = IRBuilder(context=_empty_ctx()).build()
+        assert prog.modules[0].functions[0].blocks[0].label == "entry"
+
+    def test_empty_ctx_entry_block_is_empty(self) -> None:
+        prog = IRBuilder(context=_empty_ctx()).build()
+        assert prog.modules[0].functions[0].blocks[0].instructions == ()
+
+    # ------------------------------------------------------------------
+    # Named program
+    # ------------------------------------------------------------------
+
+    def test_named_program_sets_prog_name(self) -> None:
+        prog = IRBuilder(context=_ctx_with_program("PAYROLL")).build()
+        assert prog.name == "PAYROLL"
+
+    def test_named_program_sets_module_name(self) -> None:
+        prog = IRBuilder(context=_ctx_with_program("PAYROLL")).build()
+        assert prog.modules[0].name == "PAYROLL"
+
+    def test_named_program_function_still_entry(self) -> None:
+        prog = IRBuilder(context=_ctx_with_program("PAYROLL")).build()
+        assert prog.modules[0].functions[0].name == "__entry__"
+
+    def test_named_program_block_still_entry(self) -> None:
+        prog = IRBuilder(context=_ctx_with_program("PAYROLL")).build()
+        assert prog.modules[0].functions[0].blocks[0].label == "entry"
+
+    def test_named_program_block_still_empty(self) -> None:
+        prog = IRBuilder(context=_ctx_with_program("PAYROLL")).build()
+        assert prog.modules[0].functions[0].blocks[0].instructions == ()
+
+    def test_different_program_names(self) -> None:
+        for name in ("BILLING", "INVENTORY", "CUSTOMER-MGT"):
+            prog = IRBuilder(context=_ctx_with_program(name)).build()
+            assert prog.name == name
+            assert prog.modules[0].name == name
+
+    # ------------------------------------------------------------------
+    # IR node kinds
+    # ------------------------------------------------------------------
+
+    def test_module_kind(self) -> None:
+        prog = IRBuilder(context=_empty_ctx()).build()
+        assert prog.modules[0].kind is IRNodeKind.MODULE
+
+    def test_function_kind(self) -> None:
+        prog = IRBuilder(context=_empty_ctx()).build()
+        assert prog.modules[0].functions[0].kind is IRNodeKind.FUNCTION
+
+    def test_entry_block_kind(self) -> None:
+        prog = IRBuilder(context=_empty_ctx()).build()
+        assert prog.modules[0].functions[0].blocks[0].kind is IRNodeKind.BASIC_BLOCK
+
+    # ------------------------------------------------------------------
+    # Determinism and statelessness
+    # ------------------------------------------------------------------
+
+    def test_build_deterministic(self) -> None:
+        ctx = _ctx_with_program("PAYROLL")
+        b = IRBuilder(context=ctx)
+        assert b.build() == b.build()
+
+    def test_build_returns_distinct_objects(self) -> None:
+        ctx = _ctx_with_program("PAYROLL")
+        b = IRBuilder(context=ctx)
+        p1 = b.build()
+        p2 = b.build()
+        assert p1 is not p2
+
+    def test_current_program_equals_build(self) -> None:
+        ctx = _ctx_with_program("PAYROLL")
+        b = IRBuilder(context=ctx)
+        assert b.current_program() == b.build()
+
+    # ------------------------------------------------------------------
+    # Traversability via traverse_ir
+    # ------------------------------------------------------------------
+
+    def test_built_program_traversable(self) -> None:
+        visited: list[str] = []
+
+        class Rec(IRVisitor):
+            def visit_program(self, node: IRProgram) -> None:
+                visited.append(f"prog:{node.name}")
+
+            def visit_module(self, node: IRModule) -> None:
+                visited.append(f"mod:{node.name}")
+
+            def visit_function(self, node: IRFunction) -> None:
+                visited.append(f"fn:{node.name}")
+
+            def visit_basic_block(self, node: IRBasicBlock) -> None:
+                visited.append(f"bb:{node.label}")
+
+        prog = IRBuilder(context=_ctx_with_program("PAYROLL")).build()
+        traverse_ir(prog, Rec())
+        assert "prog:PAYROLL" in visited
+        assert "mod:PAYROLL" in visited
+        assert "fn:__entry__" in visited
+        assert "bb:entry" in visited
+
+    def test_traversal_order(self) -> None:
+        visited: list[str] = []
+
+        class Rec(IRVisitor):
+            def visit_program(self, node: IRProgram) -> None:
+                visited.append("prog")
+
+            def visit_module(self, node: IRModule) -> None:
+                visited.append("mod")
+
+            def visit_function(self, node: IRFunction) -> None:
+                visited.append("fn")
+
+            def visit_basic_block(self, node: IRBasicBlock) -> None:
+                visited.append("bb")
+
+        traverse_ir(IRBuilder(context=_empty_ctx()).build(), Rec())
+        assert visited == ["prog", "mod", "fn", "bb"]
+
+    # ------------------------------------------------------------------
+    # Error-context tolerance
+    # ------------------------------------------------------------------
+
+    def test_error_context_does_not_raise(self) -> None:
+        from app.parser.semantic.diagnostics import (  # noqa: PLC0415
+            SemanticDiagnostic,
+            SemanticSeverity,
+        )
+
+        diag = SemanticDiagnostic(
+            message="dummy",
+            position=_pos(),
+            severity=SemanticSeverity.ERROR,
+            code="SEM001",
+        )
+        ctx = SemanticContext(symbol_table=SymbolTable(), diagnostics=[diag])
+        prog = IRBuilder(context=ctx).build()
+        assert isinstance(prog, IRProgram)
+
+    def test_error_context_still_produces_module(self) -> None:
+        from app.parser.semantic.diagnostics import (  # noqa: PLC0415
+            SemanticDiagnostic,
+            SemanticSeverity,
+        )
+
+        diag = SemanticDiagnostic(
+            message="dummy",
+            position=_pos(),
+            severity=SemanticSeverity.ERROR,
+            code="SEM001",
+        )
+        ctx = SemanticContext(symbol_table=SymbolTable(), diagnostics=[diag])
+        prog = IRBuilder(context=ctx).build()
+        assert len(prog) == 1
+
+    # ------------------------------------------------------------------
+    # Individual helper methods
+    # ------------------------------------------------------------------
+
+    def test_build_program_returns_ir_program(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        assert isinstance(b.build_program("MY-PROG"), IRProgram)
+
+    def test_build_program_sets_name(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        prog = b.build_program("MY-PROG")
+        assert prog.name == "MY-PROG"
+
+    def test_build_program_has_one_module(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        prog = b.build_program("X")
+        assert len(prog) == 1
+
+    def test_build_module_returns_ir_module(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        assert isinstance(b.build_module("MOD"), IRModule)
+
+    def test_build_module_sets_name(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        mod = b.build_module("MOD-A")
+        assert mod.name == "MOD-A"
+
+    def test_build_module_has_one_function(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        mod = b.build_module("X")
+        assert len(mod) == 1
+
+    def test_build_function_returns_ir_function(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        assert isinstance(b.build_function("FN"), IRFunction)
+
+    def test_build_function_sets_name(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        fn = b.build_function("MY-FN")
+        assert fn.name == "MY-FN"
+
+    def test_build_function_has_one_block(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        fn = b.build_function("FN")
+        assert len(fn) == 1
+
+    def test_build_function_block_labelled_entry(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        fn = b.build_function("FN")
+        assert fn.blocks[0].label == "entry"
+
+    def test_build_entry_block_returns_ir_basic_block(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        assert isinstance(b.build_entry_block(), IRBasicBlock)
+
+    def test_build_entry_block_label(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        bb = b.build_entry_block()
+        assert bb.label == "entry"
+
+    def test_build_entry_block_is_empty(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        bb = b.build_entry_block()
+        assert bb.instructions == ()
+
+    def test_build_entry_block_name_synced_to_label(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        bb = b.build_entry_block()
+        assert bb.name == "entry"
+
+    # ------------------------------------------------------------------
+    # Naming helpers
+    # ------------------------------------------------------------------
+
+    def test_program_name_empty_when_no_program_symbol(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        assert b._program_name() == ""
+
+    def test_program_name_from_program_symbol(self) -> None:
+        b = IRBuilder(context=_ctx_with_program("PAYROLL"))
+        assert b._program_name() == "PAYROLL"
+
+    def test_module_name_equals_program_name(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        assert b._module_name("PAYROLL") == "PAYROLL"
+
+    def test_module_name_empty_string(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        assert b._module_name("") == ""
+
+    def test_function_name_is_entry(self) -> None:
+        b = IRBuilder(context=_empty_ctx())
+        assert b._function_name() == "__entry__"
+
+    # ------------------------------------------------------------------
+    # Subclass extensibility
+    # ------------------------------------------------------------------
+
+    def test_subclass_can_override_function_name(self) -> None:
+        """Subclass overrides _function_name without breaking build()."""
+
+        class CustomBuilder(IRBuilder):
+            def _function_name(self) -> str:
+                return "custom_main"
+
+        prog = CustomBuilder(context=_ctx_with_program("P")).build()
+        assert prog.modules[0].functions[0].name == "custom_main"
+
+    def test_subclass_can_override_module_name(self) -> None:
+        """Subclass overrides _module_name to apply a prefix."""
+
+        class PrefixBuilder(IRBuilder):
+            def _module_name(self, prog_name: str) -> str:
+                return f"com.example.{prog_name.lower()}"
+
+        prog = PrefixBuilder(context=_ctx_with_program("PAYROLL")).build()
+        assert prog.modules[0].name == "com.example.payroll"
+
+    def test_subclass_can_override_build_entry_block(self) -> None:
+        """Subclass overrides build_entry_block to pre-populate instructions."""
+
+        class InstrBuilder(IRBuilder):
+            def build_entry_block(self) -> IRBasicBlock:
+                return IRBasicBlock(
+                    label="entry",
+                    instructions=(IRReturn(operand=""),),
+                )
+
+        prog = InstrBuilder(context=_ctx_with_program("P")).build()
+        bb = prog.modules[0].functions[0].blocks[0]
+        assert len(bb) == 1
+        assert isinstance(bb.instructions[0], IRReturn)
+
+    # ------------------------------------------------------------------
+    # Structure invariants
+    # ------------------------------------------------------------------
+
+    def test_program_contains_ir_module_instances(self) -> None:
+        prog = IRBuilder(context=_ctx_with_program("P")).build()
+        assert all(isinstance(m, IRModule) for m in prog.modules)
+
+    def test_module_contains_ir_function_instances(self) -> None:
+        prog = IRBuilder(context=_ctx_with_program("P")).build()
+        mod = prog.modules[0]
+        assert all(isinstance(f, IRFunction) for f in mod.functions)
+
+    def test_function_contains_ir_basic_block_instances(self) -> None:
+        prog = IRBuilder(context=_ctx_with_program("P")).build()
+        fn = prog.modules[0].functions[0]
+        assert all(isinstance(b, IRBasicBlock) for b in fn.blocks)
+
+    def test_entry_block_instructions_is_tuple(self) -> None:
+        prog = IRBuilder(context=_ctx_with_program("P")).build()
+        bb = prog.modules[0].functions[0].blocks[0]
+        assert isinstance(bb.instructions, tuple)
+
+    def test_function_return_type_is_void(self) -> None:
+        prog = IRBuilder(context=_ctx_with_program("P")).build()
+        fn = prog.modules[0].functions[0]
+        assert fn.return_type == "void"
+
+    def test_function_params_is_empty(self) -> None:
+        prog = IRBuilder(context=_ctx_with_program("P")).build()
+        fn = prog.modules[0].functions[0]
+        assert fn.params == ()
+
+    def test_result_is_frozen_program(self) -> None:
+        """IRProgram is a frozen dataclass — cannot be mutated."""
+        prog = IRBuilder(context=_ctx_with_program("P")).build()
+        with pytest.raises((AttributeError, TypeError)):
+            prog.name = "CHANGED"  # type: ignore[misc]
+
+    def test_result_is_hashable(self) -> None:
+        prog = IRBuilder(context=_ctx_with_program("P")).build()
+        assert hash(prog) is not None
+
+    # ------------------------------------------------------------------
+    # Context with multiple symbol kinds (paragraphs, variables)
+    # ------------------------------------------------------------------
+
+    def test_context_with_paragraphs_still_one_module(self) -> None:
+        ctx = _ctx_with_paragraphs("PARA-1", "PARA-2", "PARA-3")
+        prog = IRBuilder(context=ctx).build()
+        assert len(prog) == 1
+
+    def test_context_with_paragraphs_program_name(self) -> None:
+        ctx = _ctx_with_paragraphs("PARA-1")
+        prog = IRBuilder(context=ctx).build()
+        assert prog.name == "TESTPROG"
+
+    def test_context_with_paragraphs_one_entry_function(self) -> None:
+        ctx = _ctx_with_paragraphs("PARA-1", "PARA-2")
+        prog = IRBuilder(context=ctx).build()
+        assert len(prog.modules[0]) == 1
+
+    # ------------------------------------------------------------------
+    # current_program()
+    # ------------------------------------------------------------------
+
+    def test_current_program_returns_ir_program(self) -> None:
+        ctx = _ctx_with_program("P")
+        assert isinstance(IRBuilder(context=ctx).current_program(), IRProgram)
+
+    def test_current_program_has_same_structure_as_build(self) -> None:
+        ctx = _ctx_with_program("PAYROLL")
+        b = IRBuilder(context=ctx)
+        assert b.current_program() == b.build()
