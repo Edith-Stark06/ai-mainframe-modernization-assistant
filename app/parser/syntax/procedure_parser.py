@@ -89,6 +89,10 @@ from app.parser.ast.statements import (
     MoveStatementNode,
     StatementNode,
     StopRunStatementNode,
+    AddStatementNode,
+    SubtractStatementNode,
+    MultiplyStatementNode,
+    DivideStatementNode,
 )
 from app.parser.diagnostics.recovery import RecoveryContext
 from app.parser.lexer.position import Position
@@ -122,6 +126,11 @@ _STATEMENT_LEXEMES: frozenset[str] = frozenset(
         "MOVE",
         "STOP",
         "GOBACK",
+        "ACCEPT",
+        "ADD",
+        "SUBTRACT",
+        "MULTIPLY",
+        "DIVIDE",
     }
 )
 
@@ -476,6 +485,14 @@ class ProcedureDivisionParser:
             return self._parse_stop_run(state)
         if upper == "GOBACK":
             return self._parse_goback(state)
+        if upper == "ADD":
+            return self._parse_add(state)
+        if upper == "SUBTRACT":
+            return self._parse_subtract(state)
+        if upper == "MULTIPLY":
+            return self._parse_multiply(state)
+        if upper == "DIVIDE":
+            return self._parse_divide(state)
 
         raise ParserError(
             f"unsupported statement keyword {upper!r}",
@@ -705,6 +722,238 @@ class ProcedureDivisionParser:
     # ------------------------------------------------------------------
     # Shared helpers
     # ------------------------------------------------------------------
+
+    def _parse_add(self, state: ParserState) -> AddStatementNode:
+        stream = state.stream
+        start: Position = stream.current().position
+        stream.advance()  # consume ADD
+
+        left_parts: list[str] = []
+        while not stream.eof():
+            tok = stream.current()
+            if tok.type is TokenType.PERIOD or tok.lexeme.upper() == "TO":
+                break
+            left_parts.append(tok.lexeme)
+            stream.advance()
+
+        if not left_parts:
+            tok = stream.current()
+            raise ParserError(
+                "expected operand after ADD",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+
+        to_tok = stream.current()
+        if to_tok.lexeme.upper() != "TO":
+            raise ParserError(
+                f"expected 'TO' in ADD statement, got {to_tok.lexeme!r}",
+                line=to_tok.position.line,
+                column=to_tok.position.column,
+                offset=to_tok.position.offset,
+            )
+        stream.advance()
+
+        right_parts: list[str] = []
+        while not stream.eof():
+            tok = stream.current()
+            if tok.type is TokenType.PERIOD:
+                break
+            right_parts.append(tok.lexeme)
+            stream.advance()
+
+        if not right_parts:
+            tok = stream.current()
+            raise ParserError(
+                "expected target operand after TO",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+
+        left = " ".join(left_parts)
+        right = " ".join(right_parts)
+        end: Position = stream.current().position
+        self._consume_period(state, "ADD")
+
+        return AddStatementNode(
+            start_position=start, end_position=end, left=left, right=right
+        )
+
+    def _parse_subtract(self, state: ParserState) -> SubtractStatementNode:
+        stream = state.stream
+        start: Position = stream.current().position
+        stream.advance()  # consume SUBTRACT
+
+        left_parts: list[str] = []
+        while not stream.eof():
+            tok = stream.current()
+            if tok.type is TokenType.PERIOD or tok.lexeme.upper() == "FROM":
+                break
+            left_parts.append(tok.lexeme)
+            stream.advance()
+
+        if not left_parts:
+            tok = stream.current()
+            raise ParserError(
+                "expected operand after SUBTRACT",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+
+        from_tok = stream.current()
+        if from_tok.lexeme.upper() != "FROM":
+            raise ParserError(
+                f"expected 'FROM' in SUBTRACT statement, got {from_tok.lexeme!r}",
+                line=from_tok.position.line,
+                column=from_tok.position.column,
+                offset=from_tok.position.offset,
+            )
+        stream.advance()
+
+        right_parts: list[str] = []
+        while not stream.eof():
+            tok = stream.current()
+            if tok.type is TokenType.PERIOD:
+                break
+            right_parts.append(tok.lexeme)
+            stream.advance()
+
+        if not right_parts:
+            tok = stream.current()
+            raise ParserError(
+                "expected target operand after FROM",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+
+        left = " ".join(left_parts)
+        right = " ".join(right_parts)
+        end: Position = stream.current().position
+        self._consume_period(state, "SUBTRACT")
+
+        return SubtractStatementNode(
+            start_position=start, end_position=end, left=left, right=right
+        )
+
+    def _parse_multiply(self, state: ParserState) -> MultiplyStatementNode:
+        stream = state.stream
+        start: Position = stream.current().position
+        stream.advance()  # consume MULTIPLY
+
+        left_parts: list[str] = []
+        while not stream.eof():
+            tok = stream.current()
+            if tok.type is TokenType.PERIOD or tok.lexeme.upper() == "BY":
+                break
+            left_parts.append(tok.lexeme)
+            stream.advance()
+
+        if not left_parts:
+            tok = stream.current()
+            raise ParserError(
+                "expected operand after MULTIPLY",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+
+        by_tok = stream.current()
+        if by_tok.lexeme.upper() != "BY":
+            raise ParserError(
+                f"expected 'BY' in MULTIPLY statement, got {by_tok.lexeme!r}",
+                line=by_tok.position.line,
+                column=by_tok.position.column,
+                offset=by_tok.position.offset,
+            )
+        stream.advance()
+
+        right_parts: list[str] = []
+        while not stream.eof():
+            tok = stream.current()
+            if tok.type is TokenType.PERIOD:
+                break
+            right_parts.append(tok.lexeme)
+            stream.advance()
+
+        if not right_parts:
+            tok = stream.current()
+            raise ParserError(
+                "expected target operand after BY",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+
+        left = " ".join(left_parts)
+        right = " ".join(right_parts)
+        end: Position = stream.current().position
+        self._consume_period(state, "MULTIPLY")
+
+        return MultiplyStatementNode(
+            start_position=start, end_position=end, left=left, right=right
+        )
+
+    def _parse_divide(self, state: ParserState) -> DivideStatementNode:
+        stream = state.stream
+        start: Position = stream.current().position
+        stream.advance()  # consume DIVIDE
+
+        left_parts: list[str] = []
+        while not stream.eof():
+            tok = stream.current()
+            if tok.type is TokenType.PERIOD or tok.lexeme.upper() == "INTO":
+                break
+            left_parts.append(tok.lexeme)
+            stream.advance()
+
+        if not left_parts:
+            tok = stream.current()
+            raise ParserError(
+                "expected operand after DIVIDE",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+
+        into_tok = stream.current()
+        if into_tok.lexeme.upper() != "INTO":
+            raise ParserError(
+                f"expected 'INTO' in DIVIDE statement, got {into_tok.lexeme!r}",
+                line=into_tok.position.line,
+                column=into_tok.position.column,
+                offset=into_tok.position.offset,
+            )
+        stream.advance()
+
+        right_parts: list[str] = []
+        while not stream.eof():
+            tok = stream.current()
+            if tok.type is TokenType.PERIOD:
+                break
+            right_parts.append(tok.lexeme)
+            stream.advance()
+
+        if not right_parts:
+            tok = stream.current()
+            raise ParserError(
+                "expected target operand after INTO",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+
+        left = " ".join(left_parts)
+        right = " ".join(right_parts)
+        end: Position = stream.current().position
+        self._consume_period(state, "DIVIDE")
+
+        return DivideStatementNode(
+            start_position=start, end_position=end, left=left, right=right
+        )
 
     def _consume_period(self, state: ParserState, context: str) -> None:
         """
