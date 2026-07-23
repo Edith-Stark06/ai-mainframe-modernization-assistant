@@ -2,7 +2,6 @@
 Unit tests for IR translation of control flow statements (TASK-029).
 """
 
-
 from app.ir.builder import IRBuilder
 from app.ir.instructions import IRConditionalBranch, IRJump, IRCall, IRMove
 from app.parser.ast.paragraphs import ParagraphNode
@@ -18,8 +17,6 @@ from app.parser.semantic.context import SemanticContext, SymbolTable
 from app.parser.lexer.position import Position
 
 _POS = Position(line=1, column=1, offset=0, filename="test.cbl")
-
-
 
 
 def _empty_ctx() -> SemanticContext:
