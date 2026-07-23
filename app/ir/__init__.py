@@ -39,6 +39,10 @@ Builder:
       :class:`~app.parser.semantic.context.SemanticContext`; scaffold for
       future AST-to-IR translation.
 
+Pretty Printer:
+
+    * :func:`~app.ir.printer.pretty_print` — deterministic human-readable IR output.
+
 Public API:
     All primary types are exported from this package.
 
@@ -72,6 +76,7 @@ from app.ir.instructions import (
     IRSubtract,
 )
 from app.ir.nodes import IRNode, IRNodeKind
+from app.ir.printer import pretty_print
 from app.ir.program import IRFunction, IRModule, IRProgram
 from app.ir.visitors import IRVisitor, traverse_ir
 
@@ -97,5 +102,6 @@ __all__ = [
     "IRNodeKind",
     "IRProgram",
     "IRVisitor",
+    "pretty_print",
     "traverse_ir",
 ]

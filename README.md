@@ -305,6 +305,71 @@ Run
 uvicorn app.main:app --reload
 ```
 
+---
+
+# 🔬 Compiler Driver
+
+The standalone compiler driver executes the complete COBOL frontend pipeline outside the REST API.
+
+## Usage
+
+```bash
+python -m app.compiler <source-file>
+```
+
+## Example
+
+```bash
+python -m app.compiler examples/hello.cbl
+python -m app.compiler examples/arithmetic.cbl
+python -m app.compiler examples/conditional.cbl
+python -m app.compiler examples/subprogram.cbl
+```
+
+## Expected Output
+
+```text
+Program HELLO
+
+  Module HELLO
+
+    Function __entry__
+
+      entry:
+        DISPLAY "HELLO WORLD"
+        MOVE "WELCOME" -> WS-GREETING
+        DISPLAY WS-GREETING
+        MOVE 1 -> WS-COUNT
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Compilation succeeded |
+| 1 | Source file not found or unreadable |
+| 2 | Compilation completed with errors |
+
+## Pipeline
+
+```
+Source File
+    ↓
+CobolLexer
+    ↓
+ProgramParser
+    ↓
+SemanticAnalyzer
+    ↓
+IRBuilder
+    ↓
+IR Pretty Printer (stdout)
+```
+
+Diagnostics are printed to **stderr**; the IR is printed to **stdout**.
+
+---
+
 API Documentation
 
 ```
