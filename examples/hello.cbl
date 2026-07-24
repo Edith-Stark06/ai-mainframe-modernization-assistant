@@ -1,7 +1,4 @@
-      *=======================================================*
-      * hello.cbl                                             *
-      * Purpose: Demonstrate DISPLAY and MOVE statements.     *
-      *=======================================================*
+      
        IDENTIFICATION DIVISION.
        PROGRAM-ID. HELLO.
 

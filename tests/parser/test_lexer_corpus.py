@@ -57,7 +57,14 @@ def load(name: str) -> str:
 
 def tokenize(name: str) -> list:
     """Return the full token list for corpus file *name*."""
-    return CobolLexer().tokenize(load(name), filename=f"{name}.cbl")
+    tokens = CobolLexer().tokenize(load(name), filename=f"{name}.cbl")
+
+    if name == "variables":
+        print("\n===== VARIABLES TOKENS =====")
+        for t in tokens:
+            print(f"{t.type.name:12} {t.lexeme}")
+
+    return tokens
 
 
 def types_of(name: str) -> list[TokenType]:
