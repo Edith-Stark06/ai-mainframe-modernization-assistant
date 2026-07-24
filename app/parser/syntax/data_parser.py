@@ -357,7 +357,15 @@ class DataDivisionParser:
 
         # WORKING-STORAGE SECTION .
         self._expect_keyword(stream.advance(), "WORKING-STORAGE")
-        self._expect_keyword(stream.advance(), "SECTION")
+        section = stream.advance()
+        if section.lexeme.upper() != "SECTION":
+            raise ParserError(
+                f"expected 'SECTION', got {section.lexeme!r}",
+                line=section.position.line,
+                column=section.position.column,
+                offset=section.position.offset,
+            )
+
         stream.expect(TokenType.PERIOD)
 
         items: list[DataItemNode] = self._parse_data_items(state)
@@ -648,6 +656,7 @@ class DataDivisionParser:
                 TokenType.IDENTIFIER,
                 TokenType.KEYWORD,
                 TokenType.PIC,
+                TokenType.NUMBER,
             ):
                 raise ParserError(
                     f"expected picture string after PIC for {name!r}, "
@@ -743,7 +752,7 @@ class DataDivisionParser:
             # A NUMBER token at nesting depth 0 signals the start of the
             # next data item's level number — stop the picture string here.
             # Inside parentheses (depth > 0) numbers are valid (e.g. 9(5)).
-            if tok.type is TokenType.NUMBER and depth == 0:
+            if tok.type is TokenType.NUMBER and depth == 0 and parts:
                 break
             # Track parenthesis depth so we know when a number is a
             # picture repeat count vs. a data-item level number.

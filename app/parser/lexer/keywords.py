@@ -55,17 +55,21 @@ KEYWORDS: frozenset[str] = frozenset(
         "ELSE",
         "END-IF",
         "ENVIRONMENT",
-        "IF",
         "IDENTIFICATION",
+        "IF",
         "MOVE",
         "MULTIPLY",
         "PERFORM",
+        "PIC",
         "PROCEDURE",
         "PROGRAM-ID",
         "RUN",
         "STOP",
         "SUBTRACT",
+        "VALUE",
         "WORKING-STORAGE",
+        "ZEROS",
+        "SPACES",
     }
 )
 
