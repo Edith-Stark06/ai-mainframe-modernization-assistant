@@ -40,7 +40,10 @@ app/
     ├── __init__.py
     └── java/
         ├── __init__.py
-        └── generator.py        ← Java class generation (TASK-032)
+        ├── field_model.py          ← JavaField value object (TASK-033)
+        ├── generator.py            ← Java class generation (TASK-032/033)
+        ├── naming.py               ← COBOL → lowerCamelCase (TASK-033)
+        └── type_mapper.py          ← CobolType → Java type (TASK-033)
 ```
 
 Future backend tasks will add:
@@ -49,8 +52,7 @@ Future backend tasks will add:
 app/
 └── backend/
     └── java/
-        ├── statement_emitter.py   (TASK-033+)
-        ├── variable_emitter.py    (TASK-034+)
+        ├── statement_emitter.py   (TASK-034+)
         └── project_generator.py   (TASK-035+)
 ```
 
@@ -143,11 +145,98 @@ Given identical `IRProgram` input, `generate()` always returns byte-for-byte ide
 
 | Task | Scope |
 |------|-------|
-| TASK-033 | Statement lowering (DISPLAY → `System.out.println`) |
-| TASK-034 | Variable declaration generation from IR symbols |
+| TASK-033 | ✅ Java field declarations from COBOL data items |
+| TASK-034 | Statement lowering (DISPLAY → `System.out.println`) |
 | TASK-035 | Spring Boot project skeleton generation |
 | TASK-036 | Maven `pom.xml` generation |
 | TASK-037 | Java compilation validation |
+
+---
+
+## Data Division Translation (TASK-033)
+
+### Overview
+
+COBOL Working-Storage variables are translated into Java instance field declarations.
+
+```
+VariableSymbol (semantic layer)
+    ↓
+build_fields_from_symbols()   app.backend.java.generator
+    ↓
+JavaField []                  app.backend.java.field_model
+    ↓
+_render_class()               app.backend.java.generator
+    ↓
+private <type> <name> [= <value>];
+```
+
+### Java Type Mapping
+
+Defined in `app/backend/java/type_mapper.py`:
+
+| COBOL Type | Condition | Java Type |
+|------------|-----------|-----------|
+| `AlphanumericType` | any | `String` |
+| `NumericType` | `decimal_places == 0` | `int` |
+| `NumericType` | `decimal_places > 0` | `double` |
+| `GroupType` | any | `String` |
+
+Unsupported types produce a `BE002` WARNING diagnostic.  Fields with no resolved
+COBOL type produce a `BE003` WARNING.  Generation continues in both cases.
+
+### Field Naming Strategy
+
+Defined in `app/backend/java/naming.py` via `to_java_field_name()`:
+
+| COBOL Name | Java Name |
+|------------|-----------|
+| `WS-COUNT` | `wsCount` |
+| `CUSTOMER-NAME` | `customerName` |
+| `EMPLOYEE-ID` | `employeeId` |
+| `TOTAL` | `total` |
+
+Rules:
+1. Split on `-` and `_`.
+2. First segment → all-lowercase.
+3. Subsequent segments → `capitalize()` (first letter upper, rest lower).
+4. Strip invalid Java identifier characters.
+5. Prepend `f` if the result starts with a digit.
+6. Default to `"field"` if the result is empty.
+
+### Generated Example
+
+COBOL Working-Storage:
+
+```cobol
+01 WS-GREETING PIC X(20) VALUE "WELCOME".
+01 WS-COUNT    PIC 9(3)  VALUE 0.
+01 WS-RATE     PIC 9(5)V99.
+```
+
+Generated Java:
+
+```java
+public class Hello {
+
+    private String wsGreeting;
+    private int wsCount;
+    private double wsRate;
+
+    public static void main(String[] args) {
+
+    }
+
+}
+```
+
+### Diagnostics
+
+| Code | Severity | Trigger |
+|------|----------|---------|
+| `BE001` | WARNING | No program name and no named module. |
+| `BE002` | WARNING | Unsupported COBOL type; no Java mapping defined. |
+| `BE003` | WARNING | Variable symbol has no resolved COBOL type. |
 
 ---
 

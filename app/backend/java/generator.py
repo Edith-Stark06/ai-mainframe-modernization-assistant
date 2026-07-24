@@ -5,15 +5,20 @@ Purpose:
     Translate an :class:`~app.ir.program.IRProgram` into a valid Java source
     string.
 
-    The generator produces a deterministic Java class skeleton containing a
-    ``public static void main(String[] args)`` entry-point method.  Statement
-    generation is intentionally deferred to later tasks; this module establishes
-    the backend foundation.
+    The generator produces a deterministic Java class containing:
+
+    * Java instance field declarations (from IR data symbols, TASK-033).
+    * A ``public static void main(String[] args)`` entry-point method.
+    * ``// IR: <instruction>`` comment stubs for each IR instruction.
+
+    Statement generation is intentionally deferred to later tasks.
 
 Design:
     The generation pipeline operates on the IR *without* accessing the COBOL
-    AST or the ``SemanticContext`` directly.  All information required for
-    class generation (program name, module name) is read from the IR program.
+    AST directly.  Field declarations are built from
+    :class:`~app.backend.java.field_model.JavaField` objects that callers
+    construct (usually via :func:`build_fields_from_symbols`) and pass as the
+    ``fields`` argument.
 
     Class naming follows these rules, applied in order:
 
@@ -25,38 +30,41 @@ Design:
 
 Responsibilities:
     - Derive a valid Java identifier for the class name from the IR.
+    - Render Java field declarations (TASK-033).
     - Emit the class declaration, ``main`` method, and closing braces.
     - Emit a ``// IR: <instruction>`` comment stub for each instruction in the
       entry basic block (statement lowering is a future task).
     - Collect and return :class:`BackendDiagnostic` records for invalid IR
-      (missing name, empty module list) without raising exceptions.
+      (missing name, unsupported types) without raising exceptions.
     - Return a non-empty string even when diagnostics are emitted.
 
 Non-responsibilities:
-    - Statement lowering (deferred to TASK-033+).
-    - Variable declaration generation.
+    - Statement lowering (deferred to TASK-034+).
     - Spring Boot / Maven project generation.
     - Writing files to disk.
     - Optimisation.
 
 Dependencies:
-    - :mod:`app.ir.program`       — ``IRProgram``, ``IRModule``, ``IRFunction``.
-    - :mod:`app.ir.blocks`        — ``IRBasicBlock``.
-    - :mod:`app.ir.instructions`  — ``IRInstruction`` (for comment stubs).
-    - :mod:`app.ir.printer`       — :func:`~app.ir.printer._format_instruction`
-      (reused for comment text).
+    - :mod:`app.ir.program`               — ``IRProgram``, ``IRModule``, ``IRFunction``.
+    - :mod:`app.ir.blocks`                — ``IRBasicBlock``.
+    - :mod:`app.ir.instructions`          — ``IRInstruction`` (for comment stubs).
+    - :mod:`app.ir.printer`               — :func:`~app.ir.printer._format_instruction`.
+    - :mod:`app.backend.java.field_model` — ``JavaField``.
+    - :mod:`app.backend.java.naming`      — :func:`to_java_field_name`.
+    - :mod:`app.backend.java.type_mapper` — :func:`map_cobol_type`.
     - Python standard library only (``re``, ``dataclasses``).
 
 Examples:
-    Generating a Java class from a minimal IRProgram::
+    Generating a Java class with fields::
 
         from app.ir.program import IRProgram
         from app.backend.java.generator import generate
+        from app.backend.java.field_model import JavaField
 
-        ir = IRProgram(name="HELLO")
-        java_src = generate(ir)
-        assert "public class Hello" in java_src
-        assert "public static void main" in java_src
+        fields = [JavaField(java_name="wsGreeting", java_type="String",
+                            initial_value='"WELCOME"')]
+        src = generate(IRProgram(name="HELLO"), fields=fields)
+        assert "private String wsGreeting" in src
 
 Author:
     Edith Stark
@@ -74,16 +82,22 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from app.backend.java.field_model import JavaField
+from app.backend.java.naming import to_java_field_name
+from app.backend.java.type_mapper import map_cobol_type
 from app.ir.printer import _format_instruction  # type: ignore[attr-defined]
 
 if TYPE_CHECKING:
     from app.ir.program import IRProgram
+    from app.parser.semantic.symbols import VariableSymbol
 
 __all__ = [
     "BackendDiagnostic",
     "BackendSeverity",
     "GenerationResult",
+    "build_fields_from_symbols",
     "generate",
+    "generate_with_diagnostics",
 ]
 
 # ---------------------------------------------------------------------------
@@ -147,7 +161,90 @@ class GenerationResult:
 # ---------------------------------------------------------------------------
 
 
-def generate(program: IRProgram) -> str:
+def build_fields_from_symbols(
+    symbols: list[VariableSymbol],
+    diagnostics: list[BackendDiagnostic] | None = None,
+) -> list[JavaField]:
+    """
+    Convert a list of :class:`~app.parser.semantic.symbols.VariableSymbol`
+    objects into :class:`~app.backend.java.field_model.JavaField` objects.
+
+    For each symbol:
+
+    1. The COBOL name is converted to lowerCamelCase via
+       :func:`~app.backend.java.naming.to_java_field_name`.
+    2. The ``cobol_type`` is mapped to a Java type via
+       :func:`~app.backend.java.type_mapper.map_cobol_type`.  Symbols without
+       a type (``cobol_type is None``) are skipped with a ``BE003`` WARNING.
+    3. The ``picture`` string is used as-is for the initial value when the
+       symbol carries a ``VALUE`` clause (future enhancement; currently no
+       initial value is set by this helper — callers can post-process the list).
+
+    Args:
+        symbols:
+            Ordered list of variable symbols from the semantic context.
+        diagnostics:
+            Optional mutable list to collect :class:`BackendDiagnostic` records.
+            If ``None`` a local list is used (diagnostics are discarded).
+
+    Returns:
+        An ordered list of :class:`~app.backend.java.field_model.JavaField`
+        objects in the same order as *symbols*, skipping any that cannot be
+        mapped.
+    """
+    if diagnostics is None:
+        diagnostics = []
+
+    result: list[JavaField] = []
+
+    for sym in symbols:
+        cobol_type = sym.cobol_type
+
+        if cobol_type is None:
+            diagnostics.append(
+                BackendDiagnostic(
+                    severity=BackendSeverity.WARNING,
+                    message=(
+                        f"variable '{sym.name}' has no resolved COBOL type; "
+                        "skipping field generation."
+                    ),
+                    code="BE003",
+                )
+            )
+            continue
+
+        java_type, err = map_cobol_type(cobol_type)
+        if java_type is None or err is not None:
+            diagnostics.append(
+                BackendDiagnostic(
+                    severity=BackendSeverity.WARNING,
+                    message=(
+                        f"variable '{sym.name}': {err or 'unknown type mapping error'}; "
+                        "skipping field generation."
+                    ),
+                    code="BE002",
+                )
+            )
+            continue
+
+        java_name = to_java_field_name(sym.name)
+
+        result.append(
+            JavaField(
+                java_name=java_name,
+                java_type=java_type,
+                initial_value=None,
+                cobol_name=sym.name,
+            )
+        )
+
+    return result
+
+
+def generate(
+    program: IRProgram,
+    fields: list[JavaField] | None = None,
+) -> str:
     """
     Generate a Java class string from *program*.
 
@@ -158,6 +255,10 @@ def generate(program: IRProgram) -> str:
     Args:
         program:
             The :class:`~app.ir.program.IRProgram` to lower to Java.
+        fields:
+            Optional list of :class:`~app.backend.java.field_model.JavaField`
+            objects to emit as instance field declarations before ``main``.
+            If ``None`` or empty, no fields are emitted.
 
     Returns:
         A non-empty ``str`` containing a compilable Java class.
@@ -171,13 +272,16 @@ def generate(program: IRProgram) -> str:
         >>> "public static void main" in src
         True
     """
-    result = generate_with_diagnostics(program)
+    result = generate_with_diagnostics(program, fields=fields)
     for diag in result.diagnostics:
         logger.warning("JavaGenerator [{}] {}", diag.code, diag.message)
     return result.source
 
 
-def generate_with_diagnostics(program: IRProgram) -> GenerationResult:
+def generate_with_diagnostics(
+    program: IRProgram,
+    fields: list[JavaField] | None = None,
+) -> GenerationResult:
     """
     Generate Java source from *program* and return both the source and any
     diagnostics emitted during generation.
@@ -185,12 +289,16 @@ def generate_with_diagnostics(program: IRProgram) -> GenerationResult:
     Args:
         program:
             The :class:`~app.ir.program.IRProgram` to lower to Java.
+        fields:
+            Optional list of :class:`~app.backend.java.field_model.JavaField`
+            objects to emit as instance field declarations.
 
     Returns:
         A :class:`GenerationResult` carrying the source string and any
         :class:`BackendDiagnostic` records.
     """
     diagnostics: list[BackendDiagnostic] = []
+    effective_fields: list[JavaField] = fields or []
 
     # ------------------------------------------------------------------
     # 1. Determine class name
@@ -206,7 +314,7 @@ def generate_with_diagnostics(program: IRProgram) -> GenerationResult:
     # ------------------------------------------------------------------
     # 3. Render Java source
     # ------------------------------------------------------------------
-    source = _render_class(class_name, stubs)
+    source = _render_class(class_name, effective_fields, stubs)
     logger.debug(
         "JavaGenerator: generated {} line(s) for class '{}'.",
         source.count("\n"),
@@ -341,13 +449,20 @@ def _collect_instruction_stubs(program: IRProgram) -> list[str]:
     return stubs
 
 
-def _render_class(class_name: str, stubs: list[str]) -> str:
+def _render_class(
+    class_name: str,
+    fields: list[JavaField],
+    stubs: list[str],
+) -> str:
     """
     Render the complete Java class source string.
 
     Args:
         class_name:
             A valid Java identifier used as the class name.
+        fields:
+            List of :class:`~app.backend.java.field_model.JavaField` objects
+            to emit as instance fields before the ``main`` method.
         stubs:
             Optional list of IR instruction descriptions; each is emitted
             as a ``// IR: <text>`` comment inside ``main``.
@@ -360,6 +475,12 @@ def _render_class(class_name: str, stubs: list[str]) -> str:
     # Class header
     lines.append(f"public class {class_name} {{")
     lines.append("")
+
+    # Instance field declarations
+    if fields:
+        for java_field in fields:
+            lines.append(java_field.render())
+        lines.append("")
 
     # main method header
     lines.append("    public static void main(String[] args) {")
