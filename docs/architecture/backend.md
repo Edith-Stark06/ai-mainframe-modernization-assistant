@@ -41,8 +41,9 @@ app/
     └── java/
         ├── __init__.py
         ├── field_model.py          ← JavaField value object (TASK-033)
-        ├── generator.py            ← Java class generation (TASK-032/033)
+        ├── generator.py            ← Java class generation (TASK-032/033/034)
         ├── naming.py               ← COBOL → lowerCamelCase (TASK-033)
+        ├── statement_emitter.py    ← MOVE/DISPLAY → Java statements (TASK-034)
         └── type_mapper.py          ← CobolType → Java type (TASK-033)
 ```
 
@@ -52,7 +53,6 @@ Future backend tasks will add:
 app/
 └── backend/
     └── java/
-        ├── statement_emitter.py   (TASK-034+)
         └── project_generator.py   (TASK-035+)
 ```
 
@@ -146,7 +146,7 @@ Given identical `IRProgram` input, `generate()` always returns byte-for-byte ide
 | Task | Scope |
 |------|-------|
 | TASK-033 | ✅ Java field declarations from COBOL data items |
-| TASK-034 | Statement lowering (DISPLAY → `System.out.println`) |
+| TASK-034 | ✅ MOVE/DISPLAY → Java statements |
 | TASK-035 | Spring Boot project skeleton generation |
 | TASK-036 | Maven `pom.xml` generation |
 | TASK-037 | Java compilation validation |
@@ -237,6 +237,71 @@ public class Hello {
 | `BE001` | WARNING | No program name and no named module. |
 | `BE002` | WARNING | Unsupported COBOL type; no Java mapping defined. |
 | `BE003` | WARNING | Variable symbol has no resolved COBOL type. |
+| `BE004` | WARNING | IRMove/IRDisplay has empty operand or target. |
+| `BE005` | WARNING | Unsupported IR instruction type in statement emitter. |
+
+---
+
+## Statement Generation (TASK-034)
+
+### Overview
+
+Executable IR instructions are translated into Java statements inside the `main()` method.
+
+```
+IRInstruction (in entry basic block)
+    ↓
+emit_statement()    app.backend.java.statement_emitter
+    ↓
+_collect_statements()   app.backend.java.generator
+    ↓
+_render_class()         app.backend.java.generator
+    ↓
+        <statement>;  (inside main method body)
+```
+
+### Supported Instructions
+
+| IR Instruction | Java Output | Notes |
+|----------------|-------------|-------|
+| `IRMove(result, source)` | `<target> = <source>;` | Operands translated via `_translate_operand()` |
+| `IRDisplay(operand)` | `System.out.println(<operand>);` | Quoted strings passed as-is |
+| All others | `// TODO: translate <type>` | `BE005` WARNING emitted |
+
+### Operand Translation
+
+Defined in `app/backend/java/statement_emitter._translate_operand()`:
+
+| IR Operand | Java Expression |
+|------------|-----------------|
+| `"HELLO"` (quoted) | `"HELLO"` (unchanged) |
+| `42` (numeric) | `42` (unchanged) |
+| `WS-GREETING` (identifier) | `wsGreeting` (lowerCamelCase) |
+
+### Generated Example
+
+IR instructions:
+
+```
+MOVE "WELCOME" -> WS-GREETING
+DISPLAY WS-GREETING
+MOVE 1 -> WS-COUNT
+DISPLAY WS-COUNT
+```
+
+Generated Java:
+
+```java
+        wsGreeting = "WELCOME";
+        System.out.println(wsGreeting);
+        wsCount = 1;
+        System.out.println(wsCount);
+```
+
+### Statement Ordering
+
+Statements are emitted in the **same order** as they appear in the IR basic block.
+No reordering, hoisting, or optimisation is applied at this stage.
 
 ---
 
