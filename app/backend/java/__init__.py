@@ -30,6 +30,7 @@ from app.backend.java.generator import (
     generate_with_diagnostics,
 )
 from app.backend.java.naming import to_java_field_name
+from app.backend.java.statement_emitter import emit_display, emit_move, emit_statement
 from app.backend.java.type_mapper import map_cobol_type
 
 __all__ = [
@@ -38,6 +39,9 @@ __all__ = [
     "GenerationResult",
     "JavaField",
     "build_fields_from_symbols",
+    "emit_display",
+    "emit_move",
+    "emit_statement",
     "generate",
     "generate_with_diagnostics",
     "map_cobol_type",

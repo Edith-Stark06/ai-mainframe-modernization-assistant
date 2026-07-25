@@ -159,23 +159,27 @@ class TestGenerate:
         src = generate(prog)
         assert "public class GeneratedProgram" in src
 
-    def test_instruction_stub_in_main(self) -> None:
+    def test_instruction_in_main(self) -> None:
+        # DISPLAY now emits a real println, not a // IR: comment
         prog = _make_program("HELLO", instructions=(IRDisplay(operand='"HI"'),))
         src = generate(prog)
-        assert "// IR:" in src
+        assert 'System.out.println("HI");' in src
 
-    def test_move_stub_present(self) -> None:
+    def test_move_statement_present(self) -> None:
+        # MOVE now emits a real Java assignment
         instr = IRMove(result="WS-B", source="WS-A")
         prog = _make_program("PROG", instructions=(instr,))
         src = generate(prog)
-        assert "MOVE WS-A -> WS-B" in src
+        assert "wsB = wsA;" in src
 
-    def test_return_stub_present(self) -> None:
+    def test_unsupported_return_todo_comment(self) -> None:
+        # Unsupported IRReturn produces a // TODO: comment
         prog = _make_program("PROG", instructions=(IRReturn(),))
         src = generate(prog)
-        assert "// IR: RETURN" in src
+        assert "// TODO: translate IRReturn" in src
 
-    def test_multiple_stubs_ordered(self) -> None:
+    def test_multiple_statements_ordered(self) -> None:
+        # DISPLAY → println, MOVE → assignment, IRReturn → TODO
         instrs = (
             IRDisplay(operand='"A"'),
             IRMove(result="X", source="Y"),
@@ -183,10 +187,10 @@ class TestGenerate:
         )
         prog = _make_program("PROG", instructions=instrs)
         src = generate(prog)
-        idx_display = src.index("DISPLAY")
-        idx_move = src.index("MOVE")
-        idx_ret = src.index("RETURN")
-        assert idx_display < idx_move < idx_ret
+        idx_display = src.index('System.out.println("A")')
+        idx_move = src.index("x = y;")
+        idx_todo = src.index("// TODO:")
+        assert idx_display < idx_move < idx_todo
 
     def test_main_method_body_indented(self) -> None:
         prog = _make_program("HELLO")
