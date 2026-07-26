@@ -17,6 +17,14 @@ Purpose:
     :class:`~app.ir.instructions.IRMultiply`, and
     :class:`~app.ir.instructions.IRDivide`.
 
+    TASK-036 extends translation to structured control-flow IR instructions:
+    :class:`~app.ir.instructions.IRIf`,
+    :class:`~app.ir.instructions.IRElse`, and
+    :class:`~app.ir.instructions.IREndIf`.  These are dispatched at *depth 0*
+    by :func:`emit_statement`; the full depth-aware path used by
+    :func:`~app.backend.java.generator._collect_statements` calls
+    :func:`~app.backend.java.control_flow_emitter.emit_if` directly.
+
     All other instruction types produce a ``// TODO:`` stub and a ``BE005``
     WARNING diagnostic so generation continues gracefully.
 
@@ -108,12 +116,20 @@ from __future__ import annotations
 
 import re
 
+from app.backend.java.control_flow_emitter import (
+    emit_else,
+    emit_end_if,
+    emit_if,
+)
 from app.backend.java.generator import BackendDiagnostic, BackendSeverity
 from app.backend.java.naming import to_java_field_name
 from app.ir.instructions import (
     IRAdd,
     IRDisplay,
     IRDivide,
+    IRElse,
+    IREndIf,
+    IRIf,
     IRInstruction,
     IRMove,
     IRMultiply,
@@ -124,6 +140,9 @@ __all__ = [
     "emit_add",
     "emit_display",
     "emit_divide",
+    "emit_else",
+    "emit_end_if",
+    "emit_if",
     "emit_move",
     "emit_multiply",
     "emit_statement",
@@ -139,6 +158,7 @@ __all__ = [
 def emit_statement(
     instruction: IRInstruction,
     diagnostics: list[BackendDiagnostic],
+    depth: int = 0,
 ) -> list[str]:
     """
     Translate *instruction* into one or more Java statement strings.
@@ -151,20 +171,40 @@ def emit_statement(
     * :class:`~app.ir.instructions.IRSubtract` → ``-=`` compound assignment.
     * :class:`~app.ir.instructions.IRMultiply` → ``*=`` compound assignment.
     * :class:`~app.ir.instructions.IRDivide`   → ``/=`` compound assignment.
+    * :class:`~app.ir.instructions.IRIf`       → ``if (<cond>) {`` (at *depth*).
+    * :class:`~app.ir.instructions.IRElse`     → ``} else {`` (at *depth*).
+    * :class:`~app.ir.instructions.IREndIf`    → ``}`` (at *depth*).
 
     All other instructions produce a ``// TODO: <type>`` comment and a
     ``BE005`` WARNING so that generation continues rather than failing.
+
+    .. note::
+        When called from :func:`~app.backend.java.generator._collect_statements`,
+        control-flow instructions are handled by the depth-aware loop *before*
+        reaching this dispatcher.  The ``depth`` parameter here is used only
+        when callers invoke :func:`emit_statement` directly (e.g., unit tests).
 
     Args:
         instruction:
             The IR instruction to lower.
         diagnostics:
             Mutable list; backend diagnostics are appended here.
+        depth:
+            Nesting depth for control-flow instructions.  Defaults to ``0``
+            (directly inside ``main()``).
 
     Returns:
-        A list of Java statement strings (no leading indentation).  May be
+        A list of Java statement strings (no base indentation).  May be
         empty if the instruction produces nothing (e.g. a void no-op).
     """
+    # Lazy import to avoid circular dependency:
+    # control_flow_emitter → statement_emitter._translate_operand
+    from app.backend.java.control_flow_emitter import (
+        emit_else as _emit_else,
+        emit_end_if as _emit_end_if,
+        emit_if as _emit_if,
+    )
+
     if isinstance(instruction, IRMove):
         return emit_move(instruction, diagnostics)
 
@@ -182,6 +222,15 @@ def emit_statement(
 
     if isinstance(instruction, IRDivide):
         return emit_divide(instruction, diagnostics)
+
+    if isinstance(instruction, IRIf):
+        return _emit_if(instruction, depth, diagnostics)
+
+    if isinstance(instruction, IRElse):
+        return _emit_else(depth, diagnostics)
+
+    if isinstance(instruction, IREndIf):
+        return _emit_end_if(depth, diagnostics)
 
     # Unsupported — emit a TODO comment and a WARNING diagnostic
     type_name = type(instruction).__name__

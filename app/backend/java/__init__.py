@@ -16,6 +16,9 @@ Public API:
     * :func:`~app.backend.java.statement_emitter.emit_subtract` — IRSubtract → ``-=``.
     * :func:`~app.backend.java.statement_emitter.emit_multiply` — IRMultiply → ``*=``.
     * :func:`~app.backend.java.statement_emitter.emit_divide`   — IRDivide → ``/=``.
+    * :func:`~app.backend.java.control_flow_emitter.emit_if`     — IRIf → ``if (<cond>) {``.
+    * :func:`~app.backend.java.control_flow_emitter.emit_else`   — IRElse → ``} else {``.
+    * :func:`~app.backend.java.control_flow_emitter.emit_end_if` — IREndIf → ``}``.
 
 Author:
     Edith Stark
@@ -24,6 +27,12 @@ Project:
     AI-Powered Mainframe Modernization Assistant
 """
 
+from app.backend.java.control_flow_emitter import (
+    SUPPORTED_OPERATORS,
+    emit_else,
+    emit_end_if,
+    emit_if,
+)
 from app.backend.java.field_model import JavaField
 from app.backend.java.generator import (
     BackendDiagnostic,
@@ -50,10 +59,14 @@ __all__ = [
     "BackendSeverity",
     "GenerationResult",
     "JavaField",
+    "SUPPORTED_OPERATORS",
     "build_fields_from_symbols",
     "emit_add",
     "emit_display",
     "emit_divide",
+    "emit_else",
+    "emit_end_if",
+    "emit_if",
     "emit_move",
     "emit_multiply",
     "emit_statement",
