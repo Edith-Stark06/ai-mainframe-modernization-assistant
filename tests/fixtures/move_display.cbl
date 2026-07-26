@@ -1,0 +1,12 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. MOVE-DISPLAY.
+       
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 WS-COUNT PIC 9(3).
+       
+       PROCEDURE DIVISION.
+       MAIN-PARAGRAPH.
+           MOVE 5 TO WS-COUNT.
+           DISPLAY WS-COUNT.
+           STOP RUN.
