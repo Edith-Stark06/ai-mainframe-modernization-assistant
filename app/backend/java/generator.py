@@ -436,23 +436,25 @@ def _collect_statements(
     each returned string with ``"    " * depth`` to reflect nesting level.
 
     For structured control-flow instructions (:class:`~app.ir.instructions.IRIf`,
-    :class:`~app.ir.instructions.IRElse`, :class:`~app.ir.instructions.IREndIf`),
+    :class:`~app.ir.instructions.IRElse`, :class:`~app.ir.instructions.IREndIf`,
+    :class:`~app.ir.instructions.IRPerformUntil`, :class:`~app.ir.instructions.IREndPerform`),
     manages a *depth* counter and calls
     :func:`~app.backend.java.control_flow_emitter.emit_if`,
-    :func:`~app.backend.java.control_flow_emitter.emit_else`, and
-    :func:`~app.backend.java.control_flow_emitter.emit_end_if` directly so
+    :func:`~app.backend.java.control_flow_emitter.emit_else`,
+    :func:`~app.backend.java.control_flow_emitter.emit_end_if`,
+    :func:`~app.backend.java.control_flow_emitter.emit_perform_until`, and
+    :func:`~app.backend.java.control_flow_emitter.emit_end_perform` directly so
     that the correct indentation prefix is embedded in the returned strings.
 
     Depth rules:
 
-    * :class:`~app.ir.instructions.IRIf`    — emit header at current depth,
+    * :class:`~app.ir.instructions.IRIf` or :class:`~app.ir.instructions.IRPerformUntil` — emit header at current depth,
       then increment depth (body is one level deeper).
     * :class:`~app.ir.instructions.IRElse`  — decrement depth, emit the
       ``} else {`` transition at that depth, then increment depth again
       (else body is one level deeper than the header).
-    * :class:`~app.ir.instructions.IREndIf` — decrement depth, emit the
-      closing ``}`` at that depth.  If depth is already 0 when an
-      :class:`~app.ir.instructions.IREndIf` is encountered, a ``BE007``
+    * :class:`~app.ir.instructions.IREndIf` or :class:`~app.ir.instructions.IREndPerform` — decrement depth, emit the
+      closing ``}`` at that depth.  If depth is already 0 when encountered, a ``BE007``
       WARNING is appended and the instruction is skipped.
     * :class:`~app.ir.instructions.IRElse` encountered at depth 0 also
       produces a ``BE007`` WARNING and is skipped.
@@ -469,10 +471,18 @@ def _collect_statements(
     from app.backend.java.control_flow_emitter import (
         emit_else as _emit_else,
         emit_end_if as _emit_end_if,
+        emit_end_perform as _emit_end_perform,
         emit_if as _emit_if,
+        emit_perform_until as _emit_perform_until,
     )
     from app.backend.java.statement_emitter import emit_statement
-    from app.ir.instructions import IRElse, IREndIf, IRIf
+    from app.ir.instructions import (
+        IRElse,
+        IREndIf,
+        IREndPerform,
+        IRIf,
+        IRPerformUntil,
+    )
 
     statements: list[str] = []
     if not program.modules:
@@ -527,6 +537,28 @@ def _collect_statements(
                 else:
                     depth -= 1
                     stmts = _emit_end_if(depth, diagnostics)
+                    statements.extend(stmts)
+
+            elif isinstance(instr, IRPerformUntil):
+                stmts = _emit_perform_until(instr, depth, diagnostics)
+                statements.extend(stmts)
+                depth += 1
+
+            elif isinstance(instr, IREndPerform):
+                if depth <= 0:
+                    diagnostics.append(
+                        BackendDiagnostic(
+                            severity=BackendSeverity.WARNING,
+                            message=(
+                                "IREndPerform encountered without a matching IRPerformUntil "
+                                "(depth already 0); skipping."
+                            ),
+                            code="BE007",
+                        )
+                    )
+                else:
+                    depth -= 1
+                    stmts = _emit_end_perform(depth, diagnostics)
                     statements.extend(stmts)
 
             else:
