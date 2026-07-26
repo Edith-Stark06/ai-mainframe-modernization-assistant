@@ -1,0 +1,14 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. PERFORM-UNTIL.
+       
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 WS-COUNT PIC 9(2) VALUE 0.
+       
+       PROCEDURE DIVISION.
+       MAIN-PARAGRAPH.
+           PERFORM UNTIL WS-COUNT >= 5
+               ADD 1 TO WS-COUNT
+               DISPLAY WS-COUNT
+           END-PERFORM.
+           STOP RUN.

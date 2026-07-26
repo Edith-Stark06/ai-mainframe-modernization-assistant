@@ -94,6 +94,8 @@ from app.parser.ast.statements import (
     MultiplyStatementNode,
     DivideStatementNode,
     CallStatementNode,
+    IfStatementNode,
+    PerformStatementNode,
 )
 from app.parser.diagnostics.recovery import RecoveryContext
 from app.parser.lexer.position import Position
@@ -133,6 +135,8 @@ _STATEMENT_LEXEMES: frozenset[str] = frozenset(
         "MULTIPLY",
         "DIVIDE",
         "CALL",
+        "IF",
+        "PERFORM",
     }
 )
 
@@ -497,6 +501,10 @@ class ProcedureDivisionParser:
             return self._parse_divide(state)
         if upper == "CALL":
             return self._parse_call(state)
+        if upper == "IF":
+            return self._parse_if_statement(state)
+        if upper == "PERFORM":
+            return self._parse_perform_statement(state)
 
         raise ParserError(
             f"unsupported statement keyword {upper!r}",
@@ -537,7 +545,12 @@ class ProcedureDivisionParser:
         operand_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if tok.type is TokenType.PERIOD:
+            if (
+                tok.type is TokenType.PERIOD
+                or tok.lexeme.upper() in _STATEMENT_LEXEMES
+                or tok.lexeme.upper()
+                in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
+            ):
                 break
             operand_parts.append(tok.lexeme)
             stream.advance()
@@ -553,7 +566,7 @@ class ProcedureDivisionParser:
 
         operand = " ".join(operand_parts)
         end: Position = stream.current().position
-        self._consume_period(state, "DISPLAY")
+        self._consume_optional_period(state)
 
         return DisplayStatementNode(
             start_position=start,
@@ -594,7 +607,12 @@ class ProcedureDivisionParser:
         source_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if tok.type is TokenType.PERIOD:
+            if (
+                tok.type is TokenType.PERIOD
+                or tok.lexeme.upper() in _STATEMENT_LEXEMES
+                or tok.lexeme.upper()
+                in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
+            ):
                 break
             if tok.lexeme.upper() == "TO":
                 break
@@ -626,7 +644,12 @@ class ProcedureDivisionParser:
         target_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if tok.type is TokenType.PERIOD:
+            if (
+                tok.type is TokenType.PERIOD
+                or tok.lexeme.upper() in _STATEMENT_LEXEMES
+                or tok.lexeme.upper()
+                in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
+            ):
                 break
             target_parts.append(tok.lexeme)
             stream.advance()
@@ -643,7 +666,7 @@ class ProcedureDivisionParser:
         source = " ".join(source_parts)
         target = " ".join(target_parts)
         end: Position = stream.current().position
-        self._consume_period(state, "MOVE")
+        self._consume_optional_period(state)
 
         return MoveStatementNode(
             start_position=start,
@@ -686,7 +709,7 @@ class ProcedureDivisionParser:
         stream.advance()  # consume RUN
 
         end: Position = stream.current().position
-        self._consume_period(state, "STOP RUN")
+        self._consume_optional_period(state)
 
         return StopRunStatementNode(
             start_position=start,
@@ -716,7 +739,7 @@ class ProcedureDivisionParser:
         stream.advance()  # consume GOBACK
 
         end: Position = stream.current().position
-        self._consume_period(state, "GOBACK")
+        self._consume_optional_period(state)
 
         return GobackStatementNode(
             start_position=start,
@@ -762,7 +785,12 @@ class ProcedureDivisionParser:
         right_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if tok.type is TokenType.PERIOD:
+            if (
+                tok.type is TokenType.PERIOD
+                or tok.lexeme.upper() in _STATEMENT_LEXEMES
+                or tok.lexeme.upper()
+                in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
+            ):
                 break
             right_parts.append(tok.lexeme)
             stream.advance()
@@ -779,7 +807,7 @@ class ProcedureDivisionParser:
         left = " ".join(left_parts)
         right = " ".join(right_parts)
         end: Position = stream.current().position
-        self._consume_period(state, "ADD")
+        self._consume_optional_period(state)
 
         return AddStatementNode(
             start_position=start, end_position=end, left=left, right=right
@@ -820,7 +848,12 @@ class ProcedureDivisionParser:
         right_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if tok.type is TokenType.PERIOD:
+            if (
+                tok.type is TokenType.PERIOD
+                or tok.lexeme.upper() in _STATEMENT_LEXEMES
+                or tok.lexeme.upper()
+                in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
+            ):
                 break
             right_parts.append(tok.lexeme)
             stream.advance()
@@ -837,7 +870,7 @@ class ProcedureDivisionParser:
         left = " ".join(left_parts)
         right = " ".join(right_parts)
         end: Position = stream.current().position
-        self._consume_period(state, "SUBTRACT")
+        self._consume_optional_period(state)
 
         return SubtractStatementNode(
             start_position=start, end_position=end, left=left, right=right
@@ -878,7 +911,12 @@ class ProcedureDivisionParser:
         right_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if tok.type is TokenType.PERIOD:
+            if (
+                tok.type is TokenType.PERIOD
+                or tok.lexeme.upper() in _STATEMENT_LEXEMES
+                or tok.lexeme.upper()
+                in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
+            ):
                 break
             right_parts.append(tok.lexeme)
             stream.advance()
@@ -895,7 +933,7 @@ class ProcedureDivisionParser:
         left = " ".join(left_parts)
         right = " ".join(right_parts)
         end: Position = stream.current().position
-        self._consume_period(state, "MULTIPLY")
+        self._consume_optional_period(state)
 
         return MultiplyStatementNode(
             start_position=start, end_position=end, left=left, right=right
@@ -936,7 +974,12 @@ class ProcedureDivisionParser:
         right_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if tok.type is TokenType.PERIOD:
+            if (
+                tok.type is TokenType.PERIOD
+                or tok.lexeme.upper() in _STATEMENT_LEXEMES
+                or tok.lexeme.upper()
+                in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
+            ):
                 break
             right_parts.append(tok.lexeme)
             stream.advance()
@@ -953,7 +996,7 @@ class ProcedureDivisionParser:
         left = " ".join(left_parts)
         right = " ".join(right_parts)
         end: Position = stream.current().position
-        self._consume_period(state, "DIVIDE")
+        self._consume_optional_period(state)
 
         return DivideStatementNode(
             start_position=start, end_position=end, left=left, right=right
@@ -967,7 +1010,13 @@ class ProcedureDivisionParser:
         target_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if tok.type is TokenType.PERIOD or tok.lexeme.upper() == "USING":
+            if (
+                tok.type is TokenType.PERIOD
+                or tok.lexeme.upper() == "USING"
+                or tok.lexeme.upper() in _STATEMENT_LEXEMES
+                or tok.lexeme.upper()
+                in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
+            ):
                 break
             target_parts.append(tok.lexeme)
             stream.advance()
@@ -989,13 +1038,18 @@ class ProcedureDivisionParser:
             stream.advance()  # consume USING
             while not stream.eof():
                 tok = stream.current()
-                if tok.type is TokenType.PERIOD:
+                if (
+                    tok.type is TokenType.PERIOD
+                    or tok.lexeme.upper() in _STATEMENT_LEXEMES
+                    or tok.lexeme.upper()
+                    in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
+                ):
                     break
                 arguments.append(tok.lexeme)
                 stream.advance()
 
         end: Position = stream.current().position
-        self._consume_period(state, "CALL")
+        self._consume_optional_period(state)
 
         return CallStatementNode(
             start_position=start,
@@ -1003,6 +1057,10 @@ class ProcedureDivisionParser:
             target=target,
             arguments=tuple(arguments),
         )
+
+    def _consume_optional_period(self, state: ParserState) -> None:
+        if state.stream.current().type is TokenType.PERIOD:
+            state.stream.advance()
 
     def _consume_period(self, state: ParserState, context: str) -> None:
         """
@@ -1052,4 +1110,191 @@ class ProcedureDivisionParser:
                 line=tok.position.line,
                 column=tok.position.column,
                 offset=tok.position.offset,
+            )
+
+    # ------------------------------------------------------------------
+    # Control flow statement parsers
+    # ------------------------------------------------------------------
+
+    def _parse_if_statement(self, state: ParserState) -> IfStatementNode:
+        stream = state.stream
+        start = stream.current().position
+        stream.advance()  # consume IF
+
+        # Parse condition
+        tok = stream.current()
+        if (
+            tok.type is not TokenType.IDENTIFIER
+            and tok.type is not TokenType.NUMBER
+            and tok.type is not TokenType.STRING
+        ):
+            raise ParserError(
+                "expected operand for IF condition",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+        left = tok.lexeme
+        stream.advance()
+
+        tok = stream.current()
+        if tok.type.name not in (
+            "OPERATOR_EQ",
+            "OPERATOR_GT",
+            "OPERATOR_LT",
+            "OPERATOR_GE",
+            "OPERATOR_LE",
+            "OPERATOR_NEQ",
+        ) and tok.lexeme not in ("=", ">", "<", ">=", "<=", "!=", "=="):
+            raise ParserError(
+                "expected comparison operator in IF condition",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+        operator = tok.lexeme
+        stream.advance()
+
+        tok = stream.current()
+        if (
+            tok.type is not TokenType.IDENTIFIER
+            and tok.type is not TokenType.NUMBER
+            and tok.type is not TokenType.STRING
+        ):
+            raise ParserError(
+                "expected operand for IF condition",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+        right = tok.lexeme
+        stream.advance()
+
+        # Parse statements until ELSE or END-IF
+        then_statements = []
+        while not stream.eof():
+            tok = stream.current()
+            if tok.lexeme.upper() in ("ELSE", "END-IF"):
+                break
+            if tok.lexeme.upper() in _STATEMENT_LEXEMES:
+                then_statements.append(self._parse_statement(state))
+            else:
+                raise ParserError(
+                    "expected statement in IF block",
+                    line=tok.position.line,
+                    column=tok.position.column,
+                    offset=tok.position.offset,
+                )
+
+        else_statements = []
+        if stream.current().lexeme.upper() == "ELSE":
+            stream.advance()  # consume ELSE
+            while not stream.eof():
+                tok = stream.current()
+                if tok.lexeme.upper() == "END-IF":
+                    break
+                if tok.lexeme.upper() in _STATEMENT_LEXEMES:
+                    else_statements.append(self._parse_statement(state))
+                else:
+                    raise ParserError(
+                        "expected statement in ELSE block",
+                        line=tok.position.line,
+                        column=tok.position.column,
+                        offset=tok.position.offset,
+                    )
+
+        if stream.current().lexeme.upper() == "END-IF":
+            stream.advance()  # consume END-IF
+        else:
+            tok = stream.current()
+            raise ParserError(
+                "missing END-IF",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+
+        return IfStatementNode(
+            start_position=start,
+            end_position=stream.current().position,
+            condition_left=left,
+            condition_operator=operator,
+            condition_right=right,
+            then_statements=tuple(then_statements),
+            else_statements=tuple(else_statements),
+        )
+
+    def _parse_perform_statement(self, state: ParserState) -> StatementNode:
+        stream = state.stream
+        start = stream.current().position
+        stream.advance()  # consume PERFORM
+
+        tok = stream.current()
+        if tok.lexeme.upper() == "UNTIL":
+            stream.advance()  # consume UNTIL
+
+            # Parse condition
+            tok = stream.current()
+            left = tok.lexeme
+            stream.advance()
+
+            tok = stream.current()
+            operator = tok.lexeme
+            stream.advance()
+
+            tok = stream.current()
+            right = tok.lexeme
+            stream.advance()
+
+            statements = []
+            while not stream.eof():
+                tok = stream.current()
+                if tok.lexeme.upper() == "END-PERFORM":
+                    break
+                if tok.lexeme.upper() in _STATEMENT_LEXEMES:
+                    statements.append(self._parse_statement(state))
+                else:
+                    raise ParserError(
+                        "expected statement in PERFORM block",
+                        line=tok.position.line,
+                        column=tok.position.column,
+                        offset=tok.position.offset,
+                    )
+
+            if stream.current().lexeme.upper() == "END-PERFORM":
+                stream.advance()  # consume END-PERFORM
+            else:
+                tok = stream.current()
+                raise ParserError(
+                    "missing END-PERFORM",
+                    line=tok.position.line,
+                    column=tok.position.column,
+                    offset=tok.position.offset,
+                )
+
+            from app.parser.ast.statements import PerformUntilStatementNode
+
+            return PerformUntilStatementNode(
+                start_position=start,
+                end_position=stream.current().position,
+                condition_left=left,
+                condition_operator=operator,
+                condition_right=right,
+                statements=tuple(statements),
+            )
+        else:
+            # Inline PERFORM with just a target (e.g. PERFORM PARAGRAPH-NAME)
+            if tok.type is not TokenType.IDENTIFIER:
+                raise ParserError(
+                    "expected paragraph name for PERFORM",
+                    line=tok.position.line,
+                    column=tok.position.column,
+                    offset=tok.position.offset,
+                )
+            target = tok.lexeme
+            stream.advance()
+            return PerformStatementNode(
+                start_position=start,
+                end_position=stream.current().position,
+                target=target,
             )

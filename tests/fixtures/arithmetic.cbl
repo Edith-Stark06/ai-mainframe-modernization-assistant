@@ -1,0 +1,16 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. ARITHMETIC-TEST.
+       
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 WS-A PIC 9(3) VALUE 10.
+       01 WS-B PIC 9(3) VALUE 5.
+       
+       PROCEDURE DIVISION.
+       MAIN-PARAGRAPH.
+           ADD 5 TO WS-A.
+           SUBTRACT WS-B FROM WS-A.
+           MULTIPLY 2 BY WS-A.
+           DIVIDE 4 INTO WS-A.
+           DISPLAY WS-A.
+           STOP RUN.
