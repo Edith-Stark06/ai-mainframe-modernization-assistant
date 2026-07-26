@@ -76,11 +76,13 @@ __all__ = [
     "IRDivide",
     "IRElse",
     "IREndIf",
+    "IREndPerform",
     "IRIf",
     "IRInstruction",
     "IRJump",
     "IRMove",
     "IRMultiply",
+    "IRPerformUntil",
     "IRReturn",
     "IRSubtract",
 ]
@@ -581,6 +583,52 @@ class IRAccept(IRInstruction):
     def accept(self, visitor: Any) -> Any:
         """Dispatch to ``visitor.visit_accept(self)``."""
         visit = getattr(visitor, "visit_accept", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class IRPerformUntil(IRInstruction):
+    """
+    Open a structured PERFORM UNTIL block.
+
+    Attributes:
+        left:
+            The left operand of the exit condition.
+        operator:
+            The comparison operator (e.g. ``"=="``, ``">="``).
+        right:
+            The right operand of the exit condition.
+        comment:
+            Optional annotation.
+    """
+
+    left: str = field(default="")
+    operator: str = field(default="")
+    right: str = field(default="")
+
+    def accept(self, visitor: Any) -> Any:
+        visit = getattr(visitor, "visit_perform_until", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class IREndPerform(IRInstruction):
+    """
+    Close a structured PERFORM block.
+
+    It must appear once for every :class:`IRPerformUntil` in the same scope.
+
+    Attributes:
+        comment:
+            Optional annotation.
+    """
+
+    def accept(self, visitor: Any) -> Any:
+        visit = getattr(visitor, "visit_end_perform", None)
         if callable(visit):
             return visit(self)
         return None

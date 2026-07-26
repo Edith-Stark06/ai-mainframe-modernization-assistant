@@ -156,7 +156,7 @@ Given identical `IRProgram` input, `generate()` always returns byte-for-byte ide
 | TASK-034 | ✅ MOVE/DISPLAY → Java statements |
 | TASK-035 | ✅ ADD/SUBTRACT/MULTIPLY/DIVIDE → Java arithmetic statements |
 | TASK-036 | ✅ IF/ELSE/END-IF → Java conditional blocks |
-| TASK-037 | Control-flow: PERFORM |
+| TASK-037 | ✅ PERFORM UNTIL → Java while loops |
 | TASK-038 | CALL translation |
 | TASK-039 | Java compilation validation |
 
@@ -477,18 +477,71 @@ Defined in `app/backend/java/control_flow_emitter._build_condition()`:
 Both `left` and `right` operands go through `_translate_operand()`, reusing
 the same operand-translation rules as MOVE, DISPLAY, and arithmetic.
 
-### Supported Comparison Operators
+### Supported Operators
 
-| Operator | Meaning |
-|----------|---------|
-| `==` | Equal |
-| `!=` | Not equal |
-| `>` | Greater than |
-| `>=` | Greater than or equal |
-| `<` | Less than |
-| `<=` | Less than or equal |
+| COBOL / IR Operator | Java Operator |
+|---------------------|---------------|
+| `==` | `==` |
+| `!=` | `!=` |
+| `>` | `>` |
+| `>=` | `>=` |
+| `<` | `<` |
+| `<=` | `<=` |
 
-Any other operator string triggers a `BE007` WARNING and the IF block is skipped.
+Unsupported operators yield a `BE007` diagnostic, and the block is skipped.
+
+---
+
+## Control Flow: PERFORM Translation (TASK-037)
+
+### Overview
+
+Structured COBOL `PERFORM UNTIL` blocks are translated into Java `while` loops. The IR layer represents these as `IRPerformUntil` and `IREndPerform` instructions.
+
+### Code Generation Pipeline
+
+1. **IR Node Identification**:
+   - `generator._collect_statements` iterates through `IRPerformUntil` and `IREndPerform`.
+2. **Indentation and Nesting**:
+   - Like conditionals, loops utilize depth-aware formatting.
+   - `IRPerformUntil` emits its header at the current depth and increments depth for the body.
+   - `IREndPerform` decrements depth and emits `}`.
+3. **Translation Execution**:
+   - Dispatched to `emit_perform_until()` and `emit_end_perform()` in `app.backend.java.control_flow_emitter`.
+   - Condition building is safely delegated to `_build_condition` (reused from conditional logic).
+
+### Translation Rules
+
+`PERFORM UNTIL condition` in COBOL means "execute while the condition is FALSE". The emitter translates this semantics closely:
+
+```java
+while (!(condition)) {
+    // Body
+}
+```
+
+### Examples
+
+**IR Snippet:**
+```
+IRPerformUntil(left="WS-COUNT", operator=">=", right="10")
+  IRAdd(result="WS-COUNT", left="1")
+IREndPerform()
+```
+
+**Java Emission:**
+```java
+while (!(wsCount >= 10)) {
+    wsCount += 1;
+}
+```
+
+### Diagnostics
+
+| Code | Severity | Trigger | Action |
+|------|----------|---------|--------|
+| `BE007` | WARNING | `IREndPerform` found with no open `IRPerformUntil` | Loop closing brace skipped. |
+| `BE007` | WARNING | Empty operands or unsupported operators in `IRPerformUntil` | Header skipped; generation continues. |
 
 ### Block Management and Indentation
 
