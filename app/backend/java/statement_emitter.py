@@ -119,7 +119,9 @@ import re
 from app.backend.java.control_flow_emitter import (
     emit_else,
     emit_end_if,
+    emit_end_perform,
     emit_if,
+    emit_perform_until,
 )
 from app.backend.java.generator import BackendDiagnostic, BackendSeverity
 from app.backend.java.naming import to_java_field_name
@@ -129,10 +131,12 @@ from app.ir.instructions import (
     IRDivide,
     IRElse,
     IREndIf,
+    IREndPerform,
     IRIf,
     IRInstruction,
     IRMove,
     IRMultiply,
+    IRPerformUntil,
     IRSubtract,
 )
 
@@ -142,9 +146,11 @@ __all__ = [
     "emit_divide",
     "emit_else",
     "emit_end_if",
+    "emit_end_perform",
     "emit_if",
     "emit_move",
     "emit_multiply",
+    "emit_perform_until",
     "emit_statement",
     "emit_subtract",
 ]
@@ -174,6 +180,8 @@ def emit_statement(
     * :class:`~app.ir.instructions.IRIf`       → ``if (<cond>) {`` (at *depth*).
     * :class:`~app.ir.instructions.IRElse`     → ``} else {`` (at *depth*).
     * :class:`~app.ir.instructions.IREndIf`    → ``}`` (at *depth*).
+    * :class:`~app.ir.instructions.IRPerformUntil` → ``while (!(<cond>)) {`` (at *depth*).
+    * :class:`~app.ir.instructions.IREndPerform` → ``}`` (at *depth*).
 
     All other instructions produce a ``// TODO: <type>`` comment and a
     ``BE005`` WARNING so that generation continues rather than failing.
@@ -202,7 +210,9 @@ def emit_statement(
     from app.backend.java.control_flow_emitter import (
         emit_else as _emit_else,
         emit_end_if as _emit_end_if,
+        emit_end_perform as _emit_end_perform,
         emit_if as _emit_if,
+        emit_perform_until as _emit_perform_until,
     )
 
     if isinstance(instruction, IRMove):
@@ -231,6 +241,12 @@ def emit_statement(
 
     if isinstance(instruction, IREndIf):
         return _emit_end_if(depth, diagnostics)
+
+    if isinstance(instruction, IRPerformUntil):
+        return _emit_perform_until(instruction, depth, diagnostics)
+
+    if isinstance(instruction, IREndPerform):
+        return _emit_end_perform(depth, diagnostics)
 
     # Unsupported — emit a TODO comment and a WARNING diagnostic
     type_name = type(instruction).__name__
