@@ -157,7 +157,7 @@ Given identical `IRProgram` input, `generate()` always returns byte-for-byte ide
 | TASK-035 | ✅ ADD/SUBTRACT/MULTIPLY/DIVIDE → Java arithmetic statements |
 | TASK-036 | ✅ IF/ELSE/END-IF → Java conditional blocks |
 | TASK-037 | ✅ PERFORM UNTIL → Java while loops |
-| TASK-038 | CALL translation |
+| TASK-038 | ✅ CALL translation |
 | TASK-039 | Java compilation validation |
 
 ---
@@ -599,6 +599,53 @@ Generated Java:
         } else {
             System.out.println("ZERO OR NEGATIVE");
         }
+
+---
+
+## Procedure Invocation: CALL Translation (TASK-038)
+
+### Overview
+
+COBOL `CALL` statements are translated into Java method invocations. The IR layer represents these as `IRCall` instructions, which specify a target procedure and an optional list of arguments.
+
+### Translation Rules
+
+1. **Target Method**: The `target` attribute of `IRCall` is converted to a valid Java lowerCamelCase identifier using `to_java_field_name`. Surrounding quotes (if present) are stripped prior to conversion.
+2. **Arguments**: Each argument is translated using the standard `_translate_operand` function, supporting COBOL identifiers (variables), numeric literals, and string literals.
+3. **Return Value**: If the `result` attribute is specified, the output is assigned to the corresponding Java field.
+
+### Examples
+
+**Without Arguments:**
+```cobol
+CALL "CALCULATE-TOTAL"
+```
+```java
+calculateTotal();
+```
+
+**With Arguments:**
+```cobol
+CALL "UPDATE-ACCOUNT" USING WS-ID WS-BALANCE
+```
+```java
+updateAccount(wsId, wsBalance);
+```
+
+**With Result Assignment (Optional Extension):**
+```
+IRCall(target="GET-STATUS", result="WS-STATUS")
+```
+```java
+wsStatus = getStatus();
+```
+
+### Diagnostics
+
+| Code | Severity | Trigger | Action |
+|------|----------|---------|--------|
+| `BE008` | WARNING | Empty `target` in `IRCall` | Statement skipped; generation continues. |
+| `BE008` | WARNING | Empty argument in `IRCall.args` | Statement skipped; generation continues. |
 ```
 
 ### Control-Flow Diagnostics

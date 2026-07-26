@@ -66,11 +66,11 @@ from app.backend.java.generator import (
 from app.backend.java.statement_emitter import (
     _translate_operand,
     emit_add,
+    emit_call,
     emit_display,
     emit_divide,
     emit_move,
     emit_multiply,
-    emit_perform_until,
     emit_statement,
     emit_subtract,
 )
@@ -84,6 +84,7 @@ from app.ir.instructions import (
     IREndIf,
     IREndPerform,
     IRIf,
+    IRJump,
     IRMove,
     IRMultiply,
     IRPerformUntil,
@@ -518,12 +519,12 @@ class TestEmitStatement:
 
     # Unsupported instructions still produce TODO + BE005
     def test_unsupported_produces_todo_comment(self) -> None:
-        instr = IRCall(target="PROC")
+        instr = IRJump(target="PROC")
         stmts = emit_statement(instr, [])
         assert any("TODO" in s for s in stmts)
 
     def test_unsupported_produces_be005(self) -> None:
-        instr = IRCall(target="PROC")
+        instr = IRJump(target="PROC")
         diags: list[BackendDiagnostic] = []
         emit_statement(instr, diags)
         assert any(d.code == "BE005" for d in diags)
@@ -837,7 +838,7 @@ class TestGenerateStatements:
         assert "// IR:" not in src
 
     def test_unsupported_ir_produces_todo(self) -> None:
-        prog = _make_program(IRCall(target="PROC"))
+        prog = _make_program(IRJump(target="PROC"))
         src = generate(prog)
         assert "// TODO:" in src
 
@@ -1078,7 +1079,7 @@ class TestEmitStatementControlFlow:
 
     def test_non_cf_instructions_still_produce_be005(self) -> None:
         diags: list[BackendDiagnostic] = []
-        emit_statement(IRCall(target="PROC"), diags)
+        emit_statement(IRJump(target="PROC"), diags)
         assert any(d.code == "BE005" for d in diags)
 
 
@@ -1496,7 +1497,7 @@ class TestGeneratePerform:
         assert "while (!(wsA > 0)) {" in src
         assert "while (!(wsB < 100)) {" in src
         assert src.index("while (!(wsA") < src.index("while (!(wsB")
-        
+
         outer_line = next(ln for ln in src.splitlines() if "while (!(wsA" in ln)
         inner_line = next(ln for ln in src.splitlines() if "while (!(wsB" in ln)
         outer_indent = len(outer_line) - len(outer_line.lstrip())
@@ -1514,7 +1515,7 @@ class TestGeneratePerform:
         src = generate(prog)
         assert "while (!(wsCount > 0)) {" in src
         assert "if (wsX == 1) {" in src
-        
+
         while_line = next(ln for ln in src.splitlines() if "while" in ln)
         if_line = next(ln for ln in src.splitlines() if "if (" in ln)
         while_indent = len(while_line) - len(while_line.lstrip())
@@ -1530,7 +1531,12 @@ class TestGeneratePerform:
             IRMove(result="WS-C", source="3"),
         )
         src = generate(prog)
-        assert src.index("wsA = 1") < src.index("while") < src.index("wsB = 2") < src.index("wsC = 3")
+        assert (
+            src.index("wsA = 1")
+            < src.index("while")
+            < src.index("wsB = 2")
+            < src.index("wsC = 3")
+        )
 
     def test_deterministic_perform_output(self) -> None:
         prog = _make_program(
@@ -1552,7 +1558,9 @@ class TestGeneratePerform:
         prog = _make_program(IREndPerform())
         result = generate_with_diagnostics(prog)
         assert any(d.code == "BE007" for d in result.diagnostics)
-        assert "IREndPerform encountered without a matching IRPerformUntil" in str(result.diagnostics)
+        assert "IREndPerform encountered without a matching IRPerformUntil" in str(
+            result.diagnostics
+        )
 
     def test_generation_continues_after_bad_perform(self) -> None:
         prog = _make_program(
@@ -1561,3 +1569,96 @@ class TestGeneratePerform:
         )
         src = generate(prog)
         assert 'System.out.println("AFTER");' in src
+
+
+# ===========================================================================
+# TASK-038 — Procedure Invocation: emit_call
+# ===========================================================================
+
+
+class TestEmitCall:
+    def test_call_no_args_unquoted(self) -> None:
+        instr = IRCall(target="CALCULATE-TOTAL")
+        assert emit_call(instr, []) == ["calculateTotal();"]
+
+    def test_call_no_args_quoted(self) -> None:
+        instr = IRCall(target='"CALCULATE-TOTAL"')
+        assert emit_call(instr, []) == ["calculateTotal();"]
+
+    def test_call_with_args(self) -> None:
+        instr = IRCall(target='"UPDATE-ACCOUNT"', args=("WS-ID", "WS-BALANCE"))
+        assert emit_call(instr, []) == ["updateAccount(wsId, wsBalance);"]
+
+    def test_call_with_literals(self) -> None:
+        instr = IRCall(target="COMPUTE", args=("100", '"TEST"'))
+        assert emit_call(instr, []) == ['compute(100, "TEST");']
+
+    def test_call_with_result(self) -> None:
+        instr = IRCall(target="GET-STATUS", result="WS-STATUS")
+        assert emit_call(instr, []) == ["wsStatus = getStatus();"]
+
+    def test_call_empty_target_produces_be008(self) -> None:
+        instr = IRCall(target="", args=("WS-A",))
+        diags: list[BackendDiagnostic] = []
+        assert emit_call(instr, diags) == []
+        assert any(d.code == "BE008" for d in diags)
+        assert "empty target" in str(diags[0].message)
+
+    def test_call_empty_arg_produces_be008(self) -> None:
+        instr = IRCall(target="FUNC", args=("WS-A", "", "WS-B"))
+        diags: list[BackendDiagnostic] = []
+        assert emit_call(instr, diags) == []
+        assert any(d.code == "BE008" for d in diags)
+        assert "empty argument" in str(diags[0].message)
+
+
+class TestGenerateCall:
+    """Integration tests: generate() produces correct Java for CALL IR."""
+
+    def test_simple_call(self) -> None:
+        prog = _make_program(IRCall(target='"PROCESS-RECORD"'))
+        src = generate(prog)
+        assert "processRecord();" in src
+
+    def test_call_with_args(self) -> None:
+        prog = _make_program(
+            IRCall(target="UPDATE", args=("WS-ID", "WS-AMT")),
+        )
+        src = generate(prog)
+        assert "update(wsId, wsAmt);" in src
+
+    def test_mixed_call_and_arithmetic(self) -> None:
+        prog = _make_program(
+            IRAdd(result="WS-COUNT", left="1"),
+            IRCall(target="LOG-COUNT", args=("WS-COUNT",)),
+        )
+        src = generate(prog)
+        assert src.index("wsCount += 1;") < src.index("logCount(wsCount);")
+
+    def test_call_inside_if(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-VALID", operator="==", right='"Y"'),
+            IRCall(target="PROCESS"),
+            IREndIf(),
+        )
+        src = generate(prog)
+        assert 'if (wsValid == "Y") {' in src
+        assert "    process();" in src
+        assert "}" in src
+
+    def test_call_inside_perform(self) -> None:
+        prog = _make_program(
+            IRPerformUntil(left="WS-DONE", operator="==", right='"Y"'),
+            IRCall(target="PROCESS"),
+            IREndPerform(),
+        )
+        src = generate(prog)
+        assert 'while (!(wsDone == "Y")) {' in src
+        assert "    process();" in src
+        assert "}" in src
+
+    def test_deterministic_call_output(self) -> None:
+        prog = _make_program(
+            IRCall(target="DO-WORK", args=("A", "B")),
+        )
+        assert generate(prog) == generate(prog)
