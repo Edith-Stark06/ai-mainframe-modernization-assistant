@@ -127,6 +127,7 @@ from app.backend.java.generator import BackendDiagnostic, BackendSeverity
 from app.backend.java.naming import to_java_field_name
 from app.ir.instructions import (
     IRAdd,
+    IRCall,
     IRDisplay,
     IRDivide,
     IRElse,
@@ -142,6 +143,7 @@ from app.ir.instructions import (
 
 __all__ = [
     "emit_add",
+    "emit_call",
     "emit_display",
     "emit_divide",
     "emit_else",
@@ -177,6 +179,7 @@ def emit_statement(
     * :class:`~app.ir.instructions.IRSubtract` → ``-=`` compound assignment.
     * :class:`~app.ir.instructions.IRMultiply` → ``*=`` compound assignment.
     * :class:`~app.ir.instructions.IRDivide`   → ``/=`` compound assignment.
+    * :class:`~app.ir.instructions.IRCall`     → ``target(args);`` (or ``result = target(args);``).
     * :class:`~app.ir.instructions.IRIf`       → ``if (<cond>) {`` (at *depth*).
     * :class:`~app.ir.instructions.IRElse`     → ``} else {`` (at *depth*).
     * :class:`~app.ir.instructions.IREndIf`    → ``}`` (at *depth*).
@@ -232,6 +235,9 @@ def emit_statement(
 
     if isinstance(instruction, IRDivide):
         return emit_divide(instruction, diagnostics)
+
+    if isinstance(instruction, IRCall):
+        return emit_call(instruction, diagnostics)
 
     if isinstance(instruction, IRIf):
         return _emit_if(instruction, depth, diagnostics)
@@ -591,6 +597,72 @@ def _emit_arithmetic(
 # ---------------------------------------------------------------------------
 # Shared operand translator
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# CALL → Java method invocation
+# ---------------------------------------------------------------------------
+
+
+def emit_call(
+    instruction: IRCall,
+    diagnostics: list[BackendDiagnostic],
+) -> list[str]:
+    """
+    Translate an :class:`~app.ir.instructions.IRCall` into a Java method invocation.
+
+    The target name is converted to lowerCamelCase via :func:`to_java_field_name`.
+    Each argument is translated via :func:`_translate_operand`.
+
+    Args:
+        instruction:
+            The :class:`~app.ir.instructions.IRCall` to translate.
+        diagnostics:
+            Mutable list; diagnostics appended on error.
+
+    Returns:
+        A list containing exactly one Java statement string.
+    """
+    target = instruction.target
+    if not target:
+        diagnostics.append(
+            BackendDiagnostic(
+                severity=BackendSeverity.WARNING,
+                message="IRCall has empty target; skipping.",
+                code="BE008",
+            )
+        )
+        return []
+
+    # Strip quotes if they were included natively (COBOL often has CALL "NAME")
+    if target.startswith('"') and target.endswith('"') and len(target) >= 2:
+        target = target[1:-1]
+    elif target.startswith("'") and target.endswith("'") and len(target) >= 2:
+        target = target[1:-1]
+
+    java_target = to_java_field_name(target)
+
+    # Translate all arguments
+    translated_args = []
+    for arg in instruction.args:
+        if not arg:
+            diagnostics.append(
+                BackendDiagnostic(
+                    severity=BackendSeverity.WARNING,
+                    message=f"IRCall to '{target}' has an empty argument; skipping.",
+                    code="BE008",
+                )
+            )
+            return []
+        translated_args.append(_translate_operand(arg))
+
+    args_str = ", ".join(translated_args)
+
+    if instruction.result:
+        java_result = to_java_field_name(instruction.result)
+        return [f"{java_result} = {java_target}({args_str});"]
+
+    return [f"{java_target}({args_str});"]
 
 
 def _translate_operand(operand: str) -> str:
