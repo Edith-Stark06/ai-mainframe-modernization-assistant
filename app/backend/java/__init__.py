@@ -12,6 +12,10 @@ Public API:
     * :func:`~app.backend.java.naming.to_java_field_name` — COBOL → lowerCamelCase.
     * :func:`~app.backend.java.type_mapper.map_cobol_type` — CobolType → Java type string.
     * :class:`~app.backend.java.field_model.JavaField` — field value object.
+    * :func:`~app.backend.java.statement_emitter.emit_add`      — IRAdd → ``+=``.
+    * :func:`~app.backend.java.statement_emitter.emit_subtract` — IRSubtract → ``-=``.
+    * :func:`~app.backend.java.statement_emitter.emit_multiply` — IRMultiply → ``*=``.
+    * :func:`~app.backend.java.statement_emitter.emit_divide`   — IRDivide → ``/=``.
 
 Author:
     Edith Stark
@@ -30,7 +34,15 @@ from app.backend.java.generator import (
     generate_with_diagnostics,
 )
 from app.backend.java.naming import to_java_field_name
-from app.backend.java.statement_emitter import emit_display, emit_move, emit_statement
+from app.backend.java.statement_emitter import (
+    emit_add,
+    emit_display,
+    emit_divide,
+    emit_move,
+    emit_multiply,
+    emit_statement,
+    emit_subtract,
+)
 from app.backend.java.type_mapper import map_cobol_type
 
 __all__ = [
@@ -39,9 +51,13 @@ __all__ = [
     "GenerationResult",
     "JavaField",
     "build_fields_from_symbols",
+    "emit_add",
     "emit_display",
+    "emit_divide",
     "emit_move",
+    "emit_multiply",
     "emit_statement",
+    "emit_subtract",
     "generate",
     "generate_with_diagnostics",
     "map_cobol_type",

@@ -43,7 +43,7 @@ app/
         ├── field_model.py          ← JavaField value object (TASK-033)
         ├── generator.py            ← Java class generation (TASK-032/033/034)
         ├── naming.py               ← COBOL → lowerCamelCase (TASK-033)
-        ├── statement_emitter.py    ← MOVE/DISPLAY → Java statements (TASK-034)
+        ├── statement_emitter.py    ← MOVE/DISPLAY/Arithmetic → Java statements (TASK-034/035)
         └── type_mapper.py          ← CobolType → Java type (TASK-033)
 ```
 
@@ -53,7 +53,7 @@ Future backend tasks will add:
 app/
 └── backend/
     └── java/
-        └── project_generator.py   (TASK-035+)
+        └── project_generator.py   (future)
 ```
 
 ---
@@ -92,20 +92,19 @@ public class Hello {
 
     public static void main(String[] args) {
 
-        // IR: DISPLAY "HELLO WORLD"
-        // IR: MOVE "WELCOME" -> WS-GREETING
+        wsGreeting = "WELCOME";
+        System.out.println(wsGreeting);
+        wsCount += 5;
 
     }
 
 }
 ```
 
-IR instruction stubs are emitted as `// IR:` comments inside `main`.  Full statement lowering is deferred to later tasks.
-
 ### Diagnostics
 
 | Code | Severity | Trigger |
-|------|----------|---------|
+|------|----------|---------| 
 | `BE001` | WARNING | No program name and no named module found. |
 
 Diagnostics are non-fatal.  A valid Java class skeleton is always produced.
@@ -120,9 +119,13 @@ Diagnostics are non-fatal.  A valid Java class skeleton is always produced.
 | `IRModule` | Java class |
 | `IRFunction` | Java method |
 | `IRBasicBlock` | Logical block inside a method |
-| `IRInstruction` | Java statement (future lowering) |
-| `IRDisplay` | `System.out.println(...)` (future) |
-| `IRMove` / `IRAssignment` | Variable assignment (future) |
+| `IRInstruction` | Java statement |
+| `IRDisplay` | `System.out.println(...)` |
+| `IRMove` / `IRAssignment` | Variable assignment (`=`) |
+| `IRAdd` | Compound assignment (`+=`) |
+| `IRSubtract` | Compound assignment (`-=`) |
+| `IRMultiply` | Compound assignment (`*=`) |
+| `IRDivide` | Compound assignment (`/=`) |
 | `IRCall` | Method call (future) |
 | `IRConditionalBranch` | `if` / `else` (future) |
 | `IRJump` | `goto`-equivalent / loop structure (future) |
@@ -147,9 +150,10 @@ Given identical `IRProgram` input, `generate()` always returns byte-for-byte ide
 |------|-------|
 | TASK-033 | ✅ Java field declarations from COBOL data items |
 | TASK-034 | ✅ MOVE/DISPLAY → Java statements |
-| TASK-035 | Spring Boot project skeleton generation |
-| TASK-036 | Maven `pom.xml` generation |
-| TASK-037 | Java compilation validation |
+| TASK-035 | ✅ ADD/SUBTRACT/MULTIPLY/DIVIDE → Java arithmetic statements |
+| TASK-036 | Control-flow (IF, PERFORM, EVALUATE) translation |
+| TASK-037 | CALL translation |
+| TASK-038 | Java compilation validation |
 
 ---
 
@@ -176,7 +180,7 @@ private <type> <name> [= <value>];
 Defined in `app/backend/java/type_mapper.py`:
 
 | COBOL Type | Condition | Java Type |
-|------------|-----------|-----------|
+|------------|-----------|-----------| 
 | `AlphanumericType` | any | `String` |
 | `NumericType` | `decimal_places == 0` | `int` |
 | `NumericType` | `decimal_places > 0` | `double` |
@@ -233,12 +237,13 @@ public class Hello {
 ### Diagnostics
 
 | Code | Severity | Trigger |
-|------|----------|---------|
+|------|----------|---------| 
 | `BE001` | WARNING | No program name and no named module. |
 | `BE002` | WARNING | Unsupported COBOL type; no Java mapping defined. |
 | `BE003` | WARNING | Variable symbol has no resolved COBOL type. |
 | `BE004` | WARNING | IRMove/IRDisplay has empty operand or target. |
 | `BE005` | WARNING | Unsupported IR instruction type in statement emitter. |
+| `BE006` | WARNING | Arithmetic instruction has empty result, empty operand, or unsupported multi-operand form. |
 
 ---
 
@@ -260,7 +265,7 @@ _render_class()         app.backend.java.generator
         <statement>;  (inside main method body)
 ```
 
-### Supported Instructions
+### Supported Instructions (TASK-034)
 
 | IR Instruction | Java Output | Notes |
 |----------------|-------------|-------|
@@ -275,8 +280,16 @@ Defined in `app/backend/java/statement_emitter._translate_operand()`:
 | IR Operand | Java Expression |
 |------------|-----------------|
 | `"HELLO"` (quoted) | `"HELLO"` (unchanged) |
-| `42` (numeric) | `42` (unchanged) |
+| `42` (numeric integer) | `42` (unchanged) |
+| `3.14` (numeric decimal) | `3.14` (unchanged) |
+| `-5` (negative integer) | `-5` (unchanged) |
 | `WS-GREETING` (identifier) | `wsGreeting` (lowerCamelCase) |
+
+The translation rules are applied in order:
+
+1. **Quoted string literal** — operand starts and ends with `"`: returned unchanged.
+2. **Numeric literal** — matches `[-+]?\d+(\.\d+)?`: returned unchanged.
+3. **COBOL identifier** — everything else: converted to lowerCamelCase via `to_java_field_name()`.
 
 ### Generated Example
 
@@ -305,6 +318,105 @@ No reordering, hoisting, or optimisation is applied at this stage.
 
 ---
 
+## Arithmetic Statement Generation (TASK-035)
+
+### Overview
+
+TASK-035 extends `statement_emitter.py` to translate COBOL arithmetic IR instructions
+into Java compound-assignment statements.  The same `_translate_operand()` helper and
+`to_java_field_name()` naming strategy used for MOVE and DISPLAY are reused unchanged.
+
+### Arithmetic Emission Strategy
+
+All four arithmetic operations follow the same **compound-assignment** pattern:
+
+```
+<java_result> <operator> <java_left>;
+```
+
+Where:
+
+- `<java_result>` — the accumulator variable, derived from `instruction.result` via
+  `to_java_field_name()`.
+- `<operator>` — the Java compound-assignment operator for the operation.
+- `<java_left>` — the applied operand, derived from `instruction.left` via
+  `_translate_operand()`.
+
+The `instruction.right` field is reserved for future multi-operand support.  If it is
+non-empty and differs from `instruction.result`, a `BE006` WARNING is emitted and the
+field is ignored (graceful degradation).
+
+### Supported Arithmetic Instructions
+
+| IR Instruction | Operator | Generated Java | COBOL Equivalent |
+|----------------|----------|----------------|------------------|
+| `IRAdd(result, left)` | `+=` | `<result> += <left>;` | `ADD <left> TO <result>` |
+| `IRSubtract(result, left)` | `-=` | `<result> -= <left>;` | `SUBTRACT <left> FROM <result>` |
+| `IRMultiply(result, left)` | `*=` | `<result> *= <left>;` | `MULTIPLY <left> BY <result>` |
+| `IRDivide(result, left)` | `/=` | `<result> /= <left>;` | `DIVIDE <left> INTO <result>` |
+
+### Operand Support
+
+All operand types supported by MOVE and DISPLAY are equally supported for arithmetic:
+
+| Operand Type | IR Example | Generated Java |
+|--------------|------------|----------------|
+| Integer literal | `5` | `5` |
+| Decimal literal | `1.5` | `1.5` |
+| Negative literal | `-3` | `-3` |
+| Variable | `WS-VALUE` | `wsValue` |
+| Multi-segment variable | `WS-LINE-ITEM` | `wsLineItem` |
+
+### Generated Example
+
+IR instructions:
+
+```
+MOVE 0 -> WS-COUNT
+ADD 5 TO WS-COUNT
+DISPLAY WS-COUNT
+SUBTRACT 2 FROM WS-COUNT
+MULTIPLY 3 BY WS-COUNT
+DIVIDE 6 INTO WS-COUNT
+DISPLAY WS-COUNT
+```
+
+Generated Java:
+
+```java
+        wsCount = 0;
+        wsCount += 5;
+        System.out.println(wsCount);
+        wsCount -= 2;
+        wsCount *= 3;
+        wsCount /= 6;
+        System.out.println(wsCount);
+```
+
+### Statement Ordering
+
+Arithmetic statements, like all other statements, are emitted in **exactly the same
+order** as they appear in the IR basic block.  No reordering is performed.
+
+### Arithmetic Diagnostics
+
+| Code | Severity | Trigger |
+|------|----------|---------| 
+| `BE006` | WARNING | `instruction.result` is empty (no accumulator target). |
+| `BE006` | WARNING | `instruction.left` is empty (no operand to apply). |
+| `BE006` | WARNING | `instruction.right` is non-empty and differs from `result` (multi-operand form not yet supported; `right` is ignored). |
+
+Generation **continues** when a `BE006` is emitted.  A malformed arithmetic instruction
+is skipped (produces no Java statement), but subsequent instructions are unaffected.
+
+### Divide-By-Zero
+
+The backend emitter does not detect divide-by-zero.  This is the responsibility of
+earlier compiler phases (semantic analysis or IR validation).  The emitter faithfully
+translates whatever operand appears in `instruction.left`, including the literal `0`.
+
+---
+
 ## Non-Goals
 
 The backend does **not**:
@@ -314,3 +426,5 @@ The backend does **not**:
 - Build the IR (that is the IR builder's responsibility).
 - Write files to disk (the compiler driver or API layer does that).
 - Invoke `javac` or any external toolchain.
+- Generate IF, PERFORM, EVALUATE, or CALL statements (deferred to future tasks).
+- Generate Java project scaffolding or `pom.xml` (deferred to future tasks).
