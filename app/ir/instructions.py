@@ -74,6 +74,9 @@ __all__ = [
     "IRConditionalBranch",
     "IRDisplay",
     "IRDivide",
+    "IRElse",
+    "IREndIf",
+    "IRIf",
     "IRInstruction",
     "IRJump",
     "IRMove",
@@ -240,6 +243,108 @@ class IRDivide(IRInstruction):
 
     def accept(self, visitor: Any) -> Any:
         visit = getattr(visitor, "visit_divide", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class IRIf(IRInstruction):
+    """
+    Open a structured conditional block (COBOL IF statement).
+
+    Carries the full condition as three fields so the backend can
+    translate each operand independently via its operand-translation
+    helpers.
+
+    Attributes:
+        result:
+            Always ``""``; inherited from :class:`IRInstruction`.
+        left:
+            Left-hand operand of the comparison (variable name or literal).
+        operator:
+            Comparison operator string: one of ``"=="``, ``"!="``, ``">"``,
+            ``">="``, ``"<"``, ``"<="``.
+        right:
+            Right-hand operand of the comparison.
+        comment:
+            Optional annotation.
+
+    Examples:
+        >>> from app.ir.instructions import IRIf
+        >>> instr = IRIf(left="WS-COUNT", operator=">", right="0")
+        >>> instr.left
+        'WS-COUNT'
+        >>> instr.operator
+        '>'
+        >>> instr.right
+        '0'
+    """
+
+    left: str = field(default="")
+    operator: str = field(default="")
+    right: str = field(default="")
+
+    def accept(self, visitor: Any) -> Any:
+        """Dispatch to ``visitor.visit_if(self)``."""
+        visit = getattr(visitor, "visit_if", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class IRElse(IRInstruction):
+    """
+    Switch to the ``else`` branch of the current conditional block.
+
+    :class:`IRElse` is a marker instruction that carries no operands.
+    It must appear after one or more body instructions of an :class:`IRIf`
+    and before the closing :class:`IREndIf`.
+
+    Attributes:
+        result:
+            Always ``""``; inherited from :class:`IRInstruction`.
+        comment:
+            Optional annotation.
+
+    Examples:
+        >>> from app.ir.instructions import IRElse
+        >>> IRElse().result
+        ''
+    """
+
+    def accept(self, visitor: Any) -> Any:
+        """Dispatch to ``visitor.visit_else(self)``."""
+        visit = getattr(visitor, "visit_else", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class IREndIf(IRInstruction):
+    """
+    Close the current structured conditional block.
+
+    :class:`IREndIf` is a marker instruction that carries no operands.
+    It must appear once for every :class:`IRIf` in the same scope.
+
+    Attributes:
+        result:
+            Always ``""``; inherited from :class:`IRInstruction`.
+        comment:
+            Optional annotation.
+
+    Examples:
+        >>> from app.ir.instructions import IREndIf
+        >>> IREndIf().result
+        ''
+    """
+
+    def accept(self, visitor: Any) -> Any:
+        """Dispatch to ``visitor.visit_end_if(self)``."""
+        visit = getattr(visitor, "visit_end_if", None)
         if callable(visit):
             return visit(self)
         return None
