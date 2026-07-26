@@ -53,7 +53,9 @@ from app.backend.java.control_flow_emitter import (
     SUPPORTED_OPERATORS,
     emit_else,
     emit_end_if,
+    emit_end_perform,
     emit_if,
+    emit_perform_until,
 )
 from app.backend.java.generator import (
     BackendDiagnostic,
@@ -68,6 +70,7 @@ from app.backend.java.statement_emitter import (
     emit_divide,
     emit_move,
     emit_multiply,
+    emit_perform_until,
     emit_statement,
     emit_subtract,
 )
@@ -79,9 +82,11 @@ from app.ir.instructions import (
     IRDivide,
     IRElse,
     IREndIf,
+    IREndPerform,
     IRIf,
     IRMove,
     IRMultiply,
+    IRPerformUntil,
     IRReturn,
     IRSubtract,
 )
@@ -1428,3 +1433,131 @@ class TestControlFlowDiagnostics:
         codes = {d.code for d in result.diagnostics}
         assert "BE007" in codes
         assert "BE005" in codes
+
+
+# ===========================================================================
+# TASK-037 — Control Flow: emit_perform_until / emit_end_perform
+# ===========================================================================
+
+
+class TestEmitPerformUntil:
+    def test_perform_greater_than_literal(self) -> None:
+        instr = IRPerformUntil(left="WS-COUNT", operator=">", right="0")
+        assert emit_perform_until(instr, 0, []) == ["while (!(wsCount > 0)) {"]
+
+    def test_perform_depth_1_prefix(self) -> None:
+        instr = IRPerformUntil(left="WS-X", operator="<", right="10")
+        assert emit_perform_until(instr, 1, []) == ["    while (!(wsX < 10)) {"]
+
+    def test_perform_empty_left_produces_be007(self) -> None:
+        instr = IRPerformUntil(left="", operator=">", right="0")
+        diags: list[BackendDiagnostic] = []
+        assert emit_perform_until(instr, 0, diags) == []
+        assert any(d.code == "BE007" for d in diags)
+
+    def test_perform_unsupported_operator_produces_be007(self) -> None:
+        instr = IRPerformUntil(left="WS-X", operator="GREATER", right="0")
+        diags: list[BackendDiagnostic] = []
+        assert emit_perform_until(instr, 0, diags) == []
+        assert any(d.code == "BE007" for d in diags)
+
+
+class TestEmitEndPerform:
+    def test_end_perform_depth0_value(self) -> None:
+        assert emit_end_perform(0, []) == ["}"]
+
+    def test_end_perform_depth1_value(self) -> None:
+        assert emit_end_perform(1, []) == ["    }"]
+
+
+class TestGeneratePerform:
+    """Integration tests: generate() produces correct Java for PERFORM IR."""
+
+    def test_simple_perform_until(self) -> None:
+        prog = _make_program(
+            IRPerformUntil(left="WS-COUNT", operator=">=", right="10"),
+            IRAdd(result="WS-COUNT", left="1"),
+            IREndPerform(),
+        )
+        src = generate(prog)
+        assert "while (!(wsCount >= 10)) {" in src
+        assert "    wsCount += 1;" in src
+        assert "}" in src
+
+    def test_nested_perform(self) -> None:
+        prog = _make_program(
+            IRPerformUntil(left="WS-A", operator=">", right="0"),
+            IRPerformUntil(left="WS-B", operator="<", right="100"),
+            IRDisplay(operand='"X"'),
+            IREndPerform(),
+            IREndPerform(),
+        )
+        src = generate(prog)
+        assert "while (!(wsA > 0)) {" in src
+        assert "while (!(wsB < 100)) {" in src
+        assert src.index("while (!(wsA") < src.index("while (!(wsB")
+        
+        outer_line = next(ln for ln in src.splitlines() if "while (!(wsA" in ln)
+        inner_line = next(ln for ln in src.splitlines() if "while (!(wsB" in ln)
+        outer_indent = len(outer_line) - len(outer_line.lstrip())
+        inner_indent = len(inner_line) - len(inner_line.lstrip())
+        assert inner_indent > outer_indent
+
+    def test_mixed_if_and_perform(self) -> None:
+        prog = _make_program(
+            IRPerformUntil(left="WS-COUNT", operator=">", right="0"),
+            IRIf(left="WS-X", operator="==", right="1"),
+            IRDisplay(operand='"YES"'),
+            IREndIf(),
+            IREndPerform(),
+        )
+        src = generate(prog)
+        assert "while (!(wsCount > 0)) {" in src
+        assert "if (wsX == 1) {" in src
+        
+        while_line = next(ln for ln in src.splitlines() if "while" in ln)
+        if_line = next(ln for ln in src.splitlines() if "if (" in ln)
+        while_indent = len(while_line) - len(while_line.lstrip())
+        if_indent = len(if_line) - len(if_line.lstrip())
+        assert if_indent > while_indent
+
+    def test_statement_order_preserved(self) -> None:
+        prog = _make_program(
+            IRMove(result="WS-A", source="1"),
+            IRPerformUntil(left="WS-A", operator=">", right="0"),
+            IRMove(result="WS-B", source="2"),
+            IREndPerform(),
+            IRMove(result="WS-C", source="3"),
+        )
+        src = generate(prog)
+        assert src.index("wsA = 1") < src.index("while") < src.index("wsB = 2") < src.index("wsC = 3")
+
+    def test_deterministic_perform_output(self) -> None:
+        prog = _make_program(
+            IRPerformUntil(left="WS-COUNT", operator=">", right="0"),
+            IRDisplay(operand='"LOOP"'),
+            IREndPerform(),
+        )
+        assert generate(prog) == generate(prog)
+
+    def test_no_timestamps_in_perform_output(self) -> None:
+        prog = _make_program(
+            IRPerformUntil(left="WS-X", operator=">", right="0"),
+            IREndPerform(),
+        )
+        src = generate(prog)
+        assert "timestamp" not in src.lower()
+
+    def test_unmatched_end_perform_produces_be007(self) -> None:
+        prog = _make_program(IREndPerform())
+        result = generate_with_diagnostics(prog)
+        assert any(d.code == "BE007" for d in result.diagnostics)
+        assert "IREndPerform encountered without a matching IRPerformUntil" in str(result.diagnostics)
+
+    def test_generation_continues_after_bad_perform(self) -> None:
+        prog = _make_program(
+            IRPerformUntil(left="", operator=">", right="0"),  # bad
+            IRDisplay(operand='"AFTER"'),  # should still be emitted
+        )
+        src = generate(prog)
+        assert 'System.out.println("AFTER");' in src

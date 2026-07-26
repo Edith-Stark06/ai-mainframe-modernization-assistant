@@ -99,13 +99,15 @@ from typing import TYPE_CHECKING
 from app.backend.java.generator import BackendDiagnostic, BackendSeverity
 
 if TYPE_CHECKING:
-    from app.ir.instructions import IRIf
+    from app.ir.instructions import IRIf, IRPerformUntil
 
 __all__ = [
     "SUPPORTED_OPERATORS",
     "emit_else",
     "emit_end_if",
+    "emit_end_perform",
     "emit_if",
+    "emit_perform_until",
 ]
 
 # ---------------------------------------------------------------------------
@@ -205,6 +207,71 @@ def emit_end_if(
     Args:
         depth:
             The nesting depth of the **if-header** (same level as the closing
+            brace — one less than the body depth).
+        diagnostics:
+            Mutable list; currently unused but kept for API symmetry.
+
+    Returns:
+        A list containing exactly one ``}`` string with the appropriate depth prefix.
+    """
+    prefix = "    " * depth
+    return [f"{prefix}}}"]
+
+
+# ---------------------------------------------------------------------------
+# emit_perform_until — IRPerformUntil → Java ``while (!(<condition>)) {``
+# ---------------------------------------------------------------------------
+
+
+def emit_perform_until(
+    instruction: IRPerformUntil,
+    depth: int,
+    diagnostics: list[BackendDiagnostic],
+) -> list[str]:
+    """
+    Translate an :class:`~app.ir.instructions.IRPerformUntil` into a Java
+    ``while (!(<condition>)) {`` header line.
+
+    The prefix ``"    " * depth`` is prepended to position the header at the
+    correct nesting level within ``main()``.
+
+    Args:
+        instruction:
+            The :class:`~app.ir.instructions.IRPerformUntil` to translate.
+        depth:
+            Current nesting depth of this header line (0 = flat inside main).
+        diagnostics:
+            Mutable list; ``BE007`` diagnostics appended on error.
+
+    Returns:
+        A list containing exactly one ``while (!(<cond>)) {`` string, or an empty
+        list when the condition cannot be translated.
+    """
+    condition = _build_condition(
+        instruction.left, instruction.operator, instruction.right, diagnostics
+    )
+    if condition is None:
+        return []
+
+    prefix = "    " * depth
+    return [f"{prefix}while (!({condition})) {{"]
+
+
+# ---------------------------------------------------------------------------
+# emit_end_perform — emit ``}``
+# ---------------------------------------------------------------------------
+
+
+def emit_end_perform(
+    depth: int,
+    diagnostics: list[BackendDiagnostic],
+) -> list[str]:
+    """
+    Emit a Java closing brace ``}`` for a PERFORM block at the given *depth*.
+
+    Args:
+        depth:
+            The nesting depth of the **perform-header** (same level as the closing
             brace — one less than the body depth).
         diagnostics:
             Mutable list; currently unused but kept for API symmetry.
