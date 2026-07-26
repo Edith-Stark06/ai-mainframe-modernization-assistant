@@ -40,6 +40,7 @@ app/
     ├── __init__.py
     └── java/
         ├── __init__.py
+        ├── control_flow_emitter.py  ← IF/ELSE/END-IF → Java if blocks (TASK-036)
         ├── field_model.py          ← JavaField value object (TASK-033)
         ├── generator.py            ← Java class generation (TASK-032/033/034)
         ├── naming.py               ← COBOL → lowerCamelCase (TASK-033)
@@ -126,8 +127,11 @@ Diagnostics are non-fatal.  A valid Java class skeleton is always produced.
 | `IRSubtract` | Compound assignment (`-=`) |
 | `IRMultiply` | Compound assignment (`*=`) |
 | `IRDivide` | Compound assignment (`/=`) |
+| `IRIf` | `if (<condition>) {` |
+| `IRElse` | `} else {` |
+| `IREndIf` | `}` (close conditional block) |
 | `IRCall` | Method call (future) |
-| `IRConditionalBranch` | `if` / `else` (future) |
+| `IRConditionalBranch` | CFG-level branch (future low-level use) |
 | `IRJump` | `goto`-equivalent / loop structure (future) |
 
 ---
@@ -151,9 +155,10 @@ Given identical `IRProgram` input, `generate()` always returns byte-for-byte ide
 | TASK-033 | ✅ Java field declarations from COBOL data items |
 | TASK-034 | ✅ MOVE/DISPLAY → Java statements |
 | TASK-035 | ✅ ADD/SUBTRACT/MULTIPLY/DIVIDE → Java arithmetic statements |
-| TASK-036 | Control-flow (IF, PERFORM, EVALUATE) translation |
-| TASK-037 | CALL translation |
-| TASK-038 | Java compilation validation |
+| TASK-036 | ✅ IF/ELSE/END-IF → Java conditional blocks |
+| TASK-037 | Control-flow: PERFORM |
+| TASK-038 | CALL translation |
+| TASK-039 | Java compilation validation |
 
 ---
 
@@ -417,6 +422,147 @@ translates whatever operand appears in `instruction.left`, including the literal
 
 ---
 
+## Control-Flow Statement Generation (TASK-036)
+
+### Overview
+
+TASK-036 extends the backend with structured conditional code generation.  Three
+new IR instruction types (`IRIf`, `IRElse`, `IREndIf`) are translated by
+`control_flow_emitter.py` into Java `if`/`else` blocks.
+
+```
+IRIf / IRElse / IREndIf (in entry basic block)
+    ↓
+_collect_statements()      app.backend.java.generator        (depth tracker)
+    ↓
+emit_if / emit_else / emit_end_if   app.backend.java.control_flow_emitter
+    ↓
+_render_class()            app.backend.java.generator
+    ↓
+        if (<condition>) {      (inside main method body)
+            <body>;
+        } else {
+            <alt-body>;
+        }
+```
+
+### New IR Instruction Types
+
+Defined in `app/ir/instructions.py`:
+
+| Instruction | Fields | Meaning |
+|-------------|--------|---------|
+| `IRIf(left, operator, right)` | left operand, comparison op, right operand | Open a conditional block |
+| `IRElse()` | — (marker) | Switch to else branch |
+| `IREndIf()` | — (marker) | Close the current conditional block |
+
+`IRIf`, `IRElse`, `IREndIf` are distinct from the existing `IRConditionalBranch`,
+which is a low-level CFG jump targeting basic-block *labels*.  The new types
+model **structured** control flow that can appear linearly inside a single
+basic block.
+
+### Condition Translation
+
+Defined in `app/backend/java/control_flow_emitter._build_condition()`:
+
+| IR Operand | Java Expression |
+|------------|----------------|
+| `"Y"` (quoted) | `"Y"` (unchanged) |
+| `42` (numeric) | `42` (unchanged) |
+| `-1` (negative) | `-1` (unchanged) |
+| `1.5` (decimal) | `1.5` (unchanged) |
+| `WS-COUNT` (COBOL id) | `wsCount` (lowerCamelCase) |
+| `WS-GRAND-TOTAL` (multi-seg) | `wsGrandTotal` (lowerCamelCase) |
+
+Both `left` and `right` operands go through `_translate_operand()`, reusing
+the same operand-translation rules as MOVE, DISPLAY, and arithmetic.
+
+### Supported Comparison Operators
+
+| Operator | Meaning |
+|----------|---------|
+| `==` | Equal |
+| `!=` | Not equal |
+| `>` | Greater than |
+| `>=` | Greater than or equal |
+| `<` | Less than |
+| `<=` | Less than or equal |
+
+Any other operator string triggers a `BE007` WARNING and the IF block is skipped.
+
+### Block Management and Indentation
+
+Indentation is managed by a **depth counter** in `_collect_statements()`:
+
+```
+depth = 0  (flat inside main())
+
+for instr in block.instructions:
+    IRIf:    emit if-header at depth, then depth += 1
+    IRElse:  depth -= 1; emit } else { at depth; depth += 1
+    IREndIf: depth -= 1; emit } at depth
+    other:   emit stmt; prefix with "    " * depth
+```
+
+The prefix for each nesting level is 4 spaces (`"    " * depth`).  `_render_class()`
+applies the base 8-space `main()` indent to every statement string, so the
+final indentation is `8 + 4*depth` spaces per line.
+
+Example for a simple IF at depth 0:
+
+```java
+        if (wsCount > 0) {      // 8 spaces (8 + 4*0)
+            System.out.println("POSITIVE");  // 12 spaces (8 + 4*1)
+        }                       // 8 spaces (8 + 4*0)
+```
+
+Example for nested IFs:
+
+```java
+        if (wsA > 0) {          // 8 spaces (depth 0)
+            if (wsB < 100) {    // 12 spaces (depth 1)
+                body();         // 16 spaces (depth 2)
+            }                   // 12 spaces (depth 1)
+        }                       // 8 spaces (depth 0)
+```
+
+### Generated Example
+
+IR instructions:
+
+```
+IF WS-COUNT > 0
+    DISPLAY "POSITIVE"
+ELSE
+    DISPLAY "ZERO OR NEGATIVE"
+END-IF
+```
+
+Generated Java:
+
+```java
+        if (wsCount > 0) {
+            System.out.println("POSITIVE");
+        } else {
+            System.out.println("ZERO OR NEGATIVE");
+        }
+```
+
+### Control-Flow Diagnostics
+
+| Code | Severity | Trigger |
+|------|----------|---------|
+| `BE007` | WARNING | `IRIf.left` is empty. |
+| `BE007` | WARNING | `IRIf.operator` is not one of the 6 supported operators. |
+| `BE007` | WARNING | `IRIf.right` is empty. |
+| `BE007` | WARNING | `IRElse` encountered at depth 0 (no matching `IRIf`). |
+| `BE007` | WARNING | `IREndIf` encountered at depth 0 (no matching `IRIf`). |
+
+Generation **continues** after any `BE007`.  Malformed control-flow instructions
+are skipped; subsequent instructions are unaffected.
+
+---
+
 ## Non-Goals
 
 The backend does **not**:
@@ -426,5 +572,5 @@ The backend does **not**:
 - Build the IR (that is the IR builder's responsibility).
 - Write files to disk (the compiler driver or API layer does that).
 - Invoke `javac` or any external toolchain.
-- Generate IF, PERFORM, EVALUATE, or CALL statements (deferred to future tasks).
+- Generate PERFORM, EVALUATE, or CALL statements (deferred to future tasks).
 - Generate Java project scaffolding or `pom.xml` (deferred to future tasks).

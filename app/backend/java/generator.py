@@ -431,14 +431,48 @@ def _collect_statements(
     Translate all instructions in the first entry basic block of the first
     function of the first module into Java statement strings.
 
-    Uses :func:`~app.backend.java.statement_emitter.emit_statement` for each
-    instruction.  Diagnostics produced during translation are appended to
-    *diagnostics*.
+    For regular (non-control-flow) instructions, delegates to
+    :func:`~app.backend.java.statement_emitter.emit_statement` and prefixes
+    each returned string with ``"    " * depth`` to reflect nesting level.
+
+    For structured control-flow instructions (:class:`~app.ir.instructions.IRIf`,
+    :class:`~app.ir.instructions.IRElse`, :class:`~app.ir.instructions.IREndIf`),
+    manages a *depth* counter and calls
+    :func:`~app.backend.java.control_flow_emitter.emit_if`,
+    :func:`~app.backend.java.control_flow_emitter.emit_else`, and
+    :func:`~app.backend.java.control_flow_emitter.emit_end_if` directly so
+    that the correct indentation prefix is embedded in the returned strings.
+
+    Depth rules:
+
+    * :class:`~app.ir.instructions.IRIf`    — emit header at current depth,
+      then increment depth (body is one level deeper).
+    * :class:`~app.ir.instructions.IRElse`  — decrement depth, emit the
+      ``} else {`` transition at that depth, then increment depth again
+      (else body is one level deeper than the header).
+    * :class:`~app.ir.instructions.IREndIf` — decrement depth, emit the
+      closing ``}`` at that depth.  If depth is already 0 when an
+      :class:`~app.ir.instructions.IREndIf` is encountered, a ``BE007``
+      WARNING is appended and the instruction is skipped.
+    * :class:`~app.ir.instructions.IRElse` encountered at depth 0 also
+      produces a ``BE007`` WARNING and is skipped.
+
+    Diagnostics produced during translation are appended to *diagnostics*.
 
     Returns:
-        An ordered list of Java statement strings (no indentation).
+        An ordered list of Java statement strings.  Control-flow headers and
+        footers carry embedded depth prefixes; body statements also carry
+        embedded depth prefixes.  Base 8-space ``main()`` indentation is
+        applied later by :func:`_render_class`.
     """
-    from app.backend.java.statement_emitter import emit_statement  # local import
+    # Local imports to avoid circular dependencies.
+    from app.backend.java.control_flow_emitter import (
+        emit_else as _emit_else,
+        emit_end_if as _emit_end_if,
+        emit_if as _emit_if,
+    )
+    from app.backend.java.statement_emitter import emit_statement
+    from app.ir.instructions import IRElse, IREndIf, IRIf
 
     statements: list[str] = []
     if not program.modules:
@@ -451,10 +485,56 @@ def _collect_statements(
         return statements
     block = function.blocks[0]
 
+    depth: int = 0  # current nesting level (0 = flat inside main)
+
     for instr in block.instructions:
         try:
-            stmts = emit_statement(instr, diagnostics)
-            statements.extend(stmts)
+            if isinstance(instr, IRIf):
+                stmts = _emit_if(instr, depth, diagnostics)
+                statements.extend(stmts)
+                depth += 1
+
+            elif isinstance(instr, IRElse):
+                if depth <= 0:
+                    diagnostics.append(
+                        BackendDiagnostic(
+                            severity=BackendSeverity.WARNING,
+                            message=(
+                                "IRElse encountered without a matching IRIf "
+                                "(depth already 0); skipping."
+                            ),
+                            code="BE007",
+                        )
+                    )
+                else:
+                    depth -= 1
+                    stmts = _emit_else(depth, diagnostics)
+                    statements.extend(stmts)
+                    depth += 1
+
+            elif isinstance(instr, IREndIf):
+                if depth <= 0:
+                    diagnostics.append(
+                        BackendDiagnostic(
+                            severity=BackendSeverity.WARNING,
+                            message=(
+                                "IREndIf encountered without a matching IRIf "
+                                "(depth already 0); skipping."
+                            ),
+                            code="BE007",
+                        )
+                    )
+                else:
+                    depth -= 1
+                    stmts = _emit_end_if(depth, diagnostics)
+                    statements.extend(stmts)
+
+            else:
+                # Regular (non-control-flow) statement — apply depth prefix.
+                stmts = emit_statement(instr, diagnostics)
+                indent = "    " * depth
+                statements.extend(indent + s for s in stmts)
+
         except Exception as exc:  # noqa: BLE001
             type_name = type(instr).__name__
             diagnostics.append(
