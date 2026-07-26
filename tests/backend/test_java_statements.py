@@ -1,8 +1,9 @@
 """
-Unit tests for TASK-035 — Java Arithmetic Generation (ADD, SUBTRACT, MULTIPLY, DIVIDE).
+Unit tests for TASK-034/035/036 — Java Statement Generation.
 
-This file extends the TASK-034 test suite (MOVE and DISPLAY) with full coverage
-of arithmetic IR instruction translation.
+TASK-034: MOVE, DISPLAY, operand translation.
+TASK-035: ADD, SUBTRACT, MULTIPLY, DIVIDE arithmetic.
+TASK-036: IF, ELSE, END-IF control flow with nesting and diagnostics.
 
 Coverage
 --------
@@ -48,6 +49,12 @@ TASK-034 regression
 
 from __future__ import annotations
 
+from app.backend.java.control_flow_emitter import (
+    SUPPORTED_OPERATORS,
+    emit_else,
+    emit_end_if,
+    emit_if,
+)
 from app.backend.java.generator import (
     BackendDiagnostic,
     BackendSeverity,
@@ -70,6 +77,9 @@ from app.ir.instructions import (
     IRCall,
     IRDisplay,
     IRDivide,
+    IRElse,
+    IREndIf,
+    IRIf,
     IRMove,
     IRMultiply,
     IRReturn,
@@ -844,3 +854,577 @@ class TestGenerateStatements:
             if "System.out.println" in line:
                 assert line.startswith("        ")
                 break
+
+
+# ===========================================================================
+# TASK-036 — Control Flow: emit_if / emit_else / emit_end_if
+# ===========================================================================
+
+
+class TestSupportedOperators:
+    def test_all_six_operators_present(self) -> None:
+        assert SUPPORTED_OPERATORS == {"==", "!=", ">", ">=", "<", "<="}
+
+    def test_operators_is_frozenset(self) -> None:
+        assert isinstance(SUPPORTED_OPERATORS, frozenset)
+
+
+class TestEmitIf:
+    # --- valid conditions at depth 0 ---
+    def test_if_greater_than_literal(self) -> None:
+        instr = IRIf(left="WS-COUNT", operator=">", right="0")
+        assert emit_if(instr, 0, []) == ["if (wsCount > 0) {"]
+
+    def test_if_less_than_literal(self) -> None:
+        instr = IRIf(left="WS-X", operator="<", right="10")
+        assert emit_if(instr, 0, []) == ["if (wsX < 10) {"]
+
+    def test_if_equals_literal(self) -> None:
+        instr = IRIf(left="WS-STATUS", operator="==", right="1")
+        assert emit_if(instr, 0, []) == ["if (wsStatus == 1) {"]
+
+    def test_if_not_equals_literal(self) -> None:
+        instr = IRIf(left="WS-FLAG", operator="!=", right="0")
+        assert emit_if(instr, 0, []) == ["if (wsFlag != 0) {"]
+
+    def test_if_greater_equal_literal(self) -> None:
+        instr = IRIf(left="WS-AGE", operator=">=", right="18")
+        assert emit_if(instr, 0, []) == ["if (wsAge >= 18) {"]
+
+    def test_if_less_equal_literal(self) -> None:
+        instr = IRIf(left="WS-SCORE", operator="<=", right="100")
+        assert emit_if(instr, 0, []) == ["if (wsScore <= 100) {"]
+
+    def test_if_variable_vs_variable(self) -> None:
+        instr = IRIf(left="WS-A", operator="==", right="WS-B")
+        assert emit_if(instr, 0, []) == ["if (wsA == wsB) {"]
+
+    def test_if_decimal_literal(self) -> None:
+        instr = IRIf(left="WS-RATE", operator=">", right="0.5")
+        assert emit_if(instr, 0, []) == ["if (wsRate > 0.5) {"]
+
+    def test_if_negative_literal(self) -> None:
+        instr = IRIf(left="WS-TEMP", operator="<", right="-1")
+        assert emit_if(instr, 0, []) == ["if (wsTemp < -1) {"]
+
+    def test_if_quoted_string(self) -> None:
+        instr = IRIf(left="WS-CODE", operator="==", right='"Y"')
+        assert emit_if(instr, 0, []) == ['if (wsCode == "Y") {']
+
+    def test_if_multi_segment_variable(self) -> None:
+        instr = IRIf(left="WS-GRAND-TOTAL", operator=">", right="0")
+        assert emit_if(instr, 0, []) == ["if (wsGrandTotal > 0) {"]
+
+    # --- depth-based indentation ---
+    def test_if_depth_0_no_prefix(self) -> None:
+        instr = IRIf(left="WS-X", operator=">", right="0")
+        stmts = emit_if(instr, 0, [])
+        assert not stmts[0].startswith(" ")
+
+    def test_if_depth_1_four_space_prefix(self) -> None:
+        instr = IRIf(left="WS-X", operator=">", right="0")
+        stmts = emit_if(instr, 1, [])
+        assert stmts[0].startswith("    ")
+        assert not stmts[0].startswith("        ")
+
+    def test_if_depth_2_eight_space_prefix(self) -> None:
+        instr = IRIf(left="WS-X", operator=">", right="0")
+        stmts = emit_if(instr, 2, [])
+        assert stmts[0].startswith("        ")
+
+    def test_if_exactly_one_statement(self) -> None:
+        instr = IRIf(left="WS-X", operator=">", right="0")
+        assert len(emit_if(instr, 0, [])) == 1
+
+    def test_if_ends_with_open_brace(self) -> None:
+        instr = IRIf(left="WS-X", operator=">", right="0")
+        assert emit_if(instr, 0, [])[0].endswith("{")
+
+    def test_if_contains_if_keyword(self) -> None:
+        instr = IRIf(left="WS-X", operator=">", right="0")
+        assert emit_if(instr, 0, [])[0].startswith("if ")
+
+    # --- diagnostics ---
+    def test_if_empty_left_skipped(self) -> None:
+        instr = IRIf(left="", operator=">", right="0")
+        diags: list[BackendDiagnostic] = []
+        assert emit_if(instr, 0, diags) == []
+        assert any(d.code == "BE007" for d in diags)
+
+    def test_if_empty_right_skipped(self) -> None:
+        instr = IRIf(left="WS-X", operator=">", right="")
+        diags: list[BackendDiagnostic] = []
+        assert emit_if(instr, 0, diags) == []
+        assert any(d.code == "BE007" for d in diags)
+
+    def test_if_unsupported_operator_skipped(self) -> None:
+        instr = IRIf(left="WS-X", operator="GREATER", right="0")
+        diags: list[BackendDiagnostic] = []
+        assert emit_if(instr, 0, diags) == []
+        assert any(d.code == "BE007" for d in diags)
+
+    def test_if_empty_operator_skipped(self) -> None:
+        instr = IRIf(left="WS-X", operator="", right="0")
+        diags: list[BackendDiagnostic] = []
+        assert emit_if(instr, 0, diags) == []
+        assert any(d.code == "BE007" for d in diags)
+
+    def test_if_be007_severity_warning(self) -> None:
+        instr = IRIf(left="", operator=">", right="0")
+        diags: list[BackendDiagnostic] = []
+        emit_if(instr, 0, diags)
+        assert diags[0].severity is BackendSeverity.WARNING
+
+
+class TestEmitElse:
+    def test_else_depth_0_format(self) -> None:
+        assert emit_else(0, []) == ["}  else {"[0:0] + "} else {"]
+
+    def test_else_depth_0_exact(self) -> None:
+        assert emit_else(0, []) == [") else {"[0:0] + "} else {"]
+
+    def test_else_exact_string_depth0(self) -> None:
+        stmts = emit_else(0, [])
+        assert stmts == ["}  else {"[0:0] + "} else {"]
+
+    def test_else_depth_0_simple(self) -> None:
+        assert emit_else(0, []) == ["}  else {"[:0] + "} else {"]
+
+    # Use a direct string comparison to avoid confusion:
+    def test_else_depth0_value(self) -> None:
+        result = emit_else(0, [])
+        assert len(result) == 1
+        assert result[0] == "} else {"
+
+    def test_else_depth1_value(self) -> None:
+        result = emit_else(1, [])
+        assert len(result) == 1
+        assert result[0] == "    } else {"
+
+    def test_else_depth2_value(self) -> None:
+        assert emit_else(2, []) == ["        } else {"]
+
+    def test_else_contains_else_keyword(self) -> None:
+        assert "else" in emit_else(0, [])[0]
+
+    def test_else_ends_with_open_brace(self) -> None:
+        assert emit_else(0, [])[0].endswith("{")
+
+    def test_else_starts_with_close_brace(self) -> None:
+        assert emit_else(0, [])[0].startswith("}")
+
+    def test_else_exactly_one_statement(self) -> None:
+        assert len(emit_else(0, [])) == 1
+
+
+class TestEmitEndIf:
+    def test_end_if_depth0_value(self) -> None:
+        assert emit_end_if(0, []) == ["}"]
+
+    def test_end_if_depth1_value(self) -> None:
+        assert emit_end_if(1, []) == ["    }"]
+
+    def test_end_if_depth2_value(self) -> None:
+        assert emit_end_if(2, []) == ["        }"]
+
+    def test_end_if_is_just_brace_at_depth0(self) -> None:
+        assert emit_end_if(0, [])[0] == "}"
+
+    def test_end_if_exactly_one_statement(self) -> None:
+        assert len(emit_end_if(0, [])) == 1
+
+
+class TestEmitStatementControlFlow:
+    """emit_statement dispatcher routes control-flow instructions at depth=0."""
+
+    def test_dispatches_ir_if(self) -> None:
+        instr = IRIf(left="WS-COUNT", operator=">", right="0")
+        stmts = emit_statement(instr, [])
+        assert stmts == ["if (wsCount > 0) {"]
+
+    def test_dispatches_ir_if_with_depth(self) -> None:
+        instr = IRIf(left="WS-COUNT", operator=">", right="0")
+        stmts = emit_statement(instr, [], depth=1)
+        assert stmts == ["    if (wsCount > 0) {"]
+
+    def test_dispatches_ir_else_depth0(self) -> None:
+        stmts = emit_statement(IRElse(), [])
+        assert stmts == ["}  else {"[:0] + "} else {"]
+
+    def test_dispatches_ir_else_exact(self) -> None:
+        stmts = emit_statement(IRElse(), [])
+        assert len(stmts) == 1
+        assert stmts[0] == "} else {"
+
+    def test_dispatches_ir_end_if(self) -> None:
+        stmts = emit_statement(IREndIf(), [])
+        assert stmts == ["}"]
+
+    def test_dispatches_ir_end_if_with_depth(self) -> None:
+        stmts = emit_statement(IREndIf(), [], depth=2)
+        assert stmts == ["        }"]
+
+    def test_ir_if_bad_operator_produces_be007(self) -> None:
+        instr = IRIf(left="WS-X", operator="GREATER", right="0")
+        diags: list[BackendDiagnostic] = []
+        stmts = emit_statement(instr, diags)
+        assert stmts == []
+        assert any(d.code == "BE007" for d in diags)
+
+    def test_non_cf_instructions_still_produce_be005(self) -> None:
+        diags: list[BackendDiagnostic] = []
+        emit_statement(IRCall(target="PROC"), diags)
+        assert any(d.code == "BE005" for d in diags)
+
+
+class TestGenerateControlFlow:
+    """Integration tests: generate() produces correct Java for control-flow IR."""
+
+    # --- simple IF ---
+    def test_simple_if_in_main(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-COUNT", operator=">", right="0"),
+            IRDisplay(operand='"POSITIVE"'),
+            IREndIf(),
+        )
+        src = generate(prog)
+        assert "if (wsCount > 0) {" in src
+        assert 'System.out.println("POSITIVE");' in src
+        assert "}" in src
+
+    def test_simple_if_header_position_before_body(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-COUNT", operator=">", right="0"),
+            IRDisplay(operand='"POS"'),
+            IREndIf(),
+        )
+        src = generate(prog)
+        assert src.index("if (") < src.index("println")
+
+    def test_simple_if_body_before_close_brace(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-COUNT", operator=">", right="0"),
+            IRDisplay(operand='"POS"'),
+            IREndIf(),
+        )
+        src = generate(prog)
+        assert src.index("println") < src.rindex("}")
+
+    # --- all six comparison operators ---
+    def test_operator_equals(self) -> None:
+        prog = _make_program(IRIf(left="WS-X", operator="==", right="1"), IREndIf())
+        assert "if (wsX == 1) {" in generate(prog)
+
+    def test_operator_not_equals(self) -> None:
+        prog = _make_program(IRIf(left="WS-X", operator="!=", right="0"), IREndIf())
+        assert "if (wsX != 0) {" in generate(prog)
+
+    def test_operator_greater_than(self) -> None:
+        prog = _make_program(IRIf(left="WS-X", operator=">", right="5"), IREndIf())
+        assert "if (wsX > 5) {" in generate(prog)
+
+    def test_operator_greater_equal(self) -> None:
+        prog = _make_program(IRIf(left="WS-X", operator=">=", right="0"), IREndIf())
+        assert "if (wsX >= 0) {" in generate(prog)
+
+    def test_operator_less_than(self) -> None:
+        prog = _make_program(IRIf(left="WS-X", operator="<", right="100"), IREndIf())
+        assert "if (wsX < 100) {" in generate(prog)
+
+    def test_operator_less_equal(self) -> None:
+        prog = _make_program(IRIf(left="WS-X", operator="<=", right="99"), IREndIf())
+        assert "if (wsX <= 99) {" in generate(prog)
+
+    # --- IF-ELSE ---
+    def test_if_else_contains_both_branches(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-COUNT", operator=">", right="0"),
+            IRDisplay(operand='"POSITIVE"'),
+            IRElse(),
+            IRDisplay(operand='"NON-POSITIVE"'),
+            IREndIf(),
+        )
+        src = generate(prog)
+        assert "if (wsCount > 0) {" in src
+        assert "} else {" in src
+        assert 'System.out.println("POSITIVE");' in src
+        assert 'System.out.println("NON-POSITIVE");' in src
+
+    def test_if_else_ordering(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-COUNT", operator=">", right="0"),
+            IRDisplay(operand='"POSITIVE"'),
+            IRElse(),
+            IRDisplay(operand='"NON-POSITIVE"'),
+            IREndIf(),
+        )
+        src = generate(prog)
+        idx_if = src.index("if (wsCount")
+        idx_pos = src.index('"POSITIVE"')
+        idx_else = src.index("} else {")
+        idx_neg = src.index('"NON-POSITIVE"')
+        idx_end = src.rindex("}")
+        assert idx_if < idx_pos < idx_else < idx_neg < idx_end
+
+    # --- nested IF ---
+    def test_nested_if_headers_present(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-A", operator=">", right="0"),
+            IRIf(left="WS-B", operator="<", right="100"),
+            IRDisplay(operand='"BOTH"'),
+            IREndIf(),
+            IREndIf(),
+        )
+        src = generate(prog)
+        assert "if (wsA > 0) {" in src
+        assert "if (wsB < 100) {" in src
+        assert 'System.out.println("BOTH");' in src
+
+    def test_nested_if_outer_header_before_inner(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-A", operator=">", right="0"),
+            IRIf(left="WS-B", operator="<", right="100"),
+            IRDisplay(operand='"BOTH"'),
+            IREndIf(),
+            IREndIf(),
+        )
+        src = generate(prog)
+        assert src.index("if (wsA") < src.index("if (wsB")
+
+    def test_nested_if_inner_indented_more(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-A", operator=">", right="0"),
+            IRIf(left="WS-B", operator="<", right="100"),
+            IREndIf(),
+            IREndIf(),
+        )
+        src = generate(prog)
+        outer_line = next(ln for ln in src.splitlines() if "if (wsA" in ln)
+        inner_line = next(ln for ln in src.splitlines() if "if (wsB" in ln)
+        # Inner line should have more leading spaces than outer
+        outer_indent = len(outer_line) - len(outer_line.lstrip())
+        inner_indent = len(inner_line) - len(inner_line.lstrip())
+        assert inner_indent > outer_indent
+
+    def test_nested_if_body_indented_more_than_inner_header(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-A", operator=">", right="0"),
+            IRIf(left="WS-B", operator="<", right="100"),
+            IRDisplay(operand='"BOTH"'),
+            IREndIf(),
+            IREndIf(),
+        )
+        src = generate(prog)
+        inner_header = next(ln for ln in src.splitlines() if "if (wsB" in ln)
+        body_line = next(ln for ln in src.splitlines() if '"BOTH"' in ln)
+        inner_indent = len(inner_header) - len(inner_header.lstrip())
+        body_indent = len(body_line) - len(body_line.lstrip())
+        assert body_indent > inner_indent
+
+    # --- body indentation within if ---
+    def test_if_body_indented_more_than_header(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-X", operator=">", right="0"),
+            IRDisplay(operand='"HI"'),
+            IREndIf(),
+        )
+        src = generate(prog)
+        header_line = next(ln for ln in src.splitlines() if "if (wsX" in ln)
+        body_line = next(ln for ln in src.splitlines() if '"HI"' in ln)
+        header_indent = len(header_line) - len(header_line.lstrip())
+        body_indent = len(body_line) - len(body_line.lstrip())
+        assert body_indent > header_indent
+
+    def test_if_close_brace_same_indent_as_header(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-X", operator=">", right="0"),
+            IRDisplay(operand='"HI"'),
+            IREndIf(),
+        )
+        src = generate(prog)
+        header_line = next(ln for ln in src.splitlines() if "if (wsX" in ln)
+        # The closing brace should be at the same indent as the if header
+        close_lines = [ln for ln in src.splitlines() if ln.strip() == "}"]
+        assert close_lines, "No closing brace found"
+        header_indent = len(header_line) - len(header_line.lstrip())
+        close_indent = len(close_lines[0]) - len(close_lines[0].lstrip())
+        assert close_indent == header_indent
+
+    # --- variable operands in conditions ---
+    def test_variable_left_operand_translated(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-GRAND-TOTAL", operator=">=", right="0"),
+            IREndIf(),
+        )
+        src = generate(prog)
+        assert "wsGrandTotal" in src
+
+    def test_variable_right_operand_translated(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-A", operator="==", right="WS-B"),
+            IREndIf(),
+        )
+        src = generate(prog)
+        assert "wsA == wsB" in src
+
+    # --- mixed with MOVE, DISPLAY, arithmetic ---
+    def test_mixed_move_if_display_end_if(self) -> None:
+        prog = _make_program(
+            IRMove(result="WS-COUNT", source="5"),
+            IRIf(left="WS-COUNT", operator=">", right="0"),
+            IRDisplay(operand='"POSITIVE"'),
+            IREndIf(),
+        )
+        src = generate(prog)
+        assert "wsCount = 5;" in src
+        assert "if (wsCount > 0) {" in src
+        assert 'System.out.println("POSITIVE");' in src
+        assert "}" in src
+
+    def test_mixed_ordering_move_if_display(self) -> None:
+        prog = _make_program(
+            IRMove(result="WS-COUNT", source="5"),
+            IRIf(left="WS-COUNT", operator=">", right="0"),
+            IRDisplay(operand='"POSITIVE"'),
+            IREndIf(),
+        )
+        src = generate(prog)
+        assert src.index("wsCount = 5") < src.index("if (wsCount")
+        assert src.index("if (wsCount") < src.index("println")
+
+    def test_arithmetic_inside_if_body(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-X", operator=">", right="0"),
+            IRAdd(result="WS-TOTAL", left="WS-X"),
+            IREndIf(),
+        )
+        src = generate(prog)
+        assert "wsTotal += wsX;" in src
+
+    # --- statement order preserved ---
+    def test_statement_order_preserved_across_if(self) -> None:
+        prog = _make_program(
+            IRMove(result="WS-A", source="1"),
+            IRIf(left="WS-A", operator=">", right="0"),
+            IRMove(result="WS-B", source="2"),
+            IREndIf(),
+            IRMove(result="WS-C", source="3"),
+        )
+        src = generate(prog)
+        assert (
+            src.index("wsA = 1")
+            < src.index("if (")
+            < src.index("wsB = 2")
+            < src.index("wsC = 3")
+        )
+
+    # --- deterministic output ---
+    def test_deterministic_if_output(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-COUNT", operator=">", right="0"),
+            IRDisplay(operand='"POSITIVE"'),
+            IRElse(),
+            IRDisplay(operand='"NEGATIVE"'),
+            IREndIf(),
+        )
+        assert generate(prog) == generate(prog)
+
+    def test_deterministic_nested_if(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-A", operator=">", right="0"),
+            IRIf(left="WS-B", operator="<", right="100"),
+            IRDisplay(operand='"BOTH"'),
+            IREndIf(),
+            IREndIf(),
+        )
+        assert generate(prog) == generate(prog)
+
+    def test_no_timestamps_in_cf_output(self) -> None:
+        prog = _make_program(
+            IRIf(left="WS-X", operator=">", right="0"),
+            IREndIf(),
+        )
+        src = generate(prog)
+        assert "timestamp" not in src.lower()
+
+
+class TestControlFlowDiagnostics:
+    """BE007 diagnostics for malformed control-flow instructions."""
+
+    def test_if_empty_left_produces_be007(self) -> None:
+        prog = _make_program(IRIf(left="", operator=">", right="0"))
+        result = generate_with_diagnostics(prog)
+        assert any(d.code == "BE007" for d in result.diagnostics)
+
+    def test_if_empty_right_produces_be007(self) -> None:
+        prog = _make_program(IRIf(left="WS-X", operator=">", right=""))
+        result = generate_with_diagnostics(prog)
+        assert any(d.code == "BE007" for d in result.diagnostics)
+
+    def test_if_unsupported_operator_produces_be007(self) -> None:
+        prog = _make_program(IRIf(left="WS-X", operator="GREATER", right="0"))
+        result = generate_with_diagnostics(prog)
+        assert any(d.code == "BE007" for d in result.diagnostics)
+
+    def test_if_empty_operator_produces_be007(self) -> None:
+        prog = _make_program(IRIf(left="WS-X", operator="", right="0"))
+        result = generate_with_diagnostics(prog)
+        assert any(d.code == "BE007" for d in result.diagnostics)
+
+    def test_unmatched_end_if_produces_be007(self) -> None:
+        prog = _make_program(IREndIf())
+        result = generate_with_diagnostics(prog)
+        assert any(d.code == "BE007" for d in result.diagnostics)
+
+    def test_unmatched_else_produces_be007(self) -> None:
+        prog = _make_program(IRElse())
+        result = generate_with_diagnostics(prog)
+        assert any(d.code == "BE007" for d in result.diagnostics)
+
+    def test_all_be007_severity_warning(self) -> None:
+        prog = _make_program(
+            IRIf(left="", operator=">", right="0"),
+            IRElse(),
+            IREndIf(),
+        )
+        result = generate_with_diagnostics(prog)
+        be007 = [d for d in result.diagnostics if d.code == "BE007"]
+        assert len(be007) >= 1
+        for d in be007:
+            assert d.severity is BackendSeverity.WARNING
+
+    def test_generation_continues_after_bad_if(self) -> None:
+        """A malformed IRIf must not prevent subsequent instructions from being emitted."""
+        prog = _make_program(
+            IRIf(left="", operator=">", right="0"),  # bad
+            IRDisplay(operand='"AFTER"'),  # should still be emitted
+        )
+        src = generate(prog)
+        assert 'System.out.println("AFTER");' in src
+
+    def test_unmatched_end_if_does_not_emit_brace(self) -> None:
+        prog = _make_program(IREndIf())
+        result = generate_with_diagnostics(prog)
+        # The orphaned } should be skipped — only the class/method braces remain
+        brace_count = result.source.count("}")
+        # Normal empty class has exactly 2 closing braces: method + class
+        assert brace_count == 2
+
+    def test_generation_continues_after_unmatched_end_if(self) -> None:
+        prog = _make_program(
+            IREndIf(),  # bad
+            IRDisplay(operand='"OK"'),
+        )
+        src = generate(prog)
+        assert 'System.out.println("OK");' in src
+
+    def test_be007_does_not_suppress_be005(self) -> None:
+        """BE007 and BE005 can coexist in the same diagnostic list."""
+        prog = _make_program(
+            IRIf(left="", operator=">", right="0"),  # BE007
+            IRReturn(),  # BE005
+        )
+        result = generate_with_diagnostics(prog)
+        codes = {d.code for d in result.diagnostics}
+        assert "BE007" in codes
+        assert "BE005" in codes
