@@ -145,10 +145,14 @@ from loguru import logger
 
 from app.ir.blocks import IRBasicBlock
 from app.ir.instructions import (
+    IREndIf,
+    IRIf,
+    IRElse,
+    IRPerformUntil,
+    IREndPerform,
     IRAccept,
     IRAdd,
     IRCall,
-    IRConditionalBranch,
     IRDisplay,
     IRDivide,
     IRInstruction,
@@ -167,6 +171,7 @@ if TYPE_CHECKING:
     from app.parser.ast.procedure import ProcedureDivisionNode
     from app.parser.ast.program import ProgramNode
     from app.parser.ast.statements import (
+        PerformUntilStatementNode,
         AcceptStatementNode,
         AddStatementNode,
         CallStatementNode,
@@ -557,6 +562,7 @@ class IRBuilder:
             MoveStatementNode,
             MultiplyStatementNode,
             PerformStatementNode,
+            PerformUntilStatementNode,
             SubtractStatementNode,
         )
 
@@ -600,6 +606,9 @@ class IRBuilder:
             return None
         if isinstance(stmt, PerformStatementNode):
             self.build_perform_statement(stmt)
+            return None
+        if isinstance(stmt, PerformUntilStatementNode):
+            self.build_perform_until_statement(stmt)
             return None
         if isinstance(stmt, GoToStatementNode):
             self.build_go_to_statement(stmt)
@@ -700,7 +709,7 @@ class IRBuilder:
             ir_left,
             ir_right,
         )
-        return IRAdd(left=ir_left, right=ir_right)
+        return IRAdd(left=ir_left, right=ir_right, result=ir_right)
 
     def build_subtract_instruction(self, stmt: SubtractStatementNode) -> IRSubtract:
         ir_left = self.build_operand(stmt.left)
@@ -712,7 +721,7 @@ class IRBuilder:
             ir_left,
             ir_right,
         )
-        return IRSubtract(left=ir_left, right=ir_right)
+        return IRSubtract(left=ir_left, right=ir_right, result=ir_right)
 
     def build_multiply_instruction(self, stmt: MultiplyStatementNode) -> IRMultiply:
         ir_left = self.build_operand(stmt.left)
@@ -724,7 +733,7 @@ class IRBuilder:
             ir_left,
             ir_right,
         )
-        return IRMultiply(left=ir_left, right=ir_right)
+        return IRMultiply(left=ir_left, right=ir_right, result=ir_right)
 
     def build_divide_instruction(self, stmt: DivideStatementNode) -> IRDivide:
         ir_left = self.build_operand(stmt.left)
@@ -736,41 +745,21 @@ class IRBuilder:
             ir_left,
             ir_right,
         )
-        return IRDivide(left=ir_left, right=ir_right)
+        return IRDivide(left=ir_left, right=ir_right, result=ir_right)
 
     def build_if_statement(self, stmt: IfStatementNode) -> None:
-        """
-        Lower a single ``IfStatementNode`` into a control flow graph.
-        """
-        if not stmt.condition:
-            logger.warning("Incomplete IF node: missing condition. Continuing.")
-            condition_operand = ""
-        else:
-            condition_operand = self.build_operand(stmt.condition)
-
-        then_label = self._generate_label("if_then")
-        merge_label = self._generate_label("if_merge")
-        else_label = (
-            self._generate_label("if_else") if stmt.else_statements else merge_label
+        ir_left = self.build_operand(stmt.condition_left)
+        ir_right = self.build_operand(stmt.condition_right)
+        self._current_instructions.append(
+            IRIf(left=ir_left, operator=stmt.condition_operator, right=ir_right)
         )
-
-        branch = IRConditionalBranch(
-            condition=condition_operand, then_target=then_label, else_target=else_label
-        )
-        self._current_instructions.append(branch)
-
-        self._start_block(then_label)
         for then_stmt in stmt.then_statements:
             self._translate_statement(then_stmt)
-        self._current_instructions.append(IRJump(target=merge_label))
-
         if stmt.else_statements:
-            self._start_block(else_label)
+            self._current_instructions.append(IRElse())
             for else_stmt in stmt.else_statements:
                 self._translate_statement(else_stmt)
-            self._current_instructions.append(IRJump(target=merge_label))
-
-        self._start_block(merge_label)
+        self._current_instructions.append(IREndIf())
 
     def build_perform_statement(self, stmt: PerformStatementNode) -> None:
         """
@@ -1017,3 +1006,15 @@ class IRBuilder:
             target=target,
             args=tuple(args),
         )
+
+    def build_perform_until_statement(self, stmt: PerformUntilStatementNode) -> None:
+        ir_left = self.build_operand(stmt.condition_left)
+        ir_right = self.build_operand(stmt.condition_right)
+        self._current_instructions.append(
+            IRPerformUntil(
+                left=ir_left, operator=stmt.condition_operator, right=ir_right
+            )
+        )
+        for body_stmt in stmt.statements:
+            self._translate_statement(body_stmt)
+        self._current_instructions.append(IREndPerform())

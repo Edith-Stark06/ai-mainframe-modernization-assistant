@@ -412,7 +412,9 @@ class IfStatementNode(StatementNode):
     Immutable AST node for a COBOL ``IF`` statement.
     """
 
-    condition: str
+    condition_left: str
+    condition_operator: str
+    condition_right: str
     then_statements: tuple[StatementNode, ...]
     else_statements: tuple[StatementNode, ...] = ()
 
@@ -433,6 +435,24 @@ class PerformStatementNode(StatementNode):
 
     def accept(self, visitor: object) -> object:
         visit = getattr(visitor, "visit_perform_statement", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class PerformUntilStatementNode(StatementNode):
+    """
+    Immutable AST node for a COBOL ``PERFORM UNTIL`` statement.
+    """
+
+    condition_left: str
+    condition_operator: str
+    condition_right: str
+    statements: tuple[StatementNode, ...]
+
+    def accept(self, visitor: object) -> object:
+        visit = getattr(visitor, "visit_perform_until_statement", None)
         if callable(visit):
             return visit(self)
         return None

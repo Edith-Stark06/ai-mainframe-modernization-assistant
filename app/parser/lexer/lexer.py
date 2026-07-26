@@ -209,8 +209,57 @@ class CobolLexer:
                 continue
 
             # ------------------------------------------------------------------
-            # Single-character symbols
+            # Operators and single-character symbols
             # ------------------------------------------------------------------
+            if ch in ("<", ">", "=", "!"):
+                pos = self._position(scanner, filename)
+                next_ch = scanner.peek()
+                if ch == "<" and next_ch == "=":
+                    tokens.append(
+                        Token(type=TokenType.OPERATOR_LE, lexeme="<=", position=pos)
+                    )
+                    scanner.advance()
+                    scanner.advance()
+                elif ch == ">" and next_ch == "=":
+                    tokens.append(
+                        Token(type=TokenType.OPERATOR_GE, lexeme=">=", position=pos)
+                    )
+                    scanner.advance()
+                    scanner.advance()
+                elif ch == "=" and next_ch == "=":
+                    tokens.append(
+                        Token(type=TokenType.OPERATOR_EQ, lexeme="==", position=pos)
+                    )
+                    scanner.advance()
+                    scanner.advance()
+                elif ch == "!" and next_ch == "=":
+                    tokens.append(
+                        Token(type=TokenType.OPERATOR_NEQ, lexeme="!=", position=pos)
+                    )
+                    scanner.advance()
+                    scanner.advance()
+                elif ch == "<":
+                    tokens.append(
+                        Token(type=TokenType.OPERATOR_LT, lexeme="<", position=pos)
+                    )
+                    scanner.advance()
+                elif ch == ">":
+                    tokens.append(
+                        Token(type=TokenType.OPERATOR_GT, lexeme=">", position=pos)
+                    )
+                    scanner.advance()
+                elif ch == "=":
+                    tokens.append(
+                        Token(type=TokenType.OPERATOR_EQ, lexeme="=", position=pos)
+                    )
+                    scanner.advance()
+                elif ch == "!":
+                    tokens.append(
+                        Token(type=TokenType.UNKNOWN, lexeme="!", position=pos)
+                    )
+                    scanner.advance()
+                continue
+
             if ch in _SYMBOLS:
                 pos = self._position(scanner, filename)
                 token_type = _SYMBOLS[ch]
