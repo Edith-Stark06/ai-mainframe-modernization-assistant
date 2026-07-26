@@ -85,11 +85,13 @@ from loguru import logger
 from app.backend.java.field_model import JavaField
 from app.backend.java.naming import to_java_field_name
 from app.backend.java.type_mapper import map_cobol_type
-from app.ir.printer import _format_instruction  # type: ignore[attr-defined]
 
 if TYPE_CHECKING:
     from app.ir.program import IRProgram
     from app.parser.semantic.symbols import VariableSymbol
+
+# Imported after class definitions to avoid circular imports at module level.
+# statement_emitter imports BackendDiagnostic / BackendSeverity from this module.
 
 __all__ = [
     "BackendDiagnostic",
@@ -307,14 +309,14 @@ def generate_with_diagnostics(
     logger.debug("JavaGenerator: class name resolved to '{}'.", class_name)
 
     # ------------------------------------------------------------------
-    # 2. Collect entry-block instructions for stub comments
+    # 2. Translate entry-block instructions into Java statements
     # ------------------------------------------------------------------
-    stubs = _collect_instruction_stubs(program)
+    statements = _collect_statements(program, diagnostics)
 
     # ------------------------------------------------------------------
     # 3. Render Java source
     # ------------------------------------------------------------------
-    source = _render_class(class_name, effective_fields, stubs)
+    source = _render_class(class_name, effective_fields, statements)
     logger.debug(
         "JavaGenerator: generated {} line(s) for class '{}'.",
         source.count("\n"),
@@ -421,38 +423,56 @@ def _to_java_class_name(raw: str) -> str:
     return pascal or "GeneratedProgram"
 
 
-def _collect_instruction_stubs(program: IRProgram) -> list[str]:
+def _collect_statements(
+    program: IRProgram,
+    diagnostics: list[BackendDiagnostic],
+) -> list[str]:
     """
-    Return a list of comment strings — one per instruction in the first
-    entry basic block of the first function of the first module.
+    Translate all instructions in the first entry basic block of the first
+    function of the first module into Java statement strings.
 
-    These stubs represent future statement lowering work.
+    Uses :func:`~app.backend.java.statement_emitter.emit_statement` for each
+    instruction.  Diagnostics produced during translation are appended to
+    *diagnostics*.
+
+    Returns:
+        An ordered list of Java statement strings (no indentation).
     """
-    stubs: list[str] = []
+    from app.backend.java.statement_emitter import emit_statement  # local import
+
+    statements: list[str] = []
     if not program.modules:
-        return stubs
+        return statements
     module = program.modules[0]
     if not module.functions:
-        return stubs
+        return statements
     function = module.functions[0]
     if not function.blocks:
-        return stubs
+        return statements
     block = function.blocks[0]
 
     for instr in block.instructions:
         try:
-            stub = _format_instruction(instr)  # type: ignore[arg-type]
-        except Exception:  # noqa: BLE001
-            stub = type(instr).__name__
-        stubs.append(stub)
+            stmts = emit_statement(instr, diagnostics)
+            statements.extend(stmts)
+        except Exception as exc:  # noqa: BLE001
+            type_name = type(instr).__name__
+            diagnostics.append(
+                BackendDiagnostic(
+                    severity=BackendSeverity.WARNING,
+                    message=f"unhandled error lowering '{type_name}': {exc}",
+                    code="BE005",
+                )
+            )
+            statements.append(f"// ERROR: {type_name}")
 
-    return stubs
+    return statements
 
 
 def _render_class(
     class_name: str,
     fields: list[JavaField],
-    stubs: list[str],
+    statements: list[str],
 ) -> str:
     """
     Render the complete Java class source string.
@@ -463,9 +483,9 @@ def _render_class(
         fields:
             List of :class:`~app.backend.java.field_model.JavaField` objects
             to emit as instance fields before the ``main`` method.
-        stubs:
-            Optional list of IR instruction descriptions; each is emitted
-            as a ``// IR: <text>`` comment inside ``main``.
+        statements:
+            Ordered list of Java statement strings to emit inside ``main``.
+            Each string is indented with 8 spaces.
 
     Returns:
         A non-empty Java source string.
@@ -486,11 +506,11 @@ def _render_class(
     lines.append("    public static void main(String[] args) {")
     lines.append("")
 
-    # Instruction stub comments
-    for stub in stubs:
-        lines.append(f"        // IR: {stub}")
+    # Executable statements
+    for stmt in statements:
+        lines.append(f"        {stmt}")
 
-    if stubs:
+    if statements:
         lines.append("")
 
     # main method footer
