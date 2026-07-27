@@ -1,0 +1,7 @@
+## Summary
+- Add regression testing framework
+- Add categorized COBOL fixtures
+- Implement automatic fixture discovery
+- Validate compiler output
+- Improve regression safety
+- Update testing documentation
