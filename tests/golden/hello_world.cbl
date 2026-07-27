@@ -1,0 +1,6 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. HELLO-WORLD.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           DISPLAY "HELLO, WORLD!".
+           STOP RUN.

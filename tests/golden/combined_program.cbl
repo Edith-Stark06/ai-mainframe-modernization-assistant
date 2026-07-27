@@ -1,0 +1,14 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. COMBINED-PROGRAM.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 COUNTER PIC 9(2) VALUE 1.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           IF COUNTER > 0
+               ADD 1 TO COUNTER
+           ELSE
+               MOVE 0 TO COUNTER
+           END-IF.
+           DISPLAY COUNTER.
+           STOP RUN.
