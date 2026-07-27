@@ -1,0 +1,11 @@
+{
+  "success": true,
+  "expected_java_constructs": [
+    "public class AddTest {",
+    "private int numA;",
+    "private int numB;",
+    "numB += numA;",
+    "System.out.println(numB);"
+  ],
+  "expected_diagnostics": []
+}

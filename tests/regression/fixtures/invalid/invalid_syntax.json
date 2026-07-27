@@ -1,0 +1,7 @@
+{
+  "success": false,
+  "expected_java_constructs": [],
+  "expected_diagnostics": [
+    "undefined variable: 'UNDEFINED-VAR'"
+  ]
+}
