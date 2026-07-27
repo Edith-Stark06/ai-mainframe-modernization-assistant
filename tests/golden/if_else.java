@@ -1,6 +1,6 @@
 public class IfElseTest {
 
-    private int age;
+    private static int age;
 
     public static void main(String[] args) {
 

@@ -1,6 +1,0 @@
-       IDENTIFICATION DIVISION.
-       PROGRAM-ID. CALL-TEST.
-       PROCEDURE DIVISION.
-       MAIN-PARA.
-           CALL "SUBPROG".
-           STOP RUN.
