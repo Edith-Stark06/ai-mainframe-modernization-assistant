@@ -2,6 +2,38 @@
 
 This document outlines the testing strategy for the AI Mainframe Modernization Assistant.
 
+## Golden File Testing
+
+### Philosophy
+Golden-file tests serve as the final verification of the compiler's Java output. They ensure that for a given COBOL source program, the exact generated Java code matches a known-good "golden" file. This allows the compiler to detect even minor, unintended formatting or structural changes in the code emission phase.
+
+### Fixture Organization
+Golden test fixtures are stored in `tests/golden/`. Each test case consists of a pair of files:
+- The COBOL source file (e.g., `hello_world.cbl`).
+- The expected Java output (e.g., `hello_world.java`).
+
+### Comparison Rules
+The test runner executes the complete compiler pipeline on the `.cbl` file and compares the output with the `.java` file. Before comparison, the runner normalizes both files by:
+- Replacing `\r\n` with `\n` to avoid OS-specific line ending differences.
+- Stripping trailing whitespace from every line.
+- Ensuring a single trailing newline.
+
+The comparison will fail if there are any structural or formatting differences in the generated Java. Diffs are reported in unified format to make debugging straightforward.
+
+### Updating Golden Files
+When legitimate improvements are made to the Java generator (e.g., formatting improvements or structural enhancements), the golden files must be updated.
+
+Do **not** update golden files manually. Use the provided environment flag to regenerate all golden files automatically:
+
+```bash
+# Windows (PowerShell)
+$env:UPDATE_GOLDEN="1"; pytest tests/golden
+
+# Linux/macOS
+UPDATE_GOLDEN=1 pytest tests/golden
+```
+Review the git diff carefully before committing to ensure the changes are intentional.
+
 ## Regression Testing
 
 ### Philosophy
