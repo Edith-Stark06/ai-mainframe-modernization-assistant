@@ -1,0 +1,7 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. INVALID-TEST.
+       
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           DISPLAY UNDEFINED-VAR.
+           STOP RUN.

@@ -1,0 +1,11 @@
+{
+  "success": true,
+  "expected_java_constructs": [
+    "public class IfElseTest {",
+    "if (age > 18) {",
+    "System.out.println(\"ADULT\");",
+    "} else {",
+    "System.out.println(\"MINOR\");"
+  ],
+  "expected_diagnostics": []
+}

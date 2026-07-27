@@ -1,0 +1,8 @@
+{
+  "success": true,
+  "expected_java_constructs": [
+    "public class HelloWorld",
+    "System.out.println(\"HELLO WORLD\");"
+  ],
+  "expected_diagnostics": []
+}
