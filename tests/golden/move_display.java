@@ -1,6 +1,6 @@
 public class MoveDisplay {
 
-    private String msg;
+    private static String msg;
 
     public static void main(String[] args) {
 

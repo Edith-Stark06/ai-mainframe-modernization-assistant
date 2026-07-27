@@ -1,0 +1,6 @@
+## Summary
+- Add golden-file testing framework
+- Add COBOL/Java fixture pairs
+- Compare complete generated Java output
+- Improve compiler regression detection
+- Update testing documentation

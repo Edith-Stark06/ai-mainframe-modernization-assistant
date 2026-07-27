@@ -98,7 +98,7 @@ class JavaField:
             >>> JavaField(java_name="y", java_type="String").render()
             '    private String y;'
         """
-        base = f"{indent}private {self.java_type} {self.java_name}"
+        base = f"{indent}private static {self.java_type} {self.java_name}"
         if self.initial_value is not None:
             return f"{base} = {self.initial_value};"
         return f"{base};"
