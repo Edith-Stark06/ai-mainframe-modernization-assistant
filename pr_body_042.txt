@@ -1,0 +1,6 @@
+## Summary
+- Add Java compilation test framework
+- Reuse existing compiler fixtures
+- Validate generated Java with `javac`
+- Improve compiler correctness verification
+- Update testing documentation
