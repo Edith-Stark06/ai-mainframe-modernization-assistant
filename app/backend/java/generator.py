@@ -314,9 +314,32 @@ def generate_with_diagnostics(
     statements = _collect_statements(program, diagnostics)
 
     # ------------------------------------------------------------------
+    # 2b. Discover CALL/PERFORM targets that have no generated method body.
+    #     Each becomes an empty ``private void`` stub so the class compiles,
+    #     and each raises a BE009 WARNING so the missing body is not silently
+    #     swallowed.  (The bodies of internal paragraphs are dropped upstream
+    #     of the backend; external sub-programs are separately compiled.)
+    # ------------------------------------------------------------------
+    stub_targets = _collect_call_targets(program)
+    for java_name, original in stub_targets:
+        diagnostics.append(
+            BackendDiagnostic(
+                severity=BackendSeverity.WARNING,
+                message=(
+                    f"CALL/PERFORM target '{original}' has no generated method "
+                    f"body; emitting an empty stub 'private void {java_name}()'. "
+                    "The target is either an external sub-program or a paragraph "
+                    "whose body is not present in the IR; implement it in a "
+                    "follow-up task."
+                ),
+                code="BE009",
+            )
+        )
+
+    # ------------------------------------------------------------------
     # 3. Render Java source
     # ------------------------------------------------------------------
-    source = _render_class(class_name, effective_fields, statements)
+    source = _render_class(class_name, effective_fields, statements, stub_targets)
     logger.debug(
         "JavaGenerator: generated {} line(s) for class '{}'.",
         source.count("\n"),
@@ -581,10 +604,76 @@ def _collect_statements(
     return statements
 
 
+def _collect_call_targets(program: IRProgram) -> list[tuple[str, str]]:
+    """
+    Collect CALL/PERFORM targets in the entry block that need a stub method.
+
+    Scans the same entry basic block that :func:`_collect_statements` lowers
+    and returns, for every :class:`~app.ir.instructions.IRCall`, the pair
+    ``(java_method_name, original_target)``.  The Java name is derived with
+    exactly the same quote-stripping and :func:`to_java_field_name` conversion
+    used by :func:`~app.backend.java.statement_emitter.emit_call`, so the stub
+    method name is guaranteed to match the invocation the emitter produced.
+
+    A CALL target in COBOL is either an external sub-program (``CALL "NAME"``)
+    or, via PERFORM lowering, an internal paragraph.  In both cases the current
+    pipeline provides no method body: external sub-programs are separately
+    compiled units, and paragraph bodies are not carried into the entry block.
+    Emitting an empty ``private void`` stub keeps the generated class
+    self-compiling without inventing behaviour or discarding the invocation.
+
+    Results preserve first-encountered order and are de-duplicated, so a target
+    invoked twice yields a single stub.
+
+    Args:
+        program:
+            The :class:`~app.ir.program.IRProgram` being lowered.
+
+    Returns:
+        An ordered, de-duplicated list of ``(java_name, original_target)``
+        tuples — one per distinct CALL/PERFORM target.
+    """
+    from app.ir.instructions import IRCall
+
+    targets: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    if not program.modules:
+        return targets
+    module = program.modules[0]
+    if not module.functions:
+        return targets
+    function = module.functions[0]
+    if not function.blocks:
+        return targets
+    block = function.blocks[0]
+
+    for instr in block.instructions:
+        if not isinstance(instr, IRCall):
+            continue
+        target = instr.target
+        if not target:
+            continue
+        # Mirror emit_call's quote-stripping so the stub name matches the call.
+        if target.startswith('"') and target.endswith('"') and len(target) >= 2:
+            target = target[1:-1]
+        elif target.startswith("'") and target.endswith("'") and len(target) >= 2:
+            target = target[1:-1]
+
+        java_name = to_java_field_name(target)
+        if java_name in seen:
+            continue
+        seen.add(java_name)
+        targets.append((java_name, target))
+
+    return targets
+
+
 def _render_class(
     class_name: str,
     fields: list[JavaField],
     statements: list[str],
+    stub_targets: list[tuple[str, str]] | None = None,
 ) -> str:
     """
     Render the complete Java class source string.
@@ -596,12 +685,17 @@ def _render_class(
             List of :class:`~app.backend.java.field_model.JavaField` objects
             to emit as instance fields before the ``main`` method.
         statements:
-            Ordered list of Java statement strings to emit inside ``main``.
-            Each string is indented with 8 spaces.
+            Ordered list of Java statement strings to emit inside the instance
+            ``run`` method.  Each string is indented with 8 spaces.
+        stub_targets:
+            Optional list of ``(java_name, original_target)`` pairs for
+            CALL/PERFORM targets that need an empty ``private void`` stub method
+            so the generated class compiles.
 
     Returns:
         A non-empty Java source string.
     """
+    stubs = stub_targets or []
     lines: list[str] = []
 
     # Class header
@@ -614,20 +708,38 @@ def _render_class(
             lines.append(java_field.render())
         lines.append("")
 
-    # main method header
+    # main entry point: instantiate the class and invoke the instance run()
+    # method.  Keeping the executable body in an *instance* method lets it
+    # reference the instance fields above without the "non-static variable
+    # cannot be referenced from a static context" error that a static main
+    # touching instance state would raise.
     lines.append("    public static void main(String[] args) {")
-    lines.append("")
-
-    # Executable statements
-    for stmt in statements:
-        lines.append(f"        {stmt}")
-
-    if statements:
-        lines.append("")
-
-    # main method footer
+    lines.append(f"        new {class_name}().run();")
     lines.append("    }")
     lines.append("")
+
+    # Instance run() method carrying the lowered statements.  Rendered after
+    # main() so that statement text appears after the "public static void main"
+    # marker (a property the backend unit tests rely on).
+    lines.append("    public void run() {")
+    lines.append("")
+    for stmt in statements:
+        lines.append(f"        {stmt}")
+    if statements:
+        lines.append("")
+    lines.append("    }")
+    lines.append("")
+
+    # Empty stub methods for CALL/PERFORM targets that have no generated body,
+    # so the class compiles.  Each carries a TODO naming the original target
+    # and the BE009 diagnostic emitted alongside it.
+    for java_name, original in stubs:
+        lines.append(f"    private void {java_name}() {{")
+        lines.append(
+            f"        // TODO: implement CALL/PERFORM target '{original}' (BE009)."
+        )
+        lines.append("    }")
+        lines.append("")
 
     # Class footer
     lines.append("}")
