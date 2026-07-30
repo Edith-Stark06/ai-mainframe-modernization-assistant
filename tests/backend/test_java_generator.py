@@ -24,7 +24,7 @@ from app.backend.java.generator import (
     generate_with_diagnostics,
 )
 from app.ir.blocks import IRBasicBlock
-from app.ir.instructions import IRDisplay, IRMove, IRReturn
+from app.ir.instructions import IRCall, IRDisplay, IRMove, IRReturn
 from app.ir.program import IRFunction, IRModule, IRProgram
 
 # ---------------------------------------------------------------------------
@@ -271,3 +271,47 @@ class TestGenerateWithDiagnostics:
     def test_generation_result_has_errors_false_when_empty(self) -> None:
         result = GenerationResult(source="public class X {}")
         assert not result.has_errors
+
+    def test_be009_warning_for_unresolved_call_target(self) -> None:
+        # An IRCall whose target has no generated method body must surface a
+        # BE009 diagnostic rather than silently emitting an undefined call.
+        prog = _make_program(
+            "CALLER",
+            instructions=(IRCall(target="SUBPROG"),),
+        )
+        result = generate_with_diagnostics(prog)
+        assert any(d.code == "BE009" for d in result.diagnostics)
+
+    def test_be009_severity_is_warning(self) -> None:
+        prog = _make_program("CALLER", instructions=(IRCall(target="SUBPROG"),))
+        result = generate_with_diagnostics(prog)
+        diags = [d for d in result.diagnostics if d.code == "BE009"]
+        assert diags and diags[0].severity is BackendSeverity.WARNING
+
+    def test_be009_does_not_mark_errors(self) -> None:
+        # A missing method body is a warning, not a hard error.
+        prog = _make_program("CALLER", instructions=(IRCall(target="SUBPROG"),))
+        result = generate_with_diagnostics(prog)
+        assert not result.has_errors
+
+    def test_be009_emits_stub_method_with_todo(self) -> None:
+        # The generated source must contain an explicit stub method and a TODO
+        # marker so the missing translation is visible, not hidden.
+        prog = _make_program("CALLER", instructions=(IRCall(target="SUBPROG"),))
+        result = generate_with_diagnostics(prog)
+        assert "private void subprog()" in result.source
+        assert (
+            "// TODO: implement CALL/PERFORM target 'SUBPROG' (BE009)." in result.source
+        )
+
+    def test_be009_deduplicates_repeated_targets(self) -> None:
+        # Two calls to the same target must produce exactly one stub and one
+        # diagnostic, keeping generation deterministic.
+        prog = _make_program(
+            "CALLER",
+            instructions=(IRCall(target="SUBPROG"), IRCall(target="SUBPROG")),
+        )
+        result = generate_with_diagnostics(prog)
+        be009 = [d for d in result.diagnostics if d.code == "BE009"]
+        assert len(be009) == 1
+        assert result.source.count("private void subprog()") == 1

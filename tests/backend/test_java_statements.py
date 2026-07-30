@@ -1248,12 +1248,14 @@ class TestGenerateControlFlow:
             IREndIf(),
         )
         src = generate(prog)
-        header_line = next(ln for ln in src.splitlines() if "if (wsX" in ln)
-        # The closing brace should be at the same indent as the if header
-        close_lines = [ln for ln in src.splitlines() if ln.strip() == "}"]
-        assert close_lines, "No closing brace found"
+        src_lines = src.splitlines()
+        header_idx = next(i for i, ln in enumerate(src_lines) if "if (wsX" in ln)
+        header_line = src_lines[header_idx]
+        # The IF's closing brace is the first bare "}" after the header (not
+        # main()'s or the class's brace, which sit at shallower indents).
+        close_line = next(ln for ln in src_lines[header_idx + 1 :] if ln.strip() == "}")
         header_indent = len(header_line) - len(header_line.lstrip())
-        close_indent = len(close_lines[0]) - len(close_lines[0].lstrip())
+        close_indent = len(close_line) - len(close_line.lstrip())
         assert close_indent == header_indent
 
     # --- variable operands in conditions ---
@@ -1411,10 +1413,12 @@ class TestControlFlowDiagnostics:
     def test_unmatched_end_if_does_not_emit_brace(self) -> None:
         prog = _make_program(IREndIf())
         result = generate_with_diagnostics(prog)
-        # The orphaned } should be skipped — only the class/method braces remain
         brace_count = result.source.count("}")
-        # Normal empty class has exactly 2 closing braces: method + class
-        assert brace_count == 2
+        # The orphaned } must be skipped: the class has exactly the same closing
+        # braces as an empty program (main + run + class), with no extra brace
+        # from the unmatched END-IF.
+        empty = generate_with_diagnostics(_make_program())
+        assert brace_count == empty.source.count("}")
 
     def test_generation_continues_after_unmatched_end_if(self) -> None:
         prog = _make_program(
