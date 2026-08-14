@@ -31,6 +31,7 @@ Project:
 
 from fastapi import APIRouter
 
+from app.api.routers.analysis import router as analysis_router
 from app.api.routers.health import router as health_router
 from app.api.routers.upload import router as upload_router
 from app.api.routers.workspace import router as workspace_router
@@ -41,6 +42,7 @@ from app.api.routers.workspace import router as workspace_router
 
 api_router = APIRouter(prefix="/api/v1")
 
+api_router.include_router(analysis_router)
 api_router.include_router(health_router)
 api_router.include_router(upload_router)
 api_router.include_router(workspace_router)
