@@ -175,6 +175,23 @@ class TestDiagnosticsSerialization:
         data = serialize_diagnostics([diag])
         _assert_json_safe(data)
 
+    def test_nested_dict_serialization(self) -> None:
+        data = serialize_diagnostics(
+            [
+                {
+                    "type": "CustomDiagnostic",
+                    "meta": {
+                        "severity": "error",
+                        "tags": ["a", "b"],
+                    },
+                }
+            ]
+        )
+        assert data[0]["type"] == "CustomDiagnostic"
+        assert data[0]["meta"]["severity"] == "error"
+        assert data[0]["meta"]["tags"] == ["a", "b"]
+        _assert_json_safe(data)
+
 
 def _assert_json_safe(value: Any) -> None:
     """Recursively verify that *value* contains only JSON-native types."""

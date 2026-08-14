@@ -60,6 +60,13 @@ def serialize_value(
         return value
     if isinstance(value, (list, tuple)):
         return [serialize_value(item, dataclass_visitor) for item in value]
+    if isinstance(value, dict):
+        return {
+            serialize_value(key, dataclass_visitor): serialize_value(
+                val, dataclass_visitor
+            )
+            for key, val in value.items()
+        }
     if isinstance(value, enum.Enum):
         return value.value
     if dataclasses.is_dataclass(value):
