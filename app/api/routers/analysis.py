@@ -65,9 +65,9 @@ from app.analysis.serializers.diagnostics import serialize_diagnostics
 from app.analysis.serializers.ir import serialize_ir
 from app.analysis.service import AnalysisService
 from app.api.schemas.analysis import AnalysisRequest, AnalysisResponse
-from app.core.config import settings
 from app.core.exceptions import ResourceNotFoundException, ValidationException
 from app.core.logging import logger
+from app.ingestion.workspace import WorkspaceManager
 
 # ---------------------------------------------------------------------------
 # Router
@@ -128,15 +128,15 @@ async def analyze_source(
     )
 
     # ------------------------------------------------------------------
-    # Resolve workspace
+    # Resolve workspace through WorkspaceManager
     # ------------------------------------------------------------------
-    workspace_root = Path(settings.workspace_dir).resolve() / workspace_id
-    if not workspace_root.is_dir():
+    workspace_manager = WorkspaceManager()
+    try:
+        workspace_record = workspace_manager.get(workspace_id)
+    except ResourceNotFoundException:
         logger.warning("Analysis endpoint: workspace '{}' not found.", workspace_id)
-        raise ResourceNotFoundException(
-            resource="workspace",
-            identifier=workspace_id,
-        )
+        raise
+    workspace_root = Path(workspace_record.path)
 
     # ------------------------------------------------------------------
     # Resolve and validate source file
