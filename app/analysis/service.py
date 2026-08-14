@@ -62,7 +62,6 @@ Project:
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -110,13 +109,9 @@ class AnalysisService:
         logger.debug("AnalysisService: reading source file '{}'.", path)
 
         try:
-            source = path.read_text(encoding="utf-8", errors="replace")
+            source = path.read_text(encoding="utf-8")
         except FileNotFoundError:
             logger.error("AnalysisService: source file not found: {}.", path)
-            print(
-                f"error: file not found: {path}",
-                file=sys.stderr,
-            )
             return AnalysisResult(
                 java_source="",
                 backend_diagnostics=[],
@@ -128,10 +123,6 @@ class AnalysisService:
             )
         except OSError as exc:
             logger.error("AnalysisService: cannot read '{}': {}.", path, exc)
-            print(
-                f"error: cannot read file '{path}': {exc}",
-                file=sys.stderr,
-            )
             return AnalysisResult(
                 java_source="",
                 backend_diagnostics=[],
@@ -152,7 +143,6 @@ class AnalysisService:
             tokens = lexer.tokenize(source, filename=str(path))
         except Exception as exc:
             logger.error("AnalysisService: lex error in '{}': {}.", path, exc)
-            print(f"lex error: {exc}", file=sys.stderr)
             return AnalysisResult(
                 java_source="",
                 backend_diagnostics=[],
@@ -174,7 +164,6 @@ class AnalysisService:
             ast = parser.parse(tokens)
         except Exception as exc:
             logger.error("AnalysisService: parse error in '{}': {}.", path, exc)
-            print(f"parse error: {exc}", file=sys.stderr)
             return AnalysisResult(
                 java_source="",
                 backend_diagnostics=[],
@@ -196,7 +185,6 @@ class AnalysisService:
             semantic_ctx = analyzer.analyse(ast)
         except Exception as exc:
             logger.error("AnalysisService: semantic error in '{}': {}.", path, exc)
-            print(f"semantic error: {exc}", file=sys.stderr)
             return AnalysisResult(
                 java_source="",
                 backend_diagnostics=[],
@@ -221,7 +209,6 @@ class AnalysisService:
             ir_program = builder.build(ast)
         except Exception as exc:
             logger.error("AnalysisService: IR error in '{}': {}.", path, exc)
-            print(f"IR error: {exc}", file=sys.stderr)
             return AnalysisResult(
                 java_source="",
                 backend_diagnostics=[],
@@ -252,7 +239,6 @@ class AnalysisService:
                 path,
                 exc,
             )
-            print(f"field error: {exc}", file=sys.stderr)
             return AnalysisResult(
                 java_source="",
                 backend_diagnostics=diags,
@@ -272,7 +258,6 @@ class AnalysisService:
             gen_result = generate_with_diagnostics(ir_program, fields)
         except Exception as exc:
             logger.error("AnalysisService: generation error in '{}': {}.", path, exc)
-            print(f"generation error: {exc}", file=sys.stderr)
             return AnalysisResult(
                 java_source="",
                 backend_diagnostics=diags,
