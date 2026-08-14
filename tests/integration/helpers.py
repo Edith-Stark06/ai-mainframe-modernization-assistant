@@ -22,7 +22,7 @@ def compile_cobol_pipeline(source_path: str | Path) -> CompilationResult:
     This helper preserves the original public behavior while routing the
     actual orchestration through the production AnalysisService.
     """
-    result: AnalysisResult = AnalysisService().analyze(source_path)
+    result: AnalysisResult = AnalysisService().analyze_file(source_path)
     return CompilationResult(
         java_source=result.java_source,
         backend_diagnostics=result.backend_diagnostics,

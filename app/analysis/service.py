@@ -48,7 +48,7 @@ Examples:
         from app.analysis.service import AnalysisService
 
         service = AnalysisService()
-        result = service.analyze("examples/hello.cbl")
+        result = service.analyze_file("examples/hello.cbl")
         result.success        # True
         result.java_source    # "public class Hello { ... }"
         result.semantic_diagnostics  # []
@@ -90,7 +90,7 @@ class AnalysisService:
     multiple analyses, or instantiated per analysis call.
     """
 
-    def analyze(self, source_path: str | Path) -> AnalysisResult:
+    def analyze_file(self, source_path: str | Path) -> AnalysisResult:
         """
         Execute the full COBOL analysis pipeline on *source_path*.
 
@@ -123,6 +123,8 @@ class AnalysisService:
                 semantic_diagnostics=[],
                 success=False,
                 error=FileNotFoundError(f"file not found: {path}"),
+                ast=None,
+                ir=None,
             )
         except OSError as exc:
             logger.error("AnalysisService: cannot read '{}': {}.", path, exc)
@@ -136,6 +138,8 @@ class AnalysisService:
                 semantic_diagnostics=[],
                 success=False,
                 error=exc,
+                ast=None,
+                ir=None,
             )
 
         # ------------------------------------------------------------------
@@ -155,6 +159,8 @@ class AnalysisService:
                 semantic_diagnostics=[],
                 success=False,
                 error=exc,
+                ast=None,
+                ir=None,
             )
         logger.debug("AnalysisService: lexer produced {} token(s).", len(tokens))
 
@@ -175,6 +181,8 @@ class AnalysisService:
                 semantic_diagnostics=[],
                 success=False,
                 error=exc,
+                ast=None,
+                ir=None,
             )
         logger.debug("AnalysisService: parsing complete.")
 
@@ -195,6 +203,8 @@ class AnalysisService:
                 semantic_diagnostics=[],
                 success=False,
                 error=exc,
+                ast=ast,
+                ir=None,
             )
         logger.debug(
             "AnalysisService: semantic analysis complete. errors={}.",
@@ -218,6 +228,8 @@ class AnalysisService:
                 semantic_diagnostics=semantic_ctx.diagnostics,
                 success=False,
                 error=exc,
+                ast=ast,
+                ir=None,
             )
         logger.debug("AnalysisService: IR build complete.")
 
@@ -247,6 +259,8 @@ class AnalysisService:
                 semantic_diagnostics=semantic_ctx.diagnostics,
                 success=False,
                 error=exc,
+                ast=ast,
+                ir=ir_program,
             )
         logger.debug("AnalysisService: built {} Java field(s).", len(fields))
 
@@ -265,6 +279,8 @@ class AnalysisService:
                 semantic_diagnostics=semantic_ctx.diagnostics,
                 success=False,
                 error=exc,
+                ast=ast,
+                ir=ir_program,
             )
         logger.debug(
             "AnalysisService: Java generation complete ({} diagnostics).",
@@ -277,4 +293,6 @@ class AnalysisService:
             semantic_diagnostics=semantic_ctx.diagnostics,
             success=not semantic_ctx.has_errors,
             error=None,
+            ast=ast,
+            ir=ir_program,
         )
