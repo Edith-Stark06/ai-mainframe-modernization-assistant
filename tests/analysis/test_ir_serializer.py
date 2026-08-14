@@ -163,6 +163,28 @@ class TestIRSerialization:
         data = serialize_ir(block)
         _assert_json_safe(data)
 
+    def test_nested_dict_serialization(self) -> None:
+        data = serialize_ir(
+            {
+                "program": "HELLO",
+                "modules": [
+                    {
+                        "name": "MAIN",
+                        "functions": [],
+                    }
+                ],
+                "settings": {
+                    "debug": True,
+                    "counts": [1, 2],
+                },
+            }
+        )
+        assert data["program"] == "HELLO"
+        assert data["modules"][0]["name"] == "MAIN"
+        assert data["settings"]["debug"] is True
+        assert data["settings"]["counts"] == [1, 2]
+        _assert_json_safe(data)
+
 
 def _assert_json_safe(value: Any) -> None:
     """Recursively verify that *value* contains only JSON-native types."""

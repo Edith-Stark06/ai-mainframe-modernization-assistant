@@ -37,6 +37,7 @@ from app.parser.ast.statements import (
 )
 from app.parser.ast.working_storage import WorkingStorageSectionNode
 from app.parser.lexer.position import Position
+from app.parser.semantic.diagnostics import SemanticSeverity
 
 _POS = Position(line=1, column=1, offset=0, filename="test.cbl")
 
@@ -246,6 +247,39 @@ class TestASTSerialization:
     def test_json_safe_result(self) -> None:
         node = _stmt(DisplayStatementNode, operand='"HELLO"')
         data = serialize_ast(node)
+        _assert_json_safe(data)
+
+    def test_nested_dict_serialization(self) -> None:
+        data = serialize_ast(
+            {
+                "program": "HELLO",
+                "items": [1, 2, 3],
+                "nested": {
+                    "flag": True,
+                    "names": ["A", "B"],
+                },
+            }
+        )
+        assert data["program"] == "HELLO"
+        assert data["items"] == [1, 2, 3]
+        assert data["nested"]["flag"] is True
+        assert data["nested"]["names"] == ["A", "B"]
+        _assert_json_safe(data)
+
+    def test_dict_with_enum_and_dataclass(self) -> None:
+        pos = Position(line=1, column=1, offset=0, filename="x.cbl")
+        data = serialize_ast(
+            {
+                "kind": SemanticSeverity.ERROR,
+                "position": pos,
+                "meta": {
+                    "line": 10,
+                },
+            }
+        )
+        assert data["kind"] == "error"
+        assert data["position"]["type"] == "Position"
+        assert data["meta"]["line"] == 10
         _assert_json_safe(data)
 
 
