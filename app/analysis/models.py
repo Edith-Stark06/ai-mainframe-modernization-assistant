@@ -7,6 +7,8 @@ Purpose:
     COBOL analysis pipeline.
 
 Responsibilities:
+    - Carry the parsed AST node.
+    - Carry the built IR program.
     - Carry the generated Java source string.
     - Carry backend diagnostics from the Java generator.
     - Carry semantic diagnostics from the semantic analyser.
@@ -15,10 +17,12 @@ Responsibilities:
 
 Non-responsibilities:
     - Parser or lexer diagnostics (semantic diagnostics only).
-    - IR or AST serialization.
+    - AST / IR / Java source serialization.
     - Persistence or API exposure.
 
 Dependencies:
+    - :mod:`app.ir.program`                  — ``IRProgram``.
+    - :mod:`app.parser.ast.program`          — ``ProgramNode``.
     - Python standard library only (``dataclasses``).
 
 Examples:
@@ -31,6 +35,8 @@ Examples:
             backend_diagnostics=[],
             semantic_diagnostics=[],
             success=True,
+            ast=ProgramNode(...),
+            ir=IRProgram(...),
         )
         result.success  # True
 
@@ -57,6 +63,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from app.ir.program import IRProgram
+from app.parser.ast.program import ProgramNode
+
 __all__ = ["AnalysisResult"]
 
 
@@ -79,6 +88,12 @@ class AnalysisResult:
         error:
             The unexpected exception that caused failure, or ``None`` if the
             pipeline completed normally.
+        ast:
+            The parsed AST :class:`~app.parser.ast.program.ProgramNode`, or
+            ``None`` if parsing did not complete.
+        ir:
+            The built IR :class:`~app.ir.program.IRProgram`, or ``None`` if
+            IR construction did not complete.
     """
 
     java_source: str
@@ -86,3 +101,5 @@ class AnalysisResult:
     semantic_diagnostics: list[Any]
     success: bool
     error: Exception | None = None
+    ast: ProgramNode | None = None
+    ir: IRProgram | None = None
