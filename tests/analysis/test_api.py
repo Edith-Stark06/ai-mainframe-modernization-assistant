@@ -62,6 +62,15 @@ _COBOL_UNDEFINED = b"""        IDENTIFICATION DIVISION.
             STOP RUN.
 """
 
+_COBOL_SYNTAX_ERROR = b"""        IDENTIFICATION DIVISION.
+        PROGRAM-ID. SYNTAX-ERR.
+
+        PROCEDURE DIVISION.
+        MAIN-PARAGRAPH.
+            INVALID SYNTAX HERE
+            STOP RUN.
+"""
+
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
@@ -343,6 +352,40 @@ class TestAnalyzeEndpointDiagnostics:
 
         assert body["ir"] is not None, "IR must be preserved on semantic error"
         assert body["ir"]["type"] == "IRProgram"
+
+    def test_analyze_with_analysis_service_failure_has_analysis_id(
+        self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failure within AnalysisService (e.g. exception) must still return a valid analysis_id."""
+
+        from app.analysis.models import AnalysisResult
+
+        def mock_analyze_file(*args, **kwargs) -> AnalysisResult:
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[],
+                semantic_diagnostics=[],
+                success=False,
+                error=Exception("Simulated internal compiler crash"),
+                ast=None,
+                ir=None,
+            )
+
+        monkeypatch.setattr(
+            "app.api.routers.analysis.AnalysisService.analyze_file", mock_analyze_file
+        )
+
+        ws_id = _create_workspace(workspace_root, {"syntax.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "syntax.cbl"},
+        ).json()
+
+        assert body["success"] is False
+        assert body["error"] == "Simulated internal compiler crash"
+        assert "analysis_id" in body
+        val = uuid.UUID(body["analysis_id"])
+        assert val.version == 4
 
 
 # ---------------------------------------------------------------------------
