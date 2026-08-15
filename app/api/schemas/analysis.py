@@ -50,6 +50,8 @@ Project:
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = ["AnalysisRequest", "AnalysisResponse"]
@@ -127,15 +129,15 @@ class AnalysisResponse(BaseModel):
         ...,
         description="Generated Java source string.",
     )
-    ast: dict | None = Field(
+    ast: dict[str, Any] | None = Field(
         default=None,
         description="JSON-safe serialized AST, or null if unavailable.",
     )
-    ir: dict | None = Field(
+    ir: dict[str, Any] | None = Field(
         default=None,
         description="JSON-safe serialized IR, or null if unavailable.",
     )
-    diagnostics: list[dict] = Field(
+    diagnostics: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Serialized semantic and backend diagnostics.",
     )
