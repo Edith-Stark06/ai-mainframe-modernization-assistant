@@ -159,7 +159,6 @@ class AnalysisResponse(BaseModel):
 
     model_config = ConfigDict(
         populate_by_name=True,
-        use_enum_values=True,
     )
 
     success: bool = Field(

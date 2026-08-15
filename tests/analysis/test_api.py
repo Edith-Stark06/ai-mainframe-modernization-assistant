@@ -641,7 +641,6 @@ class TestAnalysisResponseSchema:
     def test_analyze_invalid_status_rejected(self) -> None:
         """Invalid status values cannot be accepted by the response model."""
         from pydantic import ValidationError
-        from app.api.schemas.analysis import AnalysisResponse
 
         with pytest.raises(ValidationError):
             AnalysisResponse(
