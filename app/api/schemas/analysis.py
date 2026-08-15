@@ -89,6 +89,8 @@ class AnalysisResponse(BaseModel):
         success:
             ``True`` if the analysis pipeline completed without semantic
             errors or unexpected exceptions.
+        analysis_id:
+            Server-generated unique identifier for this analysis request.
         workspace_id:
             UUID4 string of the workspace containing the analyzed file.
         filename:
@@ -116,6 +118,10 @@ class AnalysisResponse(BaseModel):
     success: bool = Field(
         ...,
         description="Whether the analysis completed successfully.",
+    )
+    analysis_id: str = Field(
+        ...,
+        description="Server-generated unique identifier for this analysis request.",
     )
     workspace_id: str = Field(
         ...,
