@@ -62,6 +62,15 @@ _COBOL_UNDEFINED = b"""        IDENTIFICATION DIVISION.
             STOP RUN.
 """
 
+_COBOL_SYNTAX_ERROR = b"""        IDENTIFICATION DIVISION.
+        PROGRAM-ID. SYNTAX-ERR.
+
+        PROCEDURE DIVISION.
+        MAIN-PARAGRAPH.
+            INVALID SYNTAX HERE
+            STOP RUN.
+"""
+
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
@@ -145,6 +154,45 @@ class TestAnalyzeEndpointNominal:
             json={"filename": "hello.cbl"},
         ).json()
         assert body["filename"] == "hello.cbl"
+
+    def test_analyze_returns_analysis_id(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """analysis_id must be present in the response."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+        assert "analysis_id" in body
+        assert isinstance(body["analysis_id"], str)
+
+    def test_analyze_analysis_id_is_uuid4(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """analysis_id must parse as a valid UUID version 4."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+        val = uuid.UUID(body["analysis_id"])
+        assert val.version == 4
+
+    def test_analyze_analysis_id_is_unique(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """analysis_id must be unique across independent requests."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body1 = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+        body2 = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+        assert body1["analysis_id"] != body2["analysis_id"]
 
     def test_analyze_returns_java_source(
         self, client: TestClient, workspace_root: Path
@@ -277,7 +325,7 @@ class TestAnalyzeEndpointDiagnostics:
     def test_analyze_with_semantic_error_has_error(
         self, client: TestClient, workspace_root: Path
     ) -> None:
-        """A failed analysis should have success=False and diagnostics."""
+        """A failed analysis should have success=False, diagnostics, and a valid analysis_id."""
         ws_id = _create_workspace(workspace_root, {"undefined.cbl": _COBOL_UNDEFINED})
         body = client.post(
             f"/api/v1/workspaces/{ws_id}/analyze",
@@ -285,6 +333,9 @@ class TestAnalyzeEndpointDiagnostics:
         ).json()
         assert body["success"] is False
         assert len(body["diagnostics"]) > 0
+        assert "analysis_id" in body
+        val = uuid.UUID(body["analysis_id"])
+        assert val.version == 4
 
     def test_analyze_with_semantic_error_preserves_ast_and_ir(
         self, client: TestClient, workspace_root: Path
@@ -301,6 +352,40 @@ class TestAnalyzeEndpointDiagnostics:
 
         assert body["ir"] is not None, "IR must be preserved on semantic error"
         assert body["ir"]["type"] == "IRProgram"
+
+    def test_analyze_with_analysis_service_failure_has_analysis_id(
+        self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failure within AnalysisService (e.g. exception) must still return a valid analysis_id."""
+
+        from app.analysis.models import AnalysisResult
+
+        def mock_analyze_file(*args, **kwargs) -> AnalysisResult:
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[],
+                semantic_diagnostics=[],
+                success=False,
+                error=Exception("Simulated internal compiler crash"),
+                ast=None,
+                ir=None,
+            )
+
+        monkeypatch.setattr(
+            "app.api.routers.analysis.AnalysisService.analyze_file", mock_analyze_file
+        )
+
+        ws_id = _create_workspace(workspace_root, {"syntax.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "syntax.cbl"},
+        ).json()
+
+        assert body["success"] is False
+        assert body["error"] == "Simulated internal compiler crash"
+        assert "analysis_id" in body
+        val = uuid.UUID(body["analysis_id"])
+        assert val.version == 4
 
 
 # ---------------------------------------------------------------------------
