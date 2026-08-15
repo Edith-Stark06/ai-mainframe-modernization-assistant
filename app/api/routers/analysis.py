@@ -56,7 +56,6 @@ Project:
 
 from __future__ import annotations
 
-import hashlib
 import uuid
 from pathlib import Path
 
@@ -74,6 +73,7 @@ from app.api.schemas.analysis import (
 from app.core.exceptions import ResourceNotFoundException, ValidationException
 from app.core.logging import logger
 from app.ingestion.workspace import WorkspaceManager
+from app.workspace.inventory import InventoryBuilder
 
 # ---------------------------------------------------------------------------
 # Router
@@ -196,14 +196,27 @@ async def analyze_source(
     # ------------------------------------------------------------------
     # Compute source metadata
     # ------------------------------------------------------------------
-    size_bytes = source_path.stat().st_size
-    sha256 = hashlib.sha256(source_path.read_bytes()).hexdigest()
-    extension = source_path.suffix.lower()
+    inventory_builder = InventoryBuilder()
+    inventory = inventory_builder.build(workspace_id, workspace_root)
+
+    target_path = str(source_path)
+    scanned_file = next((f for f in inventory.files if f.path == target_path), None)
+
+    if not scanned_file:
+        logger.warning(
+            "Analysis endpoint: source file '{}' not found in workspace inventory '{}'.",
+            request.filename,
+            workspace_id,
+        )
+        raise ResourceNotFoundException(
+            resource="source",
+            identifier=request.filename,
+        )
 
     source_metadata = AnalysisSourceMetadata(
-        extension=extension,
-        size_bytes=size_bytes,
-        sha256=sha256,
+        extension=scanned_file.extension,
+        size_bytes=scanned_file.size_bytes,
+        sha256=scanned_file.sha256,
     )
 
     # ------------------------------------------------------------------

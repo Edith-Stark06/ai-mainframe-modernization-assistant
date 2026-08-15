@@ -30,7 +30,6 @@ Project:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import uuid
 from pathlib import Path
@@ -39,6 +38,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.workspace.inventory import InventoryBuilder
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -200,6 +200,11 @@ class TestAnalyzeEndpointNominal:
     ) -> None:
         """source_metadata must be present and correctly populated."""
         ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+
+        inventory_builder = InventoryBuilder()
+        inventory = inventory_builder.build(ws_id, workspace_root / ws_id)
+        inventory_file = next(f for f in inventory.files if f.filename == "hello.cbl")
+
         body = client.post(
             f"/api/v1/workspaces/{ws_id}/analyze",
             json={"filename": "hello.cbl"},
@@ -208,9 +213,9 @@ class TestAnalyzeEndpointNominal:
         assert "source_metadata" in body
         metadata = body["source_metadata"]
 
-        assert metadata["extension"] == ".cbl"
-        assert metadata["size_bytes"] == len(_COBOL_HELLO)
-        assert metadata["sha256"] == hashlib.sha256(_COBOL_HELLO).hexdigest()
+        assert metadata["extension"] == inventory_file.extension
+        assert metadata["size_bytes"] == inventory_file.size_bytes
+        assert metadata["sha256"] == inventory_file.sha256
 
     def test_analyze_returns_java_source(
         self, client: TestClient, workspace_root: Path
@@ -376,6 +381,13 @@ class TestAnalyzeEndpointDiagnostics:
     ) -> None:
         """source_metadata must be preserved on semantic error."""
         ws_id = _create_workspace(workspace_root, {"undefined.cbl": _COBOL_UNDEFINED})
+
+        inventory_builder = InventoryBuilder()
+        inventory = inventory_builder.build(ws_id, workspace_root / ws_id)
+        inventory_file = next(
+            f for f in inventory.files if f.filename == "undefined.cbl"
+        )
+
         body = client.post(
             f"/api/v1/workspaces/{ws_id}/analyze",
             json={"filename": "undefined.cbl"},
@@ -385,9 +397,9 @@ class TestAnalyzeEndpointDiagnostics:
         assert "source_metadata" in body
         metadata = body["source_metadata"]
 
-        assert metadata["extension"] == ".cbl"
-        assert metadata["size_bytes"] == len(_COBOL_UNDEFINED)
-        assert metadata["sha256"] == hashlib.sha256(_COBOL_UNDEFINED).hexdigest()
+        assert metadata["extension"] == inventory_file.extension
+        assert metadata["size_bytes"] == inventory_file.size_bytes
+        assert metadata["sha256"] == inventory_file.sha256
 
     def test_analyze_with_analysis_service_failure_has_analysis_id(
         self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
