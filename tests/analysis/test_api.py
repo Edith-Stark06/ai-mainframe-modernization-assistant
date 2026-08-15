@@ -298,14 +298,9 @@ class TestAnalyzeEndpointDiagnostics:
         assert body["success"] is False
         assert body["ast"] is not None, "AST must be preserved on semantic error"
         assert body["ast"]["type"] == "ProgramNode"
-        # IR should be None since IR builder bails on semantic error, or preserved if IR built.
-        # Wait, the IRBuilder in service.py:
-        # It says "builder = IRBuilder(context=semantic_ctx)". But if semantic analysis fails, it might fail to build IR.
-        # "AST/IR preserved when available"
-        # If it's available it should be there.
-        # We can just check that the keys exist.
-        assert "ast" in body
-        assert "ir" in body
+
+        assert body["ir"] is not None, "IR must be preserved on semantic error"
+        assert body["ir"]["type"] == "IRProgram"
 
 
 # ---------------------------------------------------------------------------
