@@ -56,8 +56,9 @@ Project:
 
 from __future__ import annotations
 
-from pathlib import Path
+import hashlib
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter
 
@@ -65,7 +66,11 @@ from app.analysis.serializers.ast import serialize_ast
 from app.analysis.serializers.diagnostics import serialize_diagnostics
 from app.analysis.serializers.ir import serialize_ir
 from app.analysis.service import AnalysisService
-from app.api.schemas.analysis import AnalysisRequest, AnalysisResponse
+from app.api.schemas.analysis import (
+    AnalysisRequest,
+    AnalysisResponse,
+    AnalysisSourceMetadata,
+)
 from app.core.exceptions import ResourceNotFoundException, ValidationException
 from app.core.logging import logger
 from app.ingestion.workspace import WorkspaceManager
@@ -189,6 +194,19 @@ async def analyze_source(
     analysis_id = str(uuid.uuid4())
 
     # ------------------------------------------------------------------
+    # Compute source metadata
+    # ------------------------------------------------------------------
+    size_bytes = source_path.stat().st_size
+    sha256 = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    extension = source_path.suffix.lower()
+
+    source_metadata = AnalysisSourceMetadata(
+        extension=extension,
+        size_bytes=size_bytes,
+        sha256=sha256,
+    )
+
+    # ------------------------------------------------------------------
     # Run analysis
     # ------------------------------------------------------------------
     service = AnalysisService()
@@ -208,6 +226,7 @@ async def analyze_source(
         analysis_id=analysis_id,
         workspace_id=workspace_id,
         filename=request.filename,
+        source_metadata=source_metadata,
         java_source=result.java_source,
         ast=serialized_ast,
         ir=serialized_ir,
