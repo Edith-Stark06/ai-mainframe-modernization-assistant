@@ -38,6 +38,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.workspace.inventory import InventoryBuilder
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -193,6 +194,28 @@ class TestAnalyzeEndpointNominal:
             json={"filename": "hello.cbl"},
         ).json()
         assert body1["analysis_id"] != body2["analysis_id"]
+
+    def test_analyze_returns_source_metadata(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """source_metadata must be present and correctly populated."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+
+        inventory_builder = InventoryBuilder()
+        inventory = inventory_builder.build(ws_id, workspace_root / ws_id)
+        inventory_file = next(f for f in inventory.files if f.filename == "hello.cbl")
+
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+
+        assert "source_metadata" in body
+        metadata = body["source_metadata"]
+
+        assert metadata["extension"] == inventory_file.extension
+        assert metadata["size_bytes"] == inventory_file.size_bytes
+        assert metadata["sha256"] == inventory_file.sha256
 
     def test_analyze_returns_java_source(
         self, client: TestClient, workspace_root: Path
@@ -352,6 +375,31 @@ class TestAnalyzeEndpointDiagnostics:
 
         assert body["ir"] is not None, "IR must be preserved on semantic error"
         assert body["ir"]["type"] == "IRProgram"
+
+    def test_analyze_with_semantic_error_preserves_source_metadata(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """source_metadata must be preserved on semantic error."""
+        ws_id = _create_workspace(workspace_root, {"undefined.cbl": _COBOL_UNDEFINED})
+
+        inventory_builder = InventoryBuilder()
+        inventory = inventory_builder.build(ws_id, workspace_root / ws_id)
+        inventory_file = next(
+            f for f in inventory.files if f.filename == "undefined.cbl"
+        )
+
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "undefined.cbl"},
+        ).json()
+
+        assert body["success"] is False
+        assert "source_metadata" in body
+        metadata = body["source_metadata"]
+
+        assert metadata["extension"] == inventory_file.extension
+        assert metadata["size_bytes"] == inventory_file.size_bytes
+        assert metadata["sha256"] == inventory_file.sha256
 
     def test_analyze_with_analysis_service_failure_has_analysis_id(
         self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
