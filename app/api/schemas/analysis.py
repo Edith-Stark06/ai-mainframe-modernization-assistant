@@ -73,6 +73,7 @@ class AnalysisRequest(BaseModel):
 
     filename: str = Field(
         ...,
+        min_length=1,
         description="Basename of the COBOL source file to analyze.",
         examples=["payroll.cbl"],
     )

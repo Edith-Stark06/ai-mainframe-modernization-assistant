@@ -30,6 +30,7 @@ Project:
 
 from __future__ import annotations
 
+import json
 import uuid
 from pathlib import Path
 
@@ -190,6 +191,20 @@ class TestAnalyzeEndpointNominal:
         assert "diagnostics" in body
         assert isinstance(body["diagnostics"], list)
 
+    def test_analyze_response_is_json_serializable(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """The complete successful response must be JSON serializable."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        response = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        )
+        body = response.json()
+        json_str = json.dumps(body)
+        assert isinstance(json_str, str)
+        assert len(json_str) > 0
+
     def test_analyze_response_is_json_safe(
         self, client: TestClient, workspace_root: Path
     ) -> None:
@@ -315,6 +330,61 @@ class TestAnalyzeEndpointErrors:
         response = client.post(
             f"/api/v1/workspaces/{ws_id}/analyze",
             json={"filename": "../../../etc/passwd"},
+        )
+        assert response.status_code == 422
+
+    def test_analyze_empty_filename_rejected(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """An empty filename must be rejected by request validation."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        response = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": ""},
+        )
+        assert response.status_code == 422
+
+    def test_analyze_whitespace_filename_rejected(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """A whitespace-only filename must be rejected by request validation."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        response = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "   "},
+        )
+        assert response.status_code == 422
+
+    def test_analyze_dotdot_traversal_blocked(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """`../` traversal attempts must be rejected."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        response = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "../outside.cbl"},
+        )
+        assert response.status_code == 422
+
+    def test_analyze_double_dotdot_traversal_blocked(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """`../../` traversal attempts must be rejected."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        response = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "../../outside.cbl"},
+        )
+        assert response.status_code == 422
+
+    def test_analyze_absolute_path_blocked(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """An absolute path must not escape the workspace."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        response = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "/etc/passwd"},
         )
         assert response.status_code == 422
 
