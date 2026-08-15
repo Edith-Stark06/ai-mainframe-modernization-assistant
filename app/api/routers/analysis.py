@@ -57,6 +57,7 @@ Project:
 from __future__ import annotations
 
 from pathlib import Path
+import uuid
 
 from fastapi import APIRouter
 
@@ -189,6 +190,11 @@ async def analyze_source(
     result = service.analyze_file(source_path)
 
     # ------------------------------------------------------------------
+    # Generate correlation ID
+    # ------------------------------------------------------------------
+    analysis_id = str(uuid.uuid4())
+
+    # ------------------------------------------------------------------
     # Serialize result
     # ------------------------------------------------------------------
     serialized_ast = serialize_ast(result.ast) if result.ast is not None else None
@@ -199,6 +205,7 @@ async def analyze_source(
 
     response = AnalysisResponse(
         success=result.success,
+        analysis_id=analysis_id,
         workspace_id=workspace_id,
         filename=request.filename,
         java_source=result.java_source,
