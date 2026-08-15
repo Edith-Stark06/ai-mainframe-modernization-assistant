@@ -447,6 +447,78 @@ class TestAnalyzeEndpointDiagnostics:
         val = uuid.UUID(body["analysis_id"])
         assert val.version == 4
 
+    def test_analyze_with_backend_error_returns_analysis_error(
+        self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """status must be ANALYSIS_ERROR when backend emits an ERROR diagnostic."""
+        from app.analysis.models import AnalysisResult
+        from app.backend.java.generator import BackendDiagnostic, BackendSeverity
+
+        def mock_analyze_file(*args, **kwargs) -> AnalysisResult:
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[
+                    BackendDiagnostic(
+                        severity=BackendSeverity.ERROR,
+                        message="simulated backend error",
+                        code="BE_TEST",
+                    )
+                ],
+                semantic_diagnostics=[],
+                success=True,
+                error=None,
+                ast=None,
+                ir=None,
+            )
+
+        monkeypatch.setattr(
+            "app.api.routers.analysis.AnalysisService.analyze_file", mock_analyze_file
+        )
+
+        ws_id = _create_workspace(workspace_root, {"syntax.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "syntax.cbl"},
+        ).json()
+
+        assert body["status"] == "ANALYSIS_ERROR"
+
+    def test_analyze_with_backend_warning_returns_success(
+        self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """status must be SUCCESS when backend only emits a WARNING diagnostic."""
+        from app.analysis.models import AnalysisResult
+        from app.backend.java.generator import BackendDiagnostic, BackendSeverity
+
+        def mock_analyze_file(*args, **kwargs) -> AnalysisResult:
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[
+                    BackendDiagnostic(
+                        severity=BackendSeverity.WARNING,
+                        message="simulated backend warning",
+                        code="BE_WARN",
+                    )
+                ],
+                semantic_diagnostics=[],
+                success=True,
+                error=None,
+                ast=None,
+                ir=None,
+            )
+
+        monkeypatch.setattr(
+            "app.api.routers.analysis.AnalysisService.analyze_file", mock_analyze_file
+        )
+
+        ws_id = _create_workspace(workspace_root, {"syntax.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "syntax.cbl"},
+        ).json()
+
+        assert body["status"] == "SUCCESS"
+
     def test_analyze_with_semantic_error_returns_analysis_error_status(
         self, client: TestClient, workspace_root: Path
     ) -> None:

@@ -65,6 +65,7 @@ from app.analysis.serializers.ast import serialize_ast
 from app.analysis.serializers.diagnostics import serialize_diagnostics
 from app.analysis.serializers.ir import serialize_ir
 from app.analysis.service import AnalysisService
+from app.backend.java.generator import BackendSeverity
 from app.api.schemas.analysis import (
     AnalysisRequest,
     AnalysisResponse,
@@ -235,12 +236,17 @@ async def analyze_source(
         result.semantic_diagnostics + result.backend_diagnostics
     )
 
-    if result.success:
-        status = AnalysisStatus.SUCCESS
-    elif result.error is not None:
+    if result.error is not None:
         status = AnalysisStatus.INTERNAL_ERROR
-    else:
+    elif any(
+        diagnostic.severity is BackendSeverity.ERROR
+        for diagnostic in result.backend_diagnostics
+    ):
         status = AnalysisStatus.ANALYSIS_ERROR
+    elif not result.success:
+        status = AnalysisStatus.ANALYSIS_ERROR
+    else:
+        status = AnalysisStatus.SUCCESS
 
     response = AnalysisResponse(
         success=result.success,
