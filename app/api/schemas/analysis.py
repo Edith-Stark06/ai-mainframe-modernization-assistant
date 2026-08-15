@@ -54,7 +54,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = ["AnalysisRequest", "AnalysisResponse"]
+__all__ = ["AnalysisRequest", "AnalysisResponse", "AnalysisSourceMetadata"]
 
 
 class AnalysisRequest(BaseModel):
@@ -81,6 +81,29 @@ class AnalysisRequest(BaseModel):
     )
 
 
+class AnalysisSourceMetadata(BaseModel):
+    """
+    Metadata identifying the exact workspace file that was analyzed.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+
+    extension: str = Field(
+        ...,
+        description="Lowercase file extension.",
+    )
+    size_bytes: int = Field(
+        ...,
+        description="File size in bytes.",
+    )
+    sha256: str = Field(
+        ...,
+        description="Hex-encoded SHA-256 digest of the file content.",
+    )
+
+
 class AnalysisResponse(BaseModel):
     """
     Response envelope for the analysis endpoint.
@@ -95,6 +118,8 @@ class AnalysisResponse(BaseModel):
             UUID4 string of the workspace containing the analyzed file.
         filename:
             Basename of the analyzed source file.
+        source_metadata:
+            Metadata about the exact source file analyzed.
         java_source:
             Generated Java source string, or empty string if analysis
             failed before code generation.
@@ -130,6 +155,10 @@ class AnalysisResponse(BaseModel):
     filename: str = Field(
         ...,
         description="Basename of the analyzed source file.",
+    )
+    source_metadata: AnalysisSourceMetadata = Field(
+        ...,
+        description="Metadata describing the exact source file analyzed.",
     )
     java_source: str = Field(
         ...,

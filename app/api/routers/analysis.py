@@ -56,8 +56,8 @@ Project:
 
 from __future__ import annotations
 
-from pathlib import Path
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter
 
@@ -65,10 +65,15 @@ from app.analysis.serializers.ast import serialize_ast
 from app.analysis.serializers.diagnostics import serialize_diagnostics
 from app.analysis.serializers.ir import serialize_ir
 from app.analysis.service import AnalysisService
-from app.api.schemas.analysis import AnalysisRequest, AnalysisResponse
+from app.api.schemas.analysis import (
+    AnalysisRequest,
+    AnalysisResponse,
+    AnalysisSourceMetadata,
+)
 from app.core.exceptions import ResourceNotFoundException, ValidationException
 from app.core.logging import logger
 from app.ingestion.workspace import WorkspaceManager
+from app.workspace.inventory import InventoryBuilder
 
 # ---------------------------------------------------------------------------
 # Router
@@ -189,6 +194,32 @@ async def analyze_source(
     analysis_id = str(uuid.uuid4())
 
     # ------------------------------------------------------------------
+    # Compute source metadata
+    # ------------------------------------------------------------------
+    inventory_builder = InventoryBuilder()
+    inventory = inventory_builder.build(workspace_id, workspace_root)
+
+    target_path = str(source_path)
+    scanned_file = next((f for f in inventory.files if f.path == target_path), None)
+
+    if not scanned_file:
+        logger.warning(
+            "Analysis endpoint: source file '{}' not found in workspace inventory '{}'.",
+            request.filename,
+            workspace_id,
+        )
+        raise ResourceNotFoundException(
+            resource="source",
+            identifier=request.filename,
+        )
+
+    source_metadata = AnalysisSourceMetadata(
+        extension=scanned_file.extension,
+        size_bytes=scanned_file.size_bytes,
+        sha256=scanned_file.sha256,
+    )
+
+    # ------------------------------------------------------------------
     # Run analysis
     # ------------------------------------------------------------------
     service = AnalysisService()
@@ -208,6 +239,7 @@ async def analyze_source(
         analysis_id=analysis_id,
         workspace_id=workspace_id,
         filename=request.filename,
+        source_metadata=source_metadata,
         java_source=result.java_source,
         ast=serialized_ast,
         ir=serialized_ir,
