@@ -288,6 +288,8 @@ class TestAnalyzeEndpointErrors:
             json={"filename": "prog.cbl"},
         )
         assert response.status_code == 404
+        body = response.json()
+        _assert_error_envelope(body, expected_code="NOT_FOUND")
 
     def test_analyze_missing_workspace_error_envelope(
         self, client: TestClient, workspace_root: Path
@@ -297,8 +299,7 @@ class TestAnalyzeEndpointErrors:
             "/api/v1/workspaces/ghost-ws/analyze",
             json={"filename": "prog.cbl"},
         ).json()
-        assert body["success"] is False
-        assert "error" in body
+        _assert_error_envelope(body, expected_code="NOT_FOUND")
 
     def test_analyze_missing_source_returns_404(
         self, client: TestClient, workspace_root: Path
@@ -310,6 +311,8 @@ class TestAnalyzeEndpointErrors:
             json={"filename": "missing.cbl"},
         )
         assert response.status_code == 404
+        body = response.json()
+        _assert_error_envelope(body, expected_code="NOT_FOUND")
 
     def test_analyze_unsupported_extension_returns_422(
         self, client: TestClient, workspace_root: Path
@@ -321,6 +324,8 @@ class TestAnalyzeEndpointErrors:
             json={"filename": "readme.txt"},
         )
         assert response.status_code == 422
+        body = response.json()
+        _assert_error_envelope(body, expected_code="VALIDATION_ERROR")
 
     def test_analyze_path_traversal_blocked(
         self, client: TestClient, workspace_root: Path
@@ -332,6 +337,8 @@ class TestAnalyzeEndpointErrors:
             json={"filename": "../../../etc/passwd"},
         )
         assert response.status_code == 422
+        body = response.json()
+        _assert_error_envelope(body, expected_code="VALIDATION_ERROR")
 
     def test_analyze_empty_filename_rejected(
         self, client: TestClient, workspace_root: Path
@@ -343,6 +350,8 @@ class TestAnalyzeEndpointErrors:
             json={"filename": ""},
         )
         assert response.status_code == 422
+        body = response.json()
+        _assert_error_envelope(body, expected_code="VALIDATION_ERROR")
 
     def test_analyze_whitespace_filename_rejected(
         self, client: TestClient, workspace_root: Path
@@ -354,6 +363,8 @@ class TestAnalyzeEndpointErrors:
             json={"filename": "   "},
         )
         assert response.status_code == 422
+        body = response.json()
+        _assert_error_envelope(body, expected_code="VALIDATION_ERROR")
 
     def test_analyze_dotdot_traversal_blocked(
         self, client: TestClient, workspace_root: Path
@@ -365,6 +376,8 @@ class TestAnalyzeEndpointErrors:
             json={"filename": "../outside.cbl"},
         )
         assert response.status_code == 422
+        body = response.json()
+        _assert_error_envelope(body, expected_code="VALIDATION_ERROR")
 
     def test_analyze_double_dotdot_traversal_blocked(
         self, client: TestClient, workspace_root: Path
@@ -376,6 +389,8 @@ class TestAnalyzeEndpointErrors:
             json={"filename": "../../outside.cbl"},
         )
         assert response.status_code == 422
+        body = response.json()
+        _assert_error_envelope(body, expected_code="VALIDATION_ERROR")
 
     def test_analyze_absolute_path_blocked(
         self, client: TestClient, workspace_root: Path
@@ -387,6 +402,8 @@ class TestAnalyzeEndpointErrors:
             json={"filename": "/etc/passwd"},
         )
         assert response.status_code == 422
+        body = response.json()
+        _assert_error_envelope(body, expected_code="VALIDATION_ERROR")
 
 
 # ---------------------------------------------------------------------------
@@ -407,3 +424,16 @@ def _assert_json_safe(value: object) -> None:
             _assert_json_safe(v)
         return
     raise TypeError(f"Non-JSON-safe value: {type(value).__name__}")
+
+
+def _assert_error_envelope(body: dict, expected_code: str | None = None) -> None:
+    """Verify that *body* matches the repository's canonical error envelope."""
+    assert body.get("success") is False
+    error = body.get("error")
+    assert isinstance(error, dict)
+    assert "code" in error
+    assert "message" in error
+    if expected_code is not None:
+        assert error["code"] == expected_code
+    assert "request_id" in body
+    assert "timestamp" in body
