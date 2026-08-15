@@ -69,6 +69,7 @@ from app.api.schemas.analysis import (
     AnalysisRequest,
     AnalysisResponse,
     AnalysisSourceMetadata,
+    AnalysisStatus,
 )
 from app.core.exceptions import ResourceNotFoundException, ValidationException
 from app.core.logging import logger
@@ -234,8 +235,16 @@ async def analyze_source(
         result.semantic_diagnostics + result.backend_diagnostics
     )
 
+    if result.success:
+        status = AnalysisStatus.SUCCESS
+    elif result.error is not None:
+        status = AnalysisStatus.INTERNAL_ERROR
+    else:
+        status = AnalysisStatus.ANALYSIS_ERROR
+
     response = AnalysisResponse(
         success=result.success,
+        status=status,
         analysis_id=analysis_id,
         workspace_id=workspace_id,
         filename=request.filename,
