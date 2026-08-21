@@ -198,3 +198,40 @@ def test_copy_dependency_not_extractable_from_current_ast():
     # and drops it, or it handles it elsewhere.
     # In any case, it does not produce a COPY dependency.
     assert len(deps) == 0
+
+
+def test_analyzer_reuse():
+    """Test that DependencyAnalyzer can be reused and its internal state resets."""
+    analyzer = DependencyAnalyzer()
+
+    source1 = """
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. TEST1.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           CALL 'PROG1'.
+    """
+    lexer1 = CobolLexer()
+    tokens1 = lexer1.tokenize(source1, filename="test1.cbl")
+    parser1 = ProgramParser()
+    program1 = parser1.parse(tokens1)
+
+    deps1 = analyzer.analyze(program1)
+    assert len(deps1) == 1
+    assert deps1[0].target == "'PROG1'"
+
+    source2 = """
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. TEST2.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           PERFORM INIT-RTN.
+    """
+    lexer2 = CobolLexer()
+    tokens2 = lexer2.tokenize(source2, filename="test2.cbl")
+    parser2 = ProgramParser()
+    program2 = parser2.parse(tokens2)
+
+    deps2 = analyzer.analyze(program2)
+    assert len(deps2) == 1
+    assert deps2[0].target == "INIT-RTN"
