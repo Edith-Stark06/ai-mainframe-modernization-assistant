@@ -20,6 +20,12 @@ def get_dependencies(source: str):
 
 
 def test_call_dependency():
+    """
+    Test extraction of CALL statements.
+    Note that the AST preserves quotes around literal targets,
+    and the DependencyAnalyzer intentionally preserves this representation
+    as per repository conventions.
+    """
     source = """
        IDENTIFICATION DIVISION.
        PROGRAM-ID. TEST.
@@ -30,6 +36,7 @@ def test_call_dependency():
     """
     deps = get_dependencies(source)
     assert len(deps) == 2
+
     assert deps[0].type == DependencyType.CALL
     assert deps[0].target == "'BONUSMOD'"
 
@@ -38,6 +45,10 @@ def test_call_dependency():
 
 
 def test_perform_dependency():
+    """
+    Test extraction of PERFORM statements, including nested
+    statements inside a PERFORM UNTIL block supported by the AST.
+    """
     source = """
        IDENTIFICATION DIVISION.
        PROGRAM-ID. TEST.
@@ -49,15 +60,21 @@ def test_perform_dependency():
            END-PERFORM.
     """
     deps = get_dependencies(source)
-    # The parser currently might not parse PERFORM UNTIL correctly or at all.
-    # We will assert we find at least CALCULATE-BONUS.
-    # Let's find targets to be robust to parser limitations.
-    targets = [d.target for d in deps if d.type == DependencyType.PERFORM]
-    assert "CALCULATE-BONUS" in targets
-    # If the parser supports it, it should find DO-WORK too.
+
+    assert len(deps) == 2
+
+    assert deps[0].type == DependencyType.PERFORM
+    assert deps[0].target == "CALCULATE-BONUS"
+
+    assert deps[1].type == DependencyType.PERFORM
+    assert deps[1].target == "DO-WORK"
 
 
 def test_duplicate_dependency_handling():
+    """
+    Test that duplicate dependencies are deterministically deduplicated,
+    preserving the source location of the first occurrence.
+    """
     source = """
        IDENTIFICATION DIVISION.
        PROGRAM-ID. TEST.
@@ -70,13 +87,18 @@ def test_duplicate_dependency_handling():
     """
     deps = get_dependencies(source)
     assert len(deps) == 2
+
     assert deps[0].type == DependencyType.CALL
     assert deps[0].target == "BONUSMOD"
+    assert deps[0].source_location.line == 6
+
     assert deps[1].type == DependencyType.PERFORM
     assert deps[1].target == "WORK"
+    assert deps[1].source_location.line == 8
 
 
 def test_no_dependencies():
+    """Test a program with no dependencies."""
     source = """
        IDENTIFICATION DIVISION.
        PROGRAM-ID. TEST.
@@ -90,6 +112,7 @@ def test_no_dependencies():
 
 
 def test_multiple_dependencies():
+    """Test multiple different dependencies in multiple paragraphs."""
     source = """
        IDENTIFICATION DIVISION.
        PROGRAM-ID. TEST.
@@ -102,13 +125,16 @@ def test_multiple_dependencies():
     """
     deps = get_dependencies(source)
     assert len(deps) == 2
+
     assert deps[0].type == DependencyType.PERFORM
     assert deps[0].target == "INIT-RTN"
+
     assert deps[1].type == DependencyType.CALL
     assert deps[1].target == "SUBPROG"
 
 
 def test_source_location_preserved():
+    """Test that source locations are correctly preserved."""
     source = """
        IDENTIFICATION DIVISION.
        PROGRAM-ID. TEST.
@@ -125,6 +151,7 @@ def test_source_location_preserved():
 
 
 def test_if_statement_nested():
+    """Test dependency extraction from inside an IF statement's THEN and ELSE branches."""
     source = """
        IDENTIFICATION DIVISION.
        PROGRAM-ID. TEST.
@@ -137,17 +164,27 @@ def test_if_statement_nested():
            END-IF.
     """
     deps = get_dependencies(source)
-    # Be robust to parser errors if IF isn't fully implemented
-    _ = [d.target for d in deps]
-    # We expect SUB1 and PARA1 if the parser parses them
-    # But if not, we shouldn't fail Task-51.
-    pass
+
+    assert len(deps) == 2
+
+    assert deps[0].type == DependencyType.CALL
+    assert deps[0].target == "SUB1"
+
+    assert deps[1].type == DependencyType.PERFORM
+    assert deps[1].target == "PARA1"
 
 
-def test_copy_unsupported():
+def test_copy_dependency_not_extractable_from_current_ast():
     """
-    COPY is currently not represented in the parser AST, so it cannot be extracted.
-    We just document this limitation in a test.
+    COPY is currently not represented in the parser AST (it is handled
+    by the lexer/preprocessor before tree construction).
+
+    Therefore, COPY dependencies cannot currently be extracted by the AST visitor.
+    This test verifies that the analyzer does not fabricate a COPY dependency
+    when it sees the COPY token syntax.
+
+    If the parser is ever updated to represent COPY in the AST, this test
+    will need to be updated.
     """
     source = """
        IDENTIFICATION DIVISION.
@@ -157,4 +194,7 @@ def test_copy_unsupported():
            COPY EMPFILE.
     """
     deps = get_dependencies(source)
+    # The parser currently treats COPY as an invalid paragraph or statement
+    # and drops it, or it handles it elsewhere.
+    # In any case, it does not produce a COPY dependency.
     assert len(deps) == 0
