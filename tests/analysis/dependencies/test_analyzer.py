@@ -193,11 +193,32 @@ def test_copy_dependency_not_extractable_from_current_ast():
        MAIN-PARA.
            COPY EMPFILE.
     """
-    deps = get_dependencies(source)
-    # The parser currently treats COPY as an invalid paragraph or statement
-    # and drops it, or it handles it elsewhere.
-    # In any case, it does not produce a COPY dependency.
+    # The lexer treats COPY as an identifier, so the parser expects it to be
+    # a paragraph label and expects a period after it.
+    # When it sees 'EMPFILE' instead of '.', it emits an error.
+    # Therefore, no COPY dependency is extracted.
+
+    import loguru
+
+    log_messages = []
+    handler_id = loguru.logger.add(lambda msg: log_messages.append(msg))
+
+    try:
+        lexer = CobolLexer()
+        tokens = lexer.tokenize(source, filename="test.cbl")
+        parser = ProgramParser()
+        program_node = parser.parse(tokens)
+    finally:
+        loguru.logger.remove(handler_id)
+
+    analyzer = DependencyAnalyzer()
+    deps = analyzer.analyze(program_node)
+
     assert len(deps) == 0
+    assert any(
+        "expected '.' after paragraph label 'COPY', got 'EMPFILE'" in msg
+        for msg in log_messages
+    )
 
 
 def test_analyzer_reuse():
