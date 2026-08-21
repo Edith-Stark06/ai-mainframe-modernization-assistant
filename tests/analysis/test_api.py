@@ -39,6 +39,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.workspace.inventory import InventoryBuilder
+from app.api.schemas.analysis import AnalysisResponse
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -133,6 +134,17 @@ class TestAnalyzeEndpointNominal:
             json={"filename": "hello.cbl"},
         ).json()
         assert body["success"] is True
+
+    def test_analyze_status_is_success(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """status field must be SUCCESS for a successful analysis."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+        assert body["status"] == "SUCCESS"
 
     def test_analyze_workspace_id_matches(
         self, client: TestClient, workspace_root: Path
@@ -302,7 +314,6 @@ class TestAnalyzeEndpointNominal:
         self, client: TestClient, workspace_root: Path
     ) -> None:
         """The response must strictly conform to AnalysisResponse."""
-        from app.api.schemas.analysis import AnalysisResponse
 
         ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
         body = client.post(
@@ -431,9 +442,96 @@ class TestAnalyzeEndpointDiagnostics:
 
         assert body["success"] is False
         assert body["error"] == "Simulated internal compiler crash"
+        assert body["status"] == "INTERNAL_ERROR"
         assert "analysis_id" in body
         val = uuid.UUID(body["analysis_id"])
         assert val.version == 4
+
+    def test_analyze_with_backend_error_returns_analysis_error(
+        self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """status must be ANALYSIS_ERROR when backend emits an ERROR diagnostic."""
+        from app.analysis.models import AnalysisResult
+        from app.backend.java.generator import BackendDiagnostic, BackendSeverity
+
+        def mock_analyze_file(*args, **kwargs) -> AnalysisResult:
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[
+                    BackendDiagnostic(
+                        severity=BackendSeverity.ERROR,
+                        message="simulated backend error",
+                        code="BE_TEST",
+                    )
+                ],
+                semantic_diagnostics=[],
+                success=True,
+                error=None,
+                ast=None,
+                ir=None,
+            )
+
+        monkeypatch.setattr(
+            "app.api.routers.analysis.AnalysisService.analyze_file", mock_analyze_file
+        )
+
+        ws_id = _create_workspace(workspace_root, {"syntax.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "syntax.cbl"},
+        ).json()
+
+        assert body["status"] == "ANALYSIS_ERROR"
+
+    def test_analyze_with_backend_warning_returns_success(
+        self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """status must be SUCCESS when backend only emits a WARNING diagnostic."""
+        from app.analysis.models import AnalysisResult
+        from app.backend.java.generator import BackendDiagnostic, BackendSeverity
+
+        def mock_analyze_file(*args, **kwargs) -> AnalysisResult:
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[
+                    BackendDiagnostic(
+                        severity=BackendSeverity.WARNING,
+                        message="simulated backend warning",
+                        code="BE_WARN",
+                    )
+                ],
+                semantic_diagnostics=[],
+                success=True,
+                error=None,
+                ast=None,
+                ir=None,
+            )
+
+        monkeypatch.setattr(
+            "app.api.routers.analysis.AnalysisService.analyze_file", mock_analyze_file
+        )
+
+        ws_id = _create_workspace(workspace_root, {"syntax.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "syntax.cbl"},
+        ).json()
+
+        assert body["status"] == "SUCCESS"
+
+    def test_analyze_with_semantic_error_returns_analysis_error_status(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """status must be ANALYSIS_ERROR when semantic errors are present."""
+        ws_id = _create_workspace(workspace_root, {"undefined.cbl": _COBOL_UNDEFINED})
+
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "undefined.cbl"},
+        ).json()
+
+        assert body["success"] is False
+        assert body["status"] == "ANALYSIS_ERROR"
 
 
 # ---------------------------------------------------------------------------
@@ -602,3 +700,35 @@ def _assert_error_envelope(body: dict, expected_code: str | None = None) -> None
         assert error["code"] == expected_code
     assert "request_id" in body
     assert "timestamp" in body
+
+
+# ---------------------------------------------------------------------------
+# Schema Tests
+# ---------------------------------------------------------------------------
+
+
+class TestAnalysisResponseSchema:
+    """Tests for the AnalysisResponse schema."""
+
+    def test_analyze_invalid_status_rejected(self) -> None:
+        """Invalid status values cannot be accepted by the response model."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            AnalysisResponse(
+                success=True,
+                status="INVALID_STATUS_VALUE",
+                analysis_id="uuid",
+                workspace_id="uuid",
+                filename="hello.cbl",
+                source_metadata={
+                    "extension": ".cbl",
+                    "size_bytes": 100,
+                    "sha256": "abc",
+                },
+                java_source="",
+                ast=None,
+                ir=None,
+                diagnostics=[],
+                error=None,
+            )
