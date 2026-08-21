@@ -50,11 +50,32 @@ Project:
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = ["AnalysisRequest", "AnalysisResponse", "AnalysisSourceMetadata"]
+__all__ = [
+    "AnalysisRequest",
+    "AnalysisResponse",
+    "AnalysisSourceMetadata",
+    "AnalysisStatus",
+]
+
+
+class AnalysisStatus(str, Enum):
+    """
+    Execution status of the analysis pipeline.
+
+    Attributes:
+        SUCCESS: The analysis pipeline completed and the source has no semantic errors.
+        ANALYSIS_ERROR: The analysis pipeline completed but the source has semantic errors.
+        INTERNAL_ERROR: The analysis pipeline encountered an unexpected internal exception.
+    """
+
+    SUCCESS = "SUCCESS"
+    ANALYSIS_ERROR = "ANALYSIS_ERROR"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
 class AnalysisRequest(BaseModel):
@@ -143,6 +164,10 @@ class AnalysisResponse(BaseModel):
     success: bool = Field(
         ...,
         description="Whether the analysis completed successfully.",
+    )
+    status: AnalysisStatus = Field(
+        ...,
+        description="Execution status of the analysis pipeline.",
     )
     analysis_id: str = Field(
         ...,
