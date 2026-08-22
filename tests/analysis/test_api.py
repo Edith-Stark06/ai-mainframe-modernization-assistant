@@ -262,6 +262,18 @@ class TestAnalyzeEndpointNominal:
         assert body["ir"] is not None
         assert body["ir"]["type"] == "IRProgram"
 
+    def test_analyze_returns_dependencies(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Dependencies must be present in the response."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+        assert "dependencies" in body
+        assert isinstance(body["dependencies"], list)
+
     def test_analyze_returns_diagnostics(
         self, client: TestClient, workspace_root: Path
     ) -> None:
@@ -426,6 +438,7 @@ class TestAnalyzeEndpointDiagnostics:
                 semantic_diagnostics=[],
                 success=False,
                 error=Exception("Simulated internal compiler crash"),
+                dependencies=[],
                 ast=None,
                 ir=None,
             )
@@ -467,6 +480,7 @@ class TestAnalyzeEndpointDiagnostics:
                 semantic_diagnostics=[],
                 success=True,
                 error=None,
+                dependencies=[],
                 ast=None,
                 ir=None,
             )
@@ -503,6 +517,7 @@ class TestAnalyzeEndpointDiagnostics:
                 semantic_diagnostics=[],
                 success=True,
                 error=None,
+                dependencies=[],
                 ast=None,
                 ir=None,
             )

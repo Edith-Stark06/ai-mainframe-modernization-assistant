@@ -118,6 +118,7 @@ class AnalysisService:
                 semantic_diagnostics=[],
                 success=False,
                 error=FileNotFoundError(f"file not found: {path}"),
+                dependencies=[],
                 ast=None,
                 ir=None,
             )
@@ -129,6 +130,7 @@ class AnalysisService:
                 semantic_diagnostics=[],
                 success=False,
                 error=exc,
+                dependencies=[],
                 ast=None,
                 ir=None,
             )
@@ -149,6 +151,7 @@ class AnalysisService:
                 semantic_diagnostics=[],
                 success=False,
                 error=exc,
+                dependencies=[],
                 ast=None,
                 ir=None,
             )
@@ -170,10 +173,38 @@ class AnalysisService:
                 semantic_diagnostics=[],
                 success=False,
                 error=exc,
+                dependencies=[],
                 ast=None,
                 ir=None,
             )
         logger.debug("AnalysisService: parsing complete.")
+
+        # ------------------------------------------------------------------
+        # Stage 2.5 — dependency extraction
+        # ------------------------------------------------------------------
+        logger.debug("AnalysisService: running dependency extraction.")
+        try:
+            from app.analysis.dependencies.analyzer import DependencyAnalyzer
+
+            deps_analyzer = DependencyAnalyzer()
+            extracted_dependencies = deps_analyzer.analyze(ast)
+        except Exception as exc:
+            logger.error(
+                "AnalysisService: dependency extraction error in '{}': {}.", path, exc
+            )
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[],
+                semantic_diagnostics=[],
+                success=False,
+                error=exc,
+                dependencies=extracted_dependencies,
+                ast=ast,
+                ir=None,
+            )
+        logger.debug(
+            "AnalysisService: found {} dependencies.", len(extracted_dependencies)
+        )
 
         # ------------------------------------------------------------------
         # Stage 3 — semantic analysis
@@ -191,6 +222,7 @@ class AnalysisService:
                 semantic_diagnostics=[],
                 success=False,
                 error=exc,
+                dependencies=extracted_dependencies,
                 ast=ast,
                 ir=None,
             )
@@ -215,6 +247,7 @@ class AnalysisService:
                 semantic_diagnostics=semantic_ctx.diagnostics,
                 success=False,
                 error=exc,
+                dependencies=extracted_dependencies,
                 ast=ast,
                 ir=None,
             )
@@ -245,6 +278,7 @@ class AnalysisService:
                 semantic_diagnostics=semantic_ctx.diagnostics,
                 success=False,
                 error=exc,
+                dependencies=extracted_dependencies,
                 ast=ast,
                 ir=ir_program,
             )
@@ -264,6 +298,7 @@ class AnalysisService:
                 semantic_diagnostics=semantic_ctx.diagnostics,
                 success=False,
                 error=exc,
+                dependencies=extracted_dependencies,
                 ast=ast,
                 ir=ir_program,
             )
@@ -278,6 +313,7 @@ class AnalysisService:
             semantic_diagnostics=semantic_ctx.diagnostics,
             success=not semantic_ctx.has_errors,
             error=None,
+            dependencies=extracted_dependencies,
             ast=ast,
             ir=ir_program,
         )
