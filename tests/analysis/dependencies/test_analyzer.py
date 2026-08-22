@@ -176,15 +176,10 @@ def test_if_statement_nested():
 
 def test_copy_dependency_not_extractable_from_current_ast():
     """
-    COPY is currently not represented in the parser AST (it is handled
-    by the lexer/preprocessor before tree construction).
+    COPY is currently not represented as an extractable dependency in the AST.
 
-    Therefore, COPY dependencies cannot currently be extracted by the AST visitor.
-    This test verifies that the analyzer does not fabricate a COPY dependency
-    when it sees the COPY token syntax.
-
-    If the parser is ever updated to represent COPY in the AST, this test
-    will need to be updated.
+    DependencyAnalyzer must not fabricate a DependencyType.COPY dependency.
+    The current source therefore produces no extracted dependencies.
     """
     source = """
        IDENTIFICATION DIVISION.
@@ -193,10 +188,6 @@ def test_copy_dependency_not_extractable_from_current_ast():
        MAIN-PARA.
            COPY EMPFILE.
     """
-    # The lexer treats COPY as an identifier, so the parser expects it to be
-    # a paragraph label and expects a period after it.
-    # When it sees 'EMPFILE' instead of '.', it emits an error.
-    # Therefore, no COPY dependency is extracted.
 
     lexer = CobolLexer()
     tokens = lexer.tokenize(source, filename="test.cbl")
