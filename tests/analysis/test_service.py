@@ -29,6 +29,7 @@ class TestAnalysisService:
         assert result.ir is not None
         assert 'System.out.println("HELLO WORLD");' in result.java_source
         assert len(result.semantic_diagnostics) == 0
+        assert isinstance(result.dependencies, list)
 
     def test_semantic_error_analysis(self) -> None:
         """A program with undefined variables should fail semantic analysis."""
@@ -39,6 +40,7 @@ class TestAnalysisService:
         assert result.error is None
         assert result.ast is not None
         assert len(result.semantic_diagnostics) > 0
+        assert isinstance(result.dependencies, list)
         assert any(
             "UNDEFINED" in str(d).upper() or "NOT FOUND" in str(d).upper()
             for d in result.semantic_diagnostics

@@ -201,6 +201,10 @@ class AnalysisResponse(BaseModel):
         default_factory=list,
         description="Serialized semantic and backend diagnostics.",
     )
+    dependencies: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Serialized COBOL dependencies.",
+    )
     error: str | None = Field(
         default=None,
         description="Human-readable error message, or null on success.",

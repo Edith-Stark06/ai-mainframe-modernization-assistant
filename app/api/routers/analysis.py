@@ -64,6 +64,7 @@ from fastapi import APIRouter
 from app.analysis.serializers.ast import serialize_ast
 from app.analysis.serializers.diagnostics import serialize_diagnostics
 from app.analysis.serializers.ir import serialize_ir
+from app.analysis.serializers.dependencies import serialize_dependencies
 from app.analysis.service import AnalysisService
 from app.backend.java.generator import BackendSeverity
 from app.api.schemas.analysis import (
@@ -236,6 +237,8 @@ async def analyze_source(
         result.semantic_diagnostics + result.backend_diagnostics
     )
 
+    serialized_dependencies = serialize_dependencies(result.dependencies)
+
     if result.error is not None:
         status = AnalysisStatus.INTERNAL_ERROR
     elif any(
@@ -259,6 +262,7 @@ async def analyze_source(
         ast=serialized_ast,
         ir=serialized_ir,
         diagnostics=serialized_diagnostics,
+        dependencies=serialized_dependencies,
         error=str(result.error) if result.error is not None else None,
     )
 
