@@ -54,6 +54,15 @@ _COBOL_HELLO = b"""        IDENTIFICATION DIVISION.
             STOP RUN.
 """
 
+_COBOL_WITH_CALL = b"""        IDENTIFICATION DIVISION.
+        PROGRAM-ID. CALL-TEST.
+
+        PROCEDURE DIVISION.
+        MAIN-PARAGRAPH.
+            CALL "CUSTOMER-SERVICE".
+            STOP RUN.
+"""
+
 _COBOL_UNDEFINED = b"""        IDENTIFICATION DIVISION.
         PROGRAM-ID. UNDEFINED-VAR.
 
@@ -262,6 +271,39 @@ class TestAnalyzeEndpointNominal:
         assert body["ir"] is not None
         assert body["ir"]["type"] == "IRProgram"
 
+    def test_analyze_returns_dependencies(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Dependencies must be accurately extracted and serialized."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"hello.cbl": _COBOL_HELLO, "call_test.cbl": _COBOL_WITH_CALL},
+        )
+
+        # Test no dependencies
+        body_no_deps = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+        assert body_no_deps["dependencies"] == []
+
+        # Test with CALL dependency
+        body_with_deps = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "call_test.cbl"},
+        ).json()
+        deps = body_with_deps["dependencies"]
+        assert len(deps) == 1
+        assert deps[0]["type"] == "CALL"
+        assert deps[0]["target"] == '"CUSTOMER-SERVICE"'
+
+        loc = deps[0]["source_location"]
+        assert loc["type"] == "Position"
+        assert loc["line"] == 6
+        assert loc["column"] == 13
+        assert "offset" in loc
+        assert "filename" in loc
+
     def test_analyze_returns_diagnostics(
         self, client: TestClient, workspace_root: Path
     ) -> None:
@@ -426,6 +468,7 @@ class TestAnalyzeEndpointDiagnostics:
                 semantic_diagnostics=[],
                 success=False,
                 error=Exception("Simulated internal compiler crash"),
+                dependencies=[],
                 ast=None,
                 ir=None,
             )
@@ -467,6 +510,7 @@ class TestAnalyzeEndpointDiagnostics:
                 semantic_diagnostics=[],
                 success=True,
                 error=None,
+                dependencies=[],
                 ast=None,
                 ir=None,
             )
@@ -503,6 +547,7 @@ class TestAnalyzeEndpointDiagnostics:
                 semantic_diagnostics=[],
                 success=True,
                 error=None,
+                dependencies=[],
                 ast=None,
                 ir=None,
             )
