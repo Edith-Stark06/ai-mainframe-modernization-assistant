@@ -51,3 +51,23 @@ class TestAnalysisService:
         result: AnalysisResult = AnalysisService().analyze_file(tmp_path)
         assert result.success is False
         assert result.error is not None
+
+    def test_dependency_analyzer_exception_handling(self, monkeypatch) -> None:
+        """Exceptions in dependency extraction should be caught and not raise UnboundLocalError."""
+
+        def mock_analyze(*args, **kwargs):
+            raise RuntimeError("Simulated dependency extraction failure")
+
+        monkeypatch.setattr(
+            "app.analysis.dependencies.analyzer.DependencyAnalyzer.analyze",
+            mock_analyze,
+        )
+
+        result: AnalysisResult = AnalysisService().analyze_file(
+            FIXTURES_DIR / "hello_world.cbl"
+        )
+        assert result.success is False
+        assert isinstance(result.error, RuntimeError)
+        assert str(result.error) == "Simulated dependency extraction failure"
+        assert result.dependencies == []
+        assert result.ast is not None
