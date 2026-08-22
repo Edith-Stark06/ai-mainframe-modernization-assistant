@@ -65,6 +65,7 @@ from typing import Any
 
 from app.ir.program import IRProgram
 from app.parser.ast.program import ProgramNode
+from app.analysis.dependencies.models import Dependency
 
 __all__ = ["AnalysisResult"]
 
@@ -100,6 +101,7 @@ class AnalysisResult:
     backend_diagnostics: list[Any]
     semantic_diagnostics: list[Any]
     success: bool
+    dependencies: list[Dependency]
     error: Exception | None = None
     ast: ProgramNode | None = None
     ir: IRProgram | None = None

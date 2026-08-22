@@ -29,6 +29,7 @@ class TestAnalysisService:
         assert result.ir is not None
         assert 'System.out.println("HELLO WORLD");' in result.java_source
         assert len(result.semantic_diagnostics) == 0
+        assert isinstance(result.dependencies, list)
 
     def test_semantic_error_analysis(self) -> None:
         """A program with undefined variables should fail semantic analysis."""
@@ -39,6 +40,7 @@ class TestAnalysisService:
         assert result.error is None
         assert result.ast is not None
         assert len(result.semantic_diagnostics) > 0
+        assert isinstance(result.dependencies, list)
         assert any(
             "UNDEFINED" in str(d).upper() or "NOT FOUND" in str(d).upper()
             for d in result.semantic_diagnostics
@@ -49,3 +51,23 @@ class TestAnalysisService:
         result: AnalysisResult = AnalysisService().analyze_file(tmp_path)
         assert result.success is False
         assert result.error is not None
+
+    def test_dependency_analyzer_exception_handling(self, monkeypatch) -> None:
+        """Exceptions in dependency extraction should be caught and not raise UnboundLocalError."""
+
+        def mock_analyze(*args, **kwargs):
+            raise RuntimeError("Simulated dependency extraction failure")
+
+        monkeypatch.setattr(
+            "app.analysis.dependencies.analyzer.DependencyAnalyzer.analyze",
+            mock_analyze,
+        )
+
+        result: AnalysisResult = AnalysisService().analyze_file(
+            FIXTURES_DIR / "hello_world.cbl"
+        )
+        assert result.success is False
+        assert isinstance(result.error, RuntimeError)
+        assert str(result.error) == "Simulated dependency extraction failure"
+        assert result.dependencies == []
+        assert result.ast is not None
