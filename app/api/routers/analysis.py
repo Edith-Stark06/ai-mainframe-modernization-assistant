@@ -73,6 +73,7 @@ from app.api.schemas.analysis import (
     AnalysisSourceMetadata,
     AnalysisStatus,
 )
+from app.api.schemas.dependencies import DependencyResponse
 from app.core.exceptions import ResourceNotFoundException, ValidationException
 from app.core.logging import logger
 from app.ingestion.workspace import WorkspaceManager
@@ -237,7 +238,10 @@ async def analyze_source(
         result.semantic_diagnostics + result.backend_diagnostics
     )
 
-    serialized_dependencies = serialize_dependencies(result.dependencies)
+    serialized_dependencies = [
+        DependencyResponse.model_validate(dep)
+        for dep in serialize_dependencies(result.dependencies)
+    ]
 
     if result.error is not None:
         status = AnalysisStatus.INTERNAL_ERROR

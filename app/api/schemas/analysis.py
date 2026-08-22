@@ -55,11 +55,14 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.schemas.dependencies import DependencyResponse
+
 __all__ = [
     "AnalysisRequest",
     "AnalysisResponse",
     "AnalysisSourceMetadata",
     "AnalysisStatus",
+    "DependencyResponse",
 ]
 
 
@@ -152,6 +155,8 @@ class AnalysisResponse(BaseModel):
             not complete.
         diagnostics:
             Serialized semantic and backend diagnostics.
+        dependencies:
+            Serialized COBOL dependencies extracted from the source.
         error:
             Human-readable error message, or ``None`` if the analysis
             succeeded.
@@ -201,7 +206,7 @@ class AnalysisResponse(BaseModel):
         default_factory=list,
         description="Serialized semantic and backend diagnostics.",
     )
-    dependencies: list[dict[str, Any]] = Field(
+    dependencies: list[DependencyResponse] = Field(
         default_factory=list,
         description="Serialized COBOL dependencies.",
     )
