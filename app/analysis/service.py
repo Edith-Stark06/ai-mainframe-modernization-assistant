@@ -77,6 +77,7 @@ from app.parser.lexer.lexer import CobolLexer
 from app.parser.semantic.analyzer import SemanticAnalyzer
 from app.parser.semantic.symbols import VariableSymbol
 from app.parser.syntax.program_parser import ProgramParser
+from app.analysis.dependencies.models import Dependency
 
 __all__ = ["AnalysisService"]
 
@@ -183,6 +184,7 @@ class AnalysisService:
         # Stage 2.5 — dependency extraction
         # ------------------------------------------------------------------
         logger.debug("AnalysisService: running dependency extraction.")
+        extracted_dependencies: list[Dependency] = []
         try:
             from app.analysis.dependencies.analyzer import DependencyAnalyzer
 
