@@ -37,9 +37,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.schemas.analysis import AnalysisResponse
 from app.main import app
 from app.workspace.inventory import InventoryBuilder
-from app.api.schemas.analysis import AnalysisResponse
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -61,6 +61,37 @@ _COBOL_WITH_CALL = b"""        IDENTIFICATION DIVISION.
         MAIN-PARAGRAPH.
             CALL "CUSTOMER-SERVICE".
             STOP RUN.
+"""
+
+_COBOL_WITH_PERFORM = b"""        IDENTIFICATION DIVISION.
+        PROGRAM-ID. PERFORM-TEST.
+
+        PROCEDURE DIVISION.
+        MAIN-PARAGRAPH.
+            PERFORM CALCULATE-BONUS.
+            STOP RUN.
+"""
+
+_COBOL_WITH_MULTIPLE_DEPS = b"""        IDENTIFICATION DIVISION.
+        PROGRAM-ID. MULTI-DEPS.
+
+        PROCEDURE DIVISION.
+        MAIN-PARAGRAPH.
+            PERFORM INIT-RTN
+            CALL SUBPROG.
+        INIT-RTN.
+            DISPLAY "INIT".
+"""
+
+_COBOL_WITH_DUPLICATES = b"""        IDENTIFICATION DIVISION.
+        PROGRAM-ID. DUP-TEST.
+
+        PROCEDURE DIVISION.
+        MAIN-PARAGRAPH.
+            CALL BONUSMOD
+            CALL BONUSMOD
+            PERFORM WORK
+            PERFORM WORK.
 """
 
 _COBOL_UNDEFINED = b"""        IDENTIFICATION DIVISION.
@@ -303,6 +334,93 @@ class TestAnalyzeEndpointNominal:
         assert loc["column"] == 13
         assert "offset" in loc
         assert "filename" in loc
+
+    def test_analyze_returns_perform_dependency(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """PERFORM dependencies must be accurately extracted and serialized."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"perform_test.cbl": _COBOL_WITH_PERFORM},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "perform_test.cbl"},
+        ).json()
+        deps = body["dependencies"]
+        assert len(deps) == 1
+        assert deps[0]["type"] == "PERFORM"
+        assert deps[0]["target"] == "CALCULATE-BONUS"
+        loc = deps[0]["source_location"]
+        assert loc["type"] == "Position"
+        assert loc["line"] == 6
+        assert loc["column"] == 13
+        assert "offset" in loc
+        assert "filename" in loc
+
+    def test_analyze_returns_multiple_dependencies(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Multiple dependencies must be returned in deterministic order."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"multi.cbl": _COBOL_WITH_MULTIPLE_DEPS},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "multi.cbl"},
+        ).json()
+        deps = body["dependencies"]
+        assert len(deps) == 2
+        assert deps[0]["type"] == "PERFORM"
+        assert deps[0]["target"] == "INIT-RTN"
+        assert deps[1]["type"] == "CALL"
+        assert deps[1]["target"] == "SUBPROG"
+
+    def test_analyze_deduplicates_dependencies(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Duplicate dependencies must be deduplicated, preserving first occurrence."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"dup.cbl": _COBOL_WITH_DUPLICATES},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "dup.cbl"},
+        ).json()
+        deps = body["dependencies"]
+        assert len(deps) == 2
+        assert deps[0]["type"] == "CALL"
+        assert deps[0]["target"] == "BONUSMOD"
+        assert deps[0]["source_location"]["line"] == 6
+        assert deps[1]["type"] == "PERFORM"
+        assert deps[1]["target"] == "WORK"
+        assert deps[1]["source_location"]["line"] == 8
+
+    def test_analyze_dependency_response_schema_validation(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """The response must conform to the typed DependencyResponse schema."""
+        from app.api.schemas.dependencies import DependencyResponse
+
+        ws_id = _create_workspace(
+            workspace_root,
+            {"call_test.cbl": _COBOL_WITH_CALL},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "call_test.cbl"},
+        ).json()
+        for dep in body["dependencies"]:
+            validated = DependencyResponse.model_validate(dep)
+            assert validated.type in {"CALL", "PERFORM"}
+            assert isinstance(validated.target, str)
+            if validated.source_location is not None:
+                assert validated.source_location.line >= 1
+                assert validated.source_location.column >= 1
+                assert validated.source_location.offset >= 0
+                assert isinstance(validated.source_location.filename, str)
 
     def test_analyze_returns_diagnostics(
         self, client: TestClient, workspace_root: Path
