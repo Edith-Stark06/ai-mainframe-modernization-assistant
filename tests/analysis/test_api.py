@@ -992,10 +992,10 @@ class TestAnalyzeEndpointDependenciesSummary:
         assert isinstance(counts["CALL"], int)
         assert isinstance(counts["PERFORM"], int)
 
-    def test_analyze_semantic_error_has_no_summary(
+    def test_analyze_semantic_error_preserves_dependency_summary(
         self, client: TestClient, workspace_root: Path
     ) -> None:
-        """An analysis that fails conceptually should still populate dependency_summary if dependencies were extracted."""
+        """A semantic analysis error may still expose dependency summary when the AST is available."""
         ws_id = _create_workspace(workspace_root, {"undefined.cbl": _COBOL_UNDEFINED})
         body = client.post(
             f"/api/v1/workspaces/{ws_id}/analyze",
@@ -1004,3 +1004,36 @@ class TestAnalyzeEndpointDependenciesSummary:
         assert body["success"] is False
         assert "dependency_summary" in body
         assert body["dependency_summary"] is not None
+
+    def test_analyze_internal_error_has_no_summary(
+        self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An internal error where no AST is generated must yield no dependency summary."""
+        from app.analysis.models import AnalysisResult
+
+        def mock_analyze_file(*args, **kwargs) -> AnalysisResult:
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[],
+                semantic_diagnostics=[],
+                success=False,
+                error=Exception("Simulated internal compiler crash"),
+                dependencies=[],
+                ast=None,
+                ir=None,
+            )
+
+        monkeypatch.setattr(
+            "app.api.routers.analysis.AnalysisService.analyze_file", mock_analyze_file
+        )
+
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+
+        assert body["success"] is False
+        assert body["error"] == "Simulated internal compiler crash"
+        assert body["status"] == "INTERNAL_ERROR"
+        assert body["dependency_summary"] is None
