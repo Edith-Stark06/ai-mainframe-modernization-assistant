@@ -78,7 +78,11 @@ from app.api.schemas.analysis import (
 )
 from app.api.schemas.dependencies import (
     DependencyAnalysisSummaryResponse,
+    DependencyGraphEdgeResponse,
+    DependencyGraphNodeResponse,
+    DependencyGraphResponse,
     DependencyResponse,
+    PositionResponse,
 )
 from app.core.exceptions import ResourceNotFoundException, ValidationException
 from app.core.logging import logger
@@ -250,9 +254,10 @@ async def analyze_source(
     ]
 
     # ------------------------------------------------------------------
-    # Compute Dependency Summary
+    # Compute Dependency Summary and Graph
     # ------------------------------------------------------------------
     dependency_summary = None
+    dependency_graph = None
     if result.ast is not None:
         program_name = source_path.stem.upper()
         ident_div = getattr(result.ast, "identification_division", None)
@@ -273,6 +278,32 @@ async def analyze_source(
             unresolved_target_count=summary.unresolved_target_count,
             ambiguous_target_count=summary.ambiguous_target_count,
             dependency_counts={k.name: v for k, v in summary.dependency_counts.items()},
+        )
+
+        dependency_graph = DependencyGraphResponse(
+            nodes=[
+                DependencyGraphNodeResponse(identifier=node.identifier)
+                for node in graph.nodes
+            ],
+            edges=[
+                DependencyGraphEdgeResponse(
+                    source=edge.source,
+                    target=edge.target,
+                    dependency_type=edge.dependency_type.name,
+                    source_location=(
+                        PositionResponse(
+                            type="Position",
+                            line=edge.source_location.line,
+                            column=edge.source_location.column,
+                            offset=edge.source_location.offset,
+                            filename=edge.source_location.filename,
+                        )
+                        if edge.source_location
+                        else None
+                    ),
+                )
+                for edge in graph.edges
+            ],
         )
 
     if result.error is not None:
@@ -300,6 +331,7 @@ async def analyze_source(
         diagnostics=serialized_diagnostics,
         dependencies=serialized_dependencies,
         dependency_summary=dependency_summary,
+        dependency_graph=dependency_graph,
         error=str(result.error) if result.error is not None else None,
     )
 

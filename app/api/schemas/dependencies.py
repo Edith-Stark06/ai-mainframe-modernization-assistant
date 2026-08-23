@@ -43,6 +43,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
     "DependencyAnalysisSummaryResponse",
+    "DependencyGraphNodeResponse",
+    "DependencyGraphEdgeResponse",
+    "DependencyGraphResponse",
     "DependencyResponse",
     "PositionResponse",
 ]
@@ -169,4 +172,85 @@ class DependencyAnalysisSummaryResponse(BaseModel):
     dependency_counts: dict[str, int] = Field(
         ...,
         description="Counts of dependencies grouped by their type (e.g. CALL, PERFORM).",
+    )
+
+
+class DependencyGraphNodeResponse(BaseModel):
+    """
+    Typed representation of a serialized dependency graph node.
+
+    Attributes:
+        identifier:
+            Source or target program identifier.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+
+    identifier: str = Field(
+        ...,
+        description="Source or target program identifier.",
+    )
+
+
+class DependencyGraphEdgeResponse(BaseModel):
+    """
+    Typed representation of a serialized dependency graph edge.
+
+    Attributes:
+        source:
+            Identifier of the source program.
+        target:
+            Identifier of the target program.
+        dependency_type:
+            Dependency kind (CALL or PERFORM).
+        source_location:
+            Source location of the dependency, or null if unavailable.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+
+    source: str = Field(
+        ...,
+        description="Identifier of the source program.",
+    )
+    target: str = Field(
+        ...,
+        description="Identifier of the target program.",
+    )
+    dependency_type: str = Field(
+        ...,
+        description="Dependency kind (CALL or PERFORM).",
+    )
+    source_location: PositionResponse | None = Field(
+        default=None,
+        description="Source location of the dependency, or null if unavailable.",
+    )
+
+
+class DependencyGraphResponse(BaseModel):
+    """
+    Typed representation of a serialized dependency graph.
+
+    Attributes:
+        nodes:
+            List of serialized dependency graph nodes.
+        edges:
+            List of serialized dependency graph edges.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+
+    nodes: list[DependencyGraphNodeResponse] = Field(
+        ...,
+        description="List of dependency graph nodes.",
+    )
+    edges: list[DependencyGraphEdgeResponse] = Field(
+        ...,
+        description="List of dependency graph edges.",
     )

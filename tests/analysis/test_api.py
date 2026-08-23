@@ -1078,3 +1078,149 @@ class TestAnalyzeEndpointDependenciesSummary:
         assert body["error"] == "Simulated internal compiler crash"
         assert body["status"] == "INTERNAL_ERROR"
         assert body["dependency_summary"] is None
+
+    def test_analyze_dependency_graph_empty(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """A program with no dependencies must yield an empty graph."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+        graph = body["dependency_graph"]
+        assert graph is not None
+        assert len(graph["nodes"]) == 1
+        assert graph["nodes"][0]["identifier"] == "HELLO-WORLD"
+        assert len(graph["edges"]) == 0
+
+    def test_analyze_dependency_graph_call(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """A program with a CALL dependency must yield a graph with a CALL edge."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"call_test.cbl": _COBOL_WITH_CALL, "CUSTOMER-SERVICE": _COBOL_HELLO},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "call_test.cbl"},
+        ).json()
+        graph = body["dependency_graph"]
+        assert graph is not None
+        assert len(graph["nodes"]) == 2
+        assert len(graph["edges"]) == 1
+        edge = graph["edges"][0]
+        assert edge["source"] == "CALL-TEST"
+        assert edge["target"] == '"CUSTOMER-SERVICE"'
+        assert edge["dependency_type"] == "CALL"
+
+    def test_analyze_dependency_graph_perform(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """A program with a PERFORM dependency must yield a graph with a PERFORM edge."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"perform_test.cbl": _COBOL_WITH_PERFORM},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "perform_test.cbl"},
+        ).json()
+        graph = body["dependency_graph"]
+        assert graph is not None
+        assert len(graph["nodes"]) == 2
+        assert len(graph["edges"]) == 1
+        edge = graph["edges"][0]
+        assert edge["source"] == "PERFORM-TEST"
+        assert edge["target"] == "CALCULATE-BONUS"
+        assert edge["dependency_type"] == "PERFORM"
+
+    def test_analyze_dependency_graph_duplicates(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """A program with multiple CALL and PERFORM to same targets deduplicates edges."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"dup.cbl": _COBOL_WITH_DUPLICATES},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "dup.cbl"},
+        ).json()
+        graph = body["dependency_graph"]
+        assert graph is not None
+        assert len(graph["nodes"]) == 3
+        assert len(graph["edges"]) == 2
+
+        edges = graph["edges"]
+        assert edges[0]["target"] == "BONUSMOD"
+        assert edges[0]["dependency_type"] == "CALL"
+
+        assert edges[1]["target"] == "WORK"
+        assert edges[1]["dependency_type"] == "PERFORM"
+
+    def test_analyze_dependency_graph_source_location(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """The dependency graph edge must preserve the source location."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"call_test.cbl": _COBOL_WITH_CALL},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "call_test.cbl"},
+        ).json()
+        edge = body["dependency_graph"]["edges"][0]
+        loc = edge["source_location"]
+        assert loc is not None
+        assert loc["type"] == "Position"
+        assert isinstance(loc["line"], int)
+        assert isinstance(loc["column"], int)
+        assert isinstance(loc["offset"], int)
+        assert loc["filename"].endswith("call_test.cbl")
+
+    def test_analyze_dependency_graph_semantic_error(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """A semantic analysis error may still expose dependency graph when the AST is available."""
+        ws_id = _create_workspace(workspace_root, {"undefined.cbl": _COBOL_UNDEFINED})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "undefined.cbl"},
+        ).json()
+        assert body["success"] is False
+        assert body["dependency_graph"] is not None
+        assert len(body["dependency_graph"]["nodes"]) == 1
+
+    def test_analyze_dependency_graph_internal_error(
+        self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An internal error where no AST is generated must yield no dependency graph."""
+        from app.analysis.models import AnalysisResult
+
+        def mock_analyze_file(*args, **kwargs) -> AnalysisResult:
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[],
+                semantic_diagnostics=[],
+                success=False,
+                error=Exception("Simulated internal compiler crash"),
+                dependencies=[],
+                ast=None,
+                ir=None,
+            )
+
+        monkeypatch.setattr(
+            "app.api.routers.analysis.AnalysisService.analyze_file", mock_analyze_file
+        )
+
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+
+        assert body["success"] is False
+        assert body["dependency_graph"] is None
