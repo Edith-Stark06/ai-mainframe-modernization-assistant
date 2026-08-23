@@ -13,6 +13,11 @@ from app.analysis.dependencies.graph import (
     DependencyGraphNode,
 )
 from app.analysis.dependencies.models import Dependency, DependencyType
+from app.analysis.dependencies.resolver import (
+    DependencyResolution,
+    ResolutionStatus,
+    WorkspaceDependencyResolver,
+)
 
 __all__ = [
     "Dependency",
@@ -20,5 +25,8 @@ __all__ = [
     "DependencyGraph",
     "DependencyGraphEdge",
     "DependencyGraphNode",
+    "DependencyResolution",
     "DependencyType",
+    "ResolutionStatus",
+    "WorkspaceDependencyResolver",
 ]
