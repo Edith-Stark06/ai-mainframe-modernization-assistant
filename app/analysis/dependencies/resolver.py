@@ -15,7 +15,7 @@ from enum import Enum
 from typing import Optional
 
 from app.analysis.dependencies.graph import DependencyGraph
-from app.workspace.models import ScannedFile, WorkspaceInventory
+from app.workspace.models import FileType, ScannedFile, WorkspaceInventory
 
 __all__ = [
     "DependencyResolution",
@@ -115,12 +115,17 @@ class WorkspaceDependencyResolver:
         Find all ScannedFile records matching the target identifier.
 
         Matches either exact basename (case-insensitive) or basename
-        without extension (case-insensitive).
+        without extension (case-insensitive), restricted strictly to
+        valid COBOL source file candidates.
         """
         matches: list[ScannedFile] = []
         target_lower = target.lower()
 
         for f in inventory.files:
+            # Task-055 explicitly filters out JCL and other non-COBOL types.
+            if f.file_type != FileType.COBOL:
+                continue
+
             if f.filename.lower() == target_lower:
                 matches.append(f)
                 continue
