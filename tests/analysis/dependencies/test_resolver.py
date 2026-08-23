@@ -113,7 +113,7 @@ def test_multiple_resolved_and_unresolved_targets():
     graph = DependencyGraph.from_dependencies("MAIN", deps)
 
     sf1 = _scanned_file("FOUND.cbl")
-    sf2 = _scanned_file("ALSO-FOUND.jcl", file_type=FileType.JCL)
+    sf2 = _scanned_file("ALSO-FOUND.cbl", file_type=FileType.COBOL)
     inventory = WorkspaceInventory(
         workspace_id="test-ws", files=[sf1, sf2], total_files=2
     )
@@ -132,6 +132,31 @@ def test_multiple_resolved_and_unresolved_targets():
     assert resolutions[2].target == "ALSO-FOUND"
     assert resolutions[2].status == ResolutionStatus.RESOLVED
     assert resolutions[2].resolved_file == sf2
+
+
+def test_excluded_file_types_do_not_resolve():
+    """JCL and other non-COBOL files must not resolve even if the name matches."""
+    deps = [
+        Dependency(type=DependencyType.CALL, target="CUSTOMER", source_location=_pos())
+    ]
+    graph = DependencyGraph.from_dependencies("MAIN", deps)
+
+    # CUSTOMER.jcl has matching stem, but wrong FileType.
+    sf_jcl = _scanned_file("CUSTOMER.jcl", file_type=FileType.JCL)
+    # CUSTOMER.cpy has matching stem, but wrong FileType.
+    sf_cpy = _scanned_file("CUSTOMER.cpy", file_type=FileType.COPYBOOK)
+
+    inventory = WorkspaceInventory(
+        workspace_id="test-ws", files=[sf_jcl, sf_cpy], total_files=2
+    )
+
+    resolver = WorkspaceDependencyResolver()
+    resolutions = resolver.resolve(graph, inventory)
+
+    assert len(resolutions) == 1
+    assert resolutions[0].target == "CUSTOMER"
+    assert resolutions[0].status == ResolutionStatus.UNRESOLVED
+    assert resolutions[0].resolved_file is None
 
 
 def test_nested_workspace_path():
@@ -218,14 +243,14 @@ def test_shared_target_from_multiple_graph_edges():
 
 
 def test_ambiguous_target():
-    """A target matching multiple files in the inventory is AMBIGUOUS."""
+    """A target matching multiple COBOL files in the inventory is AMBIGUOUS."""
     deps = [
         Dependency(type=DependencyType.CALL, target="CUSTOMER", source_location=_pos())
     ]
     graph = DependencyGraph.from_dependencies("MAIN", deps)
 
     sf1 = _scanned_file("CUSTOMER.cbl")
-    sf2 = _scanned_file("CUSTOMER.cpy", file_type=FileType.COPYBOOK)
+    sf2 = _scanned_file("CUSTOMER.cob", file_type=FileType.COBOL)
     inventory = WorkspaceInventory(
         workspace_id="test-ws", files=[sf1, sf2], total_files=2
     )
