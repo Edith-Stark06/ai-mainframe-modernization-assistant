@@ -113,6 +113,15 @@ _COBOL_SYNTAX_ERROR = b"""        IDENTIFICATION DIVISION.
             STOP RUN.
 """
 
+_COBOL_DIFFERENT_NAME = b"""        IDENTIFICATION DIVISION.
+        PROGRAM-ID. ACTUAL-PROG.
+
+        PROCEDURE DIVISION.
+        MAIN-PARAGRAPH.
+            CALL SOME-DEP
+            STOP RUN.
+"""
+
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
@@ -991,6 +1000,38 @@ class TestAnalyzeEndpointDependenciesSummary:
         assert "PERFORM" in counts
         assert isinstance(counts["CALL"], int)
         assert isinstance(counts["PERFORM"], int)
+
+    def test_analyze_canonical_identifier(
+        self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The dependency graph root must use the PROGRAM-ID, not the filename."""
+        from app.analysis.dependencies.graph import DependencyGraph
+
+        original_from_dependencies = DependencyGraph.from_dependencies
+        captured_source = None
+
+        def mock_from_dependencies(source: str, dependencies: list) -> DependencyGraph:
+            nonlocal captured_source
+            captured_source = source
+            return original_from_dependencies(source, dependencies)
+
+        monkeypatch.setattr(
+            "app.api.routers.analysis.DependencyGraph.from_dependencies",
+            mock_from_dependencies,
+        )
+
+        ws_id = _create_workspace(
+            workspace_root,
+            {"some_file.cbl": _COBOL_DIFFERENT_NAME},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "some_file.cbl"},
+        ).json()
+
+        assert body["success"] is True
+        assert body["dependency_summary"] is not None
+        assert captured_source == "ACTUAL-PROG"
 
     def test_analyze_semantic_error_preserves_dependency_summary(
         self, client: TestClient, workspace_root: Path
