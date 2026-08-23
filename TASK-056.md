@@ -55,7 +55,8 @@ The summary provides the following aggregated statistics:
 - `node_count`: The total number of nodes in the graph (including the root node).
 - `edge_count`: The total number of edges in the graph.
 - `resolved_target_count`: The number of resolution objects with `ResolutionStatus.RESOLVED`.
-- `unresolved_target_count`: The number of resolution objects that are not perfectly resolved (e.g. `UNRESOLVED` or `AMBIGUOUS`).
+- `unresolved_target_count`: The number of resolution objects with `ResolutionStatus.UNRESOLVED`.
+- `ambiguous_target_count`: The number of resolution objects with `ResolutionStatus.AMBIGUOUS`.
 - `dependency_counts`: A deterministic mapping from `DependencyType` to the number of edges of that type in the graph. It includes no fabricated dependency types (i.e. if the graph has 0 dependencies, this dictionary is empty).
 
 ### Matching Logic and Determinism
