@@ -55,13 +55,17 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.schemas.dependencies import DependencyResponse
+from app.api.schemas.dependencies import (
+    DependencyAnalysisSummaryResponse,
+    DependencyResponse,
+)
 
 __all__ = [
     "AnalysisRequest",
     "AnalysisResponse",
     "AnalysisSourceMetadata",
     "AnalysisStatus",
+    "DependencyAnalysisSummaryResponse",
     "DependencyResponse",
 ]
 
@@ -157,6 +161,9 @@ class AnalysisResponse(BaseModel):
             Serialized semantic and backend diagnostics.
         dependencies:
             Serialized COBOL dependencies extracted from the source.
+        dependency_summary:
+            Summary statistics of the dependency graph and resolutions, or
+            ``None`` if unavailable.
         error:
             Human-readable error message, or ``None`` if the analysis
             succeeded.
@@ -209,6 +216,10 @@ class AnalysisResponse(BaseModel):
     dependencies: list[DependencyResponse] = Field(
         default_factory=list,
         description="Serialized COBOL dependencies.",
+    )
+    dependency_summary: DependencyAnalysisSummaryResponse | None = Field(
+        default=None,
+        description="Summary statistics of the dependency graph and resolutions, or null if unavailable.",
     )
     error: str | None = Field(
         default=None,
