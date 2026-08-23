@@ -255,6 +255,12 @@ async def analyze_source(
     dependency_summary = None
     if result.ast is not None:
         program_name = source_path.stem.upper()
+        ident_div = getattr(result.ast, "identification_division", None)
+        if ident_div is not None:
+            pid_node = getattr(ident_div, "program_id", None)
+            if pid_node is not None:
+                program_name = pid_node.value.upper()
+
         graph = DependencyGraph.from_dependencies(program_name, result.dependencies)
         resolver = WorkspaceDependencyResolver()
         resolutions = resolver.resolve(graph, inventory)
