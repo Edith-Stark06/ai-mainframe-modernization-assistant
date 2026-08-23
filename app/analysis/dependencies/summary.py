@@ -36,7 +36,8 @@ class DependencyAnalysisSummary:
         node_count: The total number of nodes in the dependency graph.
         edge_count: The total number of edges in the dependency graph.
         resolved_target_count: The number of dependency targets successfully resolved.
-        unresolved_target_count: The number of dependency targets not successfully resolved.
+        unresolved_target_count: The number of dependency targets explicitly unresolved.
+        ambiguous_target_count: The number of dependency targets with ambiguous matches.
         dependency_counts: Mapping of dependency types to their counts in the graph.
     """
 
@@ -44,6 +45,7 @@ class DependencyAnalysisSummary:
     edge_count: int
     resolved_target_count: int
     unresolved_target_count: int
+    ambiguous_target_count: int
     dependency_counts: Mapping[DependencyType, int]
 
     @classmethod
@@ -67,10 +69,13 @@ class DependencyAnalysisSummary:
 
         resolved_count = 0
         unresolved_count = 0
+        ambiguous_count = 0
 
         for res in resolutions:
             if res.status == ResolutionStatus.RESOLVED:
                 resolved_count += 1
+            elif res.status == ResolutionStatus.AMBIGUOUS:
+                ambiguous_count += 1
             else:
                 unresolved_count += 1
 
@@ -89,5 +94,6 @@ class DependencyAnalysisSummary:
             edge_count=edge_count,
             resolved_target_count=resolved_count,
             unresolved_target_count=unresolved_count,
+            ambiguous_target_count=ambiguous_count,
             dependency_counts=dependency_counts,
         )

@@ -24,6 +24,7 @@ def test_empty_graph():
     assert summary.edge_count == 0
     assert summary.resolved_target_count == 0
     assert summary.unresolved_target_count == 0
+    assert summary.ambiguous_target_count == 0
     assert summary.dependency_counts == {}
 
 
@@ -41,6 +42,7 @@ def test_single_call():
     assert summary.edge_count == 1
     assert summary.resolved_target_count == 1
     assert summary.unresolved_target_count == 0
+    assert summary.ambiguous_target_count == 0
     assert summary.dependency_counts == {DependencyType.CALL: 1}
 
 
@@ -60,6 +62,7 @@ def test_single_perform():
     assert summary.edge_count == 1
     assert summary.resolved_target_count == 0
     assert summary.unresolved_target_count == 1
+    assert summary.ambiguous_target_count == 0
     assert summary.dependency_counts == {DependencyType.PERFORM: 1}
 
 
@@ -82,7 +85,8 @@ def test_mixed_call_perform():
     assert summary.node_count == 4
     assert summary.edge_count == 3
     assert summary.resolved_target_count == 1
-    assert summary.unresolved_target_count == 2
+    assert summary.unresolved_target_count == 1
+    assert summary.ambiguous_target_count == 1
     assert summary.dependency_counts == {
         DependencyType.CALL: 2,
         DependencyType.PERFORM: 1,
@@ -109,6 +113,7 @@ def test_fully_resolved():
     assert summary.edge_count == 2
     assert summary.resolved_target_count == 2
     assert summary.unresolved_target_count == 0
+    assert summary.ambiguous_target_count == 0
     assert summary.dependency_counts == {
         DependencyType.CALL: 1,
         DependencyType.PERFORM: 1,
@@ -133,6 +138,7 @@ def test_partially_resolved():
     assert summary.edge_count == 2
     assert summary.resolved_target_count == 1
     assert summary.unresolved_target_count == 1
+    assert summary.ambiguous_target_count == 0
     assert summary.dependency_counts == {
         DependencyType.CALL: 2,
     }
@@ -160,6 +166,7 @@ def test_fully_unresolved():
     assert summary.edge_count == 2
     assert summary.resolved_target_count == 0
     assert summary.unresolved_target_count == 2
+    assert summary.ambiguous_target_count == 0
     assert summary.dependency_counts == {
         DependencyType.CALL: 1,
         DependencyType.PERFORM: 1,
@@ -185,9 +192,32 @@ def test_same_target_with_call_and_perform():
     assert summary.edge_count == 2
     assert summary.resolved_target_count == 1
     assert summary.unresolved_target_count == 0
+    assert summary.ambiguous_target_count == 0
     assert summary.dependency_counts == {
         DependencyType.CALL: 1,
         DependencyType.PERFORM: 1,
+    }
+
+
+def test_fully_ambiguous():
+    """Fully ambiguous dependencies produce expected counts."""
+    deps = [
+        Dependency(type=DependencyType.CALL, target="CUSTOMER", source_location=_pos()),
+    ]
+    graph = DependencyGraph.from_dependencies("MAIN", deps)
+    resolutions = [
+        DependencyResolution(target="CUSTOMER", status=ResolutionStatus.AMBIGUOUS),
+    ]
+
+    summary = DependencyAnalysisSummary.from_results(graph, resolutions)
+
+    assert summary.node_count == 2
+    assert summary.edge_count == 1
+    assert summary.resolved_target_count == 0
+    assert summary.unresolved_target_count == 0
+    assert summary.ambiguous_target_count == 1
+    assert summary.dependency_counts == {
+        DependencyType.CALL: 1,
     }
 
 
