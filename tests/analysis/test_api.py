@@ -113,6 +113,15 @@ _COBOL_SYNTAX_ERROR = b"""        IDENTIFICATION DIVISION.
             STOP RUN.
 """
 
+_COBOL_DIFFERENT_NAME = b"""        IDENTIFICATION DIVISION.
+        PROGRAM-ID. ACTUAL-PROG.
+
+        PROCEDURE DIVISION.
+        MAIN-PARAGRAPH.
+            CALL SOME-DEP
+            STOP RUN.
+"""
+
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
@@ -895,3 +904,177 @@ class TestAnalysisResponseSchema:
                 diagnostics=[],
                 error=None,
             )
+
+
+# ---------------------------------------------------------------------------
+# Dependency Summary
+# ---------------------------------------------------------------------------
+
+
+class TestAnalyzeEndpointDependenciesSummary:
+    """Tests for the dependency analysis summary response."""
+
+    def test_analyze_empty_dependency_summary(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """A file with no dependencies must have an empty summary."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+        assert "dependency_summary" in body
+        summary = body["dependency_summary"]
+        assert summary is not None
+        assert summary["node_count"] == 1  # only the source file
+        assert summary["edge_count"] == 0
+        assert summary["resolved_target_count"] == 0
+        assert summary["unresolved_target_count"] == 0
+        assert summary["ambiguous_target_count"] == 0
+        assert summary["dependency_counts"] == {}
+
+    def test_analyze_fully_resolved_summary(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """A file with dependencies present in the workspace must resolve fully."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {
+                "perform_test.cbl": _COBOL_WITH_PERFORM,
+                "calculate-bonus.cbl": _COBOL_HELLO,
+            },
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "perform_test.cbl"},
+        ).json()
+        summary = body["dependency_summary"]
+        assert summary is not None
+        assert summary["node_count"] == 2
+        assert summary["edge_count"] == 1
+        assert summary["resolved_target_count"] == 1
+        assert summary["unresolved_target_count"] == 0
+        assert summary["ambiguous_target_count"] == 0
+        assert summary["dependency_counts"] == {"PERFORM": 1}
+
+    def test_analyze_mixed_resolution_summary(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """A file with some missing dependencies must show mixed resolution."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {
+                "multi.cbl": _COBOL_WITH_MULTIPLE_DEPS,
+                "subprog.cbl": _COBOL_HELLO,
+            },
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "multi.cbl"},
+        ).json()
+        summary = body["dependency_summary"]
+        assert summary is not None
+        assert summary["node_count"] == 3
+        assert summary["edge_count"] == 2
+        assert summary["resolved_target_count"] == 1  # subprog
+        assert summary["unresolved_target_count"] == 1  # init-rtn
+        assert summary["ambiguous_target_count"] == 0
+        assert summary["dependency_counts"] == {"CALL": 1, "PERFORM": 1}
+
+    def test_analyze_dependency_types_serialization(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Dependency types must be correctly serialized as string keys."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"dup.cbl": _COBOL_WITH_DUPLICATES},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "dup.cbl"},
+        ).json()
+        summary = body["dependency_summary"]
+        assert summary is not None
+        counts = summary["dependency_counts"]
+        assert "CALL" in counts
+        assert "PERFORM" in counts
+        assert isinstance(counts["CALL"], int)
+        assert isinstance(counts["PERFORM"], int)
+
+    def test_analyze_canonical_identifier(
+        self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The dependency graph root must use the PROGRAM-ID, not the filename."""
+        from app.analysis.dependencies.graph import DependencyGraph
+
+        original_from_dependencies = DependencyGraph.from_dependencies
+        captured_source = None
+
+        def mock_from_dependencies(source: str, dependencies: list) -> DependencyGraph:
+            nonlocal captured_source
+            captured_source = source
+            return original_from_dependencies(source, dependencies)
+
+        monkeypatch.setattr(
+            "app.api.routers.analysis.DependencyGraph.from_dependencies",
+            mock_from_dependencies,
+        )
+
+        ws_id = _create_workspace(
+            workspace_root,
+            {"some_file.cbl": _COBOL_DIFFERENT_NAME},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "some_file.cbl"},
+        ).json()
+
+        assert body["success"] is True
+        assert body["dependency_summary"] is not None
+        assert captured_source == "ACTUAL-PROG"
+
+    def test_analyze_semantic_error_preserves_dependency_summary(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """A semantic analysis error may still expose dependency summary when the AST is available."""
+        ws_id = _create_workspace(workspace_root, {"undefined.cbl": _COBOL_UNDEFINED})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "undefined.cbl"},
+        ).json()
+        assert body["success"] is False
+        assert "dependency_summary" in body
+        assert body["dependency_summary"] is not None
+
+    def test_analyze_internal_error_has_no_summary(
+        self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An internal error where no AST is generated must yield no dependency summary."""
+        from app.analysis.models import AnalysisResult
+
+        def mock_analyze_file(*args, **kwargs) -> AnalysisResult:
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[],
+                semantic_diagnostics=[],
+                success=False,
+                error=Exception("Simulated internal compiler crash"),
+                dependencies=[],
+                ast=None,
+                ir=None,
+            )
+
+        monkeypatch.setattr(
+            "app.api.routers.analysis.AnalysisService.analyze_file", mock_analyze_file
+        )
+
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+
+        assert body["success"] is False
+        assert body["error"] == "Simulated internal compiler crash"
+        assert body["status"] == "INTERNAL_ERROR"
+        assert body["dependency_summary"] is None
