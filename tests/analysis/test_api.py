@@ -895,3 +895,112 @@ class TestAnalysisResponseSchema:
                 diagnostics=[],
                 error=None,
             )
+
+
+# ---------------------------------------------------------------------------
+# Dependency Summary
+# ---------------------------------------------------------------------------
+
+
+class TestAnalyzeEndpointDependenciesSummary:
+    """Tests for the dependency analysis summary response."""
+
+    def test_analyze_empty_dependency_summary(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """A file with no dependencies must have an empty summary."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+        assert "dependency_summary" in body
+        summary = body["dependency_summary"]
+        assert summary is not None
+        assert summary["node_count"] == 1  # only the source file
+        assert summary["edge_count"] == 0
+        assert summary["resolved_target_count"] == 0
+        assert summary["unresolved_target_count"] == 0
+        assert summary["ambiguous_target_count"] == 0
+        assert summary["dependency_counts"] == {}
+
+    def test_analyze_fully_resolved_summary(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """A file with dependencies present in the workspace must resolve fully."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {
+                "perform_test.cbl": _COBOL_WITH_PERFORM,
+                "calculate-bonus.cbl": _COBOL_HELLO,
+            },
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "perform_test.cbl"},
+        ).json()
+        summary = body["dependency_summary"]
+        assert summary is not None
+        assert summary["node_count"] == 2
+        assert summary["edge_count"] == 1
+        assert summary["resolved_target_count"] == 1
+        assert summary["unresolved_target_count"] == 0
+        assert summary["ambiguous_target_count"] == 0
+        assert summary["dependency_counts"] == {"PERFORM": 1}
+
+    def test_analyze_mixed_resolution_summary(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """A file with some missing dependencies must show mixed resolution."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {
+                "multi.cbl": _COBOL_WITH_MULTIPLE_DEPS,
+                "subprog.cbl": _COBOL_HELLO,
+            },
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "multi.cbl"},
+        ).json()
+        summary = body["dependency_summary"]
+        assert summary is not None
+        assert summary["node_count"] == 3
+        assert summary["edge_count"] == 2
+        assert summary["resolved_target_count"] == 1  # subprog
+        assert summary["unresolved_target_count"] == 1  # init-rtn
+        assert summary["ambiguous_target_count"] == 0
+        assert summary["dependency_counts"] == {"CALL": 1, "PERFORM": 1}
+
+    def test_analyze_dependency_types_serialization(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Dependency types must be correctly serialized as string keys."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"dup.cbl": _COBOL_WITH_DUPLICATES},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "dup.cbl"},
+        ).json()
+        summary = body["dependency_summary"]
+        assert summary is not None
+        counts = summary["dependency_counts"]
+        assert "CALL" in counts
+        assert "PERFORM" in counts
+        assert isinstance(counts["CALL"], int)
+        assert isinstance(counts["PERFORM"], int)
+
+    def test_analyze_semantic_error_has_no_summary(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """An analysis that fails conceptually should still populate dependency_summary if dependencies were extracted."""
+        ws_id = _create_workspace(workspace_root, {"undefined.cbl": _COBOL_UNDEFINED})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "undefined.cbl"},
+        ).json()
+        assert body["success"] is False
+        assert "dependency_summary" in body
+        assert body["dependency_summary"] is not None

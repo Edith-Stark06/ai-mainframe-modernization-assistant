@@ -61,6 +61,9 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
+from app.analysis.dependencies.graph import DependencyGraph
+from app.analysis.dependencies.resolver import WorkspaceDependencyResolver
+from app.analysis.dependencies.summary import DependencyAnalysisSummary
 from app.analysis.serializers.ast import serialize_ast
 from app.analysis.serializers.diagnostics import serialize_diagnostics
 from app.analysis.serializers.ir import serialize_ir
@@ -73,7 +76,10 @@ from app.api.schemas.analysis import (
     AnalysisSourceMetadata,
     AnalysisStatus,
 )
-from app.api.schemas.dependencies import DependencyResponse
+from app.api.schemas.dependencies import (
+    DependencyAnalysisSummaryResponse,
+    DependencyResponse,
+)
 from app.core.exceptions import ResourceNotFoundException, ValidationException
 from app.core.logging import logger
 from app.ingestion.workspace import WorkspaceManager
@@ -243,6 +249,26 @@ async def analyze_source(
         for dep in serialize_dependencies(result.dependencies)
     ]
 
+    # ------------------------------------------------------------------
+    # Compute Dependency Summary
+    # ------------------------------------------------------------------
+    dependency_summary = None
+    if result.ast is not None:
+        program_name = source_path.stem.upper()
+        graph = DependencyGraph.from_dependencies(program_name, result.dependencies)
+        resolver = WorkspaceDependencyResolver()
+        resolutions = resolver.resolve(graph, inventory)
+        summary = DependencyAnalysisSummary.from_results(graph, resolutions)
+
+        dependency_summary = DependencyAnalysisSummaryResponse(
+            node_count=summary.node_count,
+            edge_count=summary.edge_count,
+            resolved_target_count=summary.resolved_target_count,
+            unresolved_target_count=summary.unresolved_target_count,
+            ambiguous_target_count=summary.ambiguous_target_count,
+            dependency_counts={k.name: v for k, v in summary.dependency_counts.items()},
+        )
+
     if result.error is not None:
         status = AnalysisStatus.INTERNAL_ERROR
     elif any(
@@ -267,6 +293,7 @@ async def analyze_source(
         ir=serialized_ir,
         diagnostics=serialized_diagnostics,
         dependencies=serialized_dependencies,
+        dependency_summary=dependency_summary,
         error=str(result.error) if result.error is not None else None,
     )
 
