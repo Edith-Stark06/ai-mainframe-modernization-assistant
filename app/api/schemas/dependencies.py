@@ -42,6 +42,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
+    "DependencyAnalysisSummaryResponse",
     "DependencyResponse",
     "PositionResponse",
 ]
@@ -119,4 +120,53 @@ class DependencyResponse(BaseModel):
     source_location: PositionResponse | None = Field(
         default=None,
         description="Source location of the dependency, or null if unavailable.",
+    )
+
+
+class DependencyAnalysisSummaryResponse(BaseModel):
+    """
+    Typed representation of a serialized dependency analysis summary.
+
+    Attributes:
+        node_count:
+            Total number of nodes in the dependency graph.
+        edge_count:
+            Total number of edges in the dependency graph.
+        resolved_target_count:
+            Number of resolution targets that were successfully resolved.
+        unresolved_target_count:
+            Number of resolution targets that could not be resolved.
+        ambiguous_target_count:
+            Number of resolution targets that had ambiguous resolutions.
+        dependency_counts:
+            Counts of dependencies grouped by their type (e.g. CALL, PERFORM).
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+
+    node_count: int = Field(
+        ...,
+        description="Total number of nodes in the dependency graph.",
+    )
+    edge_count: int = Field(
+        ...,
+        description="Total number of edges in the dependency graph.",
+    )
+    resolved_target_count: int = Field(
+        ...,
+        description="Number of resolution targets that were successfully resolved.",
+    )
+    unresolved_target_count: int = Field(
+        ...,
+        description="Number of resolution targets that could not be resolved.",
+    )
+    ambiguous_target_count: int = Field(
+        ...,
+        description="Number of resolution targets that had ambiguous resolutions.",
+    )
+    dependency_counts: dict[str, int] = Field(
+        ...,
+        description="Counts of dependencies grouped by their type (e.g. CALL, PERFORM).",
     )
