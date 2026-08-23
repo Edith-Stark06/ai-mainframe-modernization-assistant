@@ -18,10 +18,12 @@ from app.analysis.dependencies.resolver import (
     ResolutionStatus,
     WorkspaceDependencyResolver,
 )
+from app.analysis.dependencies.summary import DependencyAnalysisSummary
 
 __all__ = [
     "Dependency",
     "DependencyAnalyzer",
+    "DependencyAnalysisSummary",
     "DependencyGraph",
     "DependencyGraphEdge",
     "DependencyGraphNode",
