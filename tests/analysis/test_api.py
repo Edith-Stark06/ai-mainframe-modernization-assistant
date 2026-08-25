@@ -1224,3 +1224,115 @@ class TestAnalyzeEndpointDependenciesSummary:
 
         assert body["success"] is False
         assert body["dependency_graph"] is None
+
+    def test_analyze_dependency_graph_nodes_identifiers(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Graph nodes must contain correct canonical root and target identifiers."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"call_test.cbl": _COBOL_WITH_CALL, "CUSTOMER-SERVICE": _COBOL_HELLO},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "call_test.cbl"},
+        ).json()
+        graph = body["dependency_graph"]
+        assert graph is not None
+        node_ids = {node["identifier"] for node in graph["nodes"]}
+        assert "CALL-TEST" in node_ids
+        assert '"CUSTOMER-SERVICE"' in node_ids
+
+    def test_analyze_dependency_graph_summary_match(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """The dependency graph and summary metrics must exactly align."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"dup.cbl": _COBOL_WITH_DUPLICATES},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "dup.cbl"},
+        ).json()
+        graph = body["dependency_graph"]
+        summary = body["dependency_summary"]
+
+        assert summary["node_count"] == len(graph["nodes"])
+        assert summary["edge_count"] == len(graph["edges"])
+
+    def test_analyze_dependency_graph_json_types(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Enum values must serialize to raw JSON strings without leaking domain objects."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"dup.cbl": _COBOL_WITH_DUPLICATES},
+        )
+        response = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "dup.cbl"},
+        )
+        body = response.json()
+        graph = body["dependency_graph"]
+
+        edge_types = {edge["dependency_type"] for edge in graph["edges"]}
+        assert edge_types == {"CALL", "PERFORM"}
+        # Verify JSON serialization does not contain Python Enum string representations
+        raw_json = response.text
+        assert "DependencyType.CALL" not in raw_json
+        assert "DependencyType.PERFORM" not in raw_json
+
+    def test_analyze_dependency_graph_backward_compatibility(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Verify existing AnalysisResponse fields remain intact alongside the graph."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+
+        expected_fields = {
+            "success",
+            "status",
+            "analysis_id",
+            "workspace_id",
+            "filename",
+            "source_metadata",
+            "java_source",
+            "ast",
+            "ir",
+            "diagnostics",
+            "dependencies",
+            "dependency_summary",
+            "dependency_graph",
+            "error",
+        }
+        actual_fields = set(body.keys())
+        assert expected_fields.issubset(actual_fields)
+
+    def test_analyze_dependency_graph_determinism(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Repeated equivalent analysis must produce stable node and edge ordering."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"dup.cbl": _COBOL_WITH_DUPLICATES},
+        )
+
+        body1 = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "dup.cbl"},
+        ).json()
+
+        body2 = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "dup.cbl"},
+        ).json()
+
+        graph1 = body1["dependency_graph"]
+        graph2 = body2["dependency_graph"]
+
+        assert graph1["nodes"] == graph2["nodes"]
+        assert graph1["edges"] == graph2["edges"]
