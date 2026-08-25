@@ -57,6 +57,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.schemas.dependencies import (
     DependencyAnalysisSummaryResponse,
+    DependencyGraphResponse,
     DependencyResponse,
 )
 
@@ -66,6 +67,7 @@ __all__ = [
     "AnalysisSourceMetadata",
     "AnalysisStatus",
     "DependencyAnalysisSummaryResponse",
+    "DependencyGraphResponse",
     "DependencyResponse",
 ]
 
@@ -164,6 +166,9 @@ class AnalysisResponse(BaseModel):
         dependency_summary:
             Summary statistics of the dependency graph and resolutions, or
             ``None`` if unavailable.
+        dependency_graph:
+            Serialized dependency graph containing nodes and edges, or
+            ``None`` if unavailable.
         error:
             Human-readable error message, or ``None`` if the analysis
             succeeded.
@@ -220,6 +225,10 @@ class AnalysisResponse(BaseModel):
     dependency_summary: DependencyAnalysisSummaryResponse | None = Field(
         default=None,
         description="Summary statistics of the dependency graph and resolutions, or null if unavailable.",
+    )
+    dependency_graph: DependencyGraphResponse | None = Field(
+        default=None,
+        description="Serialized dependency graph containing nodes and edges, or null if unavailable.",
     )
     error: str | None = Field(
         default=None,
