@@ -32,7 +32,14 @@ class BusinessRule:
 
     def __post_init__(self) -> None:
         """Validate rule constraints."""
-        if not self.condition:
-            raise ValueError("Business rule condition cannot be empty.")
+        if not self.condition or not self.condition.strip():
+            raise ValueError(
+                "Business rule condition cannot be empty or whitespace-only."
+            )
         if not self.actions:
             raise ValueError("Business rule must have at least one action.")
+        for action in self.actions:
+            if not action or not action.strip():
+                raise ValueError(
+                    "Business rule action cannot be empty or whitespace-only."
+                )
