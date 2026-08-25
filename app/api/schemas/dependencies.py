@@ -39,7 +39,9 @@ Project:
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal, Self
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 __all__ = [
     "DependencyAnalysisSummaryResponse",
@@ -190,6 +192,7 @@ class DependencyGraphNodeResponse(BaseModel):
 
     identifier: str = Field(
         ...,
+        min_length=1,
         description="Source or target program identifier.",
     )
 
@@ -221,7 +224,7 @@ class DependencyGraphEdgeResponse(BaseModel):
         ...,
         description="Identifier of the target program.",
     )
-    dependency_type: str = Field(
+    dependency_type: Literal["CALL", "PERFORM"] = Field(
         ...,
         description="Dependency kind (CALL or PERFORM).",
     )
@@ -254,3 +257,17 @@ class DependencyGraphResponse(BaseModel):
         ...,
         description="List of dependency graph edges.",
     )
+
+    @model_validator(mode="after")
+    def validate_edge_references(self) -> Self:
+        node_ids = {node.identifier for node in self.nodes}
+        for edge in self.edges:
+            if edge.source not in node_ids:
+                raise ValueError(
+                    f"Edge source '{edge.source}' does not reference an existing node."
+                )
+            if edge.target not in node_ids:
+                raise ValueError(
+                    f"Edge target '{edge.target}' does not reference an existing node."
+                )
+        return self
