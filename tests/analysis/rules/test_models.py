@@ -73,3 +73,27 @@ def test_rule_invalid_empty_actions() -> None:
     """A rule cannot be created with zero actions."""
     with pytest.raises(ValueError, match="must have at least one action"):
         BusinessRule(condition="A > B", actions=())
+
+
+def test_rule_invalid_whitespace_condition() -> None:
+    """A rule cannot be created with a whitespace-only condition."""
+    with pytest.raises(ValueError, match="cannot be empty or whitespace-only"):
+        BusinessRule(condition="   ", actions=("A = B",))
+
+
+def test_rule_invalid_whitespace_action() -> None:
+    """A rule cannot be created with a whitespace-only action."""
+    with pytest.raises(ValueError, match="cannot be empty or whitespace-only"):
+        BusinessRule(condition="A > B", actions=("   ",))
+
+
+def test_rule_invalid_tab_newline_condition() -> None:
+    """A rule cannot be created with tab/newline-only condition."""
+    with pytest.raises(ValueError, match="cannot be empty or whitespace-only"):
+        BusinessRule(condition="\t\n", actions=("A = B",))
+
+
+def test_rule_invalid_tab_newline_action() -> None:
+    """A rule cannot be created with tab/newline-only action."""
+    with pytest.raises(ValueError, match="cannot be empty or whitespace-only"):
+        BusinessRule(condition="A > B", actions=("\t\n",))
