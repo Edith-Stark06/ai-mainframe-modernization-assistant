@@ -289,7 +289,7 @@ async def analyze_source(
                 DependencyGraphEdgeResponse(
                     source=edge.source,
                     target=edge.target,
-                    dependency_type=edge.dependency_type.name,
+                    dependency_type=edge.dependency_type.name,  # type: ignore[arg-type]
                     source_location=(
                         PositionResponse(
                             type="Position",
