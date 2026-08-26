@@ -61,6 +61,7 @@ from app.api.schemas.dependencies import (
     DependencyResponse,
 )
 from app.api.schemas.rules import BusinessRuleResponse
+from app.api.schemas.ai import AIAnalysisResponse, AICapabilityRequest
 
 __all__ = [
     "AnalysisRequest",
@@ -110,6 +111,11 @@ class AnalysisRequest(BaseModel):
         min_length=1,
         description="Basename of the COBOL source file to analyze.",
         examples=["payroll.cbl"],
+    )
+    ai_capabilities: list[AICapabilityRequest] | None = Field(
+        default=None,
+        description="Optional list of AI capabilities to invoke during analysis.",
+        examples=[[AICapabilityRequest.EXPLANATION, AICapabilityRequest.DOCUMENTATION]],
     )
 
 
@@ -239,4 +245,8 @@ class AnalysisResponse(BaseModel):
     error: str | None = Field(
         default=None,
         description="Human-readable error message, or null on success.",
+    )
+    ai_analysis: AIAnalysisResponse | None = Field(
+        default=None,
+        description="Optional AI analysis result, if requested and successfully produced.",
     )
