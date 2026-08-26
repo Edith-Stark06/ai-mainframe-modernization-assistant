@@ -16,7 +16,7 @@ def test_normalize_canonical_actions() -> None:
     """Actions are tokenised and reconstructed with exact spacing and uppercase."""
     rule = BusinessRule(condition="A > B", actions=("  bonus  =   salary * 0.20  ",))
     normalized = normalize_business_rule(rule)
-    assert normalized.actions == ("BONUS = SALARY * 0 . 20",)
+    assert normalized.actions == ("BONUS = SALARY * 0.20",)
 
 
 def test_normalize_multiple_actions() -> None:
@@ -66,5 +66,16 @@ def test_normalize_unsupported_input() -> None:
     # An unclosed string literal will cause a LexerError
     rule = BusinessRule(condition="A = 'unclosed", actions=("B = 1",))
     normalized = normalize_business_rule(rule)
-    assert normalized.condition == "A = 'UNCLOSED"
+    assert normalized.condition == "A = 'unclosed"
     assert normalized.actions == ("B = 1",)
+
+
+def test_normalize_numeric_literals() -> None:
+    """Numeric literals should not be erroneously spaced."""
+    rule = BusinessRule(
+        condition="A > .20",
+        actions=("X = 10.50", "Y = 0.20"),
+    )
+    normalized = normalize_business_rule(rule)
+    assert normalized.condition == "A > .20"
+    assert normalized.actions == ("X = 10.50", "Y = 0.20")
