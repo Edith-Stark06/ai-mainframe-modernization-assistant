@@ -135,6 +135,22 @@ _COBOL_WITH_BUSINESS_RULES = b"""        IDENTIFICATION DIVISION.
             STOP RUN.
 """
 
+_COBOL_COMBINED = b"""        IDENTIFICATION DIVISION.
+        PROGRAM-ID. COMBINED-PROG.
+
+        PROCEDURE DIVISION.
+        MAIN-PARAGRAPH.
+            CALL "OTHER-PROG"
+            IF A > B
+                MOVE 1 TO X
+            ELSE
+                PERFORM SUB-PARA
+            END-IF.
+            STOP RUN.
+        SUB-PARA.
+            DISPLAY "SUB".
+"""
+
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
@@ -1458,3 +1474,316 @@ class TestAnalyzeBusinessRules:
 
         # No AST, so no rules could be extracted
         assert body.get("business_rules") is None
+
+
+class TestPhase1IntelligenceIntegration:
+    """Tests to prove dependency and business rule intelligence coexist."""
+
+    def test_analyze_dependency_only(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """REQUIRED TEST 1: Source with dependencies but no business rules."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"call_test.cbl": _COBOL_WITH_CALL, "CUSTOMER-SERVICE": _COBOL_HELLO},
+        )
+        response = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "call_test.cbl"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+
+        # Dependency graph is correct
+        graph = body["dependency_graph"]
+        assert graph is not None
+        assert len(graph["nodes"]) == 2
+        assert len(graph["edges"]) == 1
+
+        # Dependency summary is correct
+        summary = body["dependency_summary"]
+        assert summary is not None
+        assert summary["node_count"] == 2
+        assert summary["edge_count"] == 1
+
+        # Business rules follows empty-result convention
+        rules = body.get("business_rules")
+        assert rules is not None
+        assert len(rules) == 0
+
+    def test_analyze_business_rule_only(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """REQUIRED TEST 2: Source with business rules but no dependencies."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"rules.cbl": _COBOL_WITH_BUSINESS_RULES},
+        )
+        response = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "rules.cbl"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+
+        # Business rules are returned
+        rules = body.get("business_rules")
+        assert rules is not None
+        assert len(rules) == 2
+
+        # Rules are normalized
+        assert rules[0]["condition"] == "A > B"
+        assert rules[1]["condition"] == "NOT ( A > B )"
+
+        # Dependency intelligence follows empty/no-dependency convention
+        graph = body["dependency_graph"]
+        assert graph is not None
+        assert len(graph["nodes"]) == 1  # Root node
+        assert len(graph["edges"]) == 0
+
+        summary = body["dependency_summary"]
+        assert summary is not None
+        assert summary["node_count"] == 1
+        assert summary["edge_count"] == 0
+
+    def test_analyze_combined(self, client: TestClient, workspace_root: Path) -> None:
+        """REQUIRED TEST 3: Source with both dependencies and business rules."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"combined.cbl": _COBOL_COMBINED},
+        )
+        response = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "combined.cbl"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+
+        # Both capabilities must be present
+        assert body["dependency_graph"] is not None
+        assert body["dependency_summary"] is not None
+        assert body["business_rules"] is not None
+        graph = body["dependency_graph"]
+        rules = body["business_rules"]
+
+        # Verify dependency graph
+        assert len(graph["nodes"]) == 3  # COMBINED-PROG, "OTHER-PROG", SUB-PARA
+        assert len(graph["edges"]) == 2  # CALL, PERFORM
+
+        # Verify business rules
+        assert len(rules) == 1
+        assert rules[0]["condition"] == "A > B"
+        assert rules[0]["actions"] == ["MOVE 1 TO X"]
+        # The ELSE branch with PERFORM SUB-PARA does not extract an action
+        # because the extractor doesn't support PERFORM, so no rule is emitted.
+
+    def test_graph_summary_consistency(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Verify summary counts match graph elements exactly."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"combined.cbl": _COBOL_COMBINED},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "combined.cbl"},
+        ).json()
+
+        graph = body["dependency_graph"]
+        summary = body["dependency_summary"]
+
+        assert summary["node_count"] == len(graph["nodes"])
+        assert summary["edge_count"] == len(graph["edges"])
+
+    def test_business_rule_normalization(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Verify the API exposes the already-normalized BusinessRule."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"combined.cbl": _COBOL_COMBINED},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "combined.cbl"},
+        ).json()
+
+        rules = body.get("business_rules")
+        assert rules is not None
+        assert len(rules) == 1
+        assert rules[0]["condition"] == "A > B"
+
+    def test_empty_analysis(self, client: TestClient, workspace_root: Path) -> None:
+        """Test a valid program containing neither dependencies nor business rules."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"hello.cbl": _COBOL_HELLO},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+        assert body["success"] is True
+
+        graph = body["dependency_graph"]
+        assert len(graph["nodes"]) == 1
+        assert len(graph["edges"]) == 0
+
+        summary = body["dependency_summary"]
+        assert summary["node_count"] == 1
+        assert summary["edge_count"] == 0
+
+        rules = body.get("business_rules")
+        assert rules is not None
+        assert len(rules) == 0
+
+    def test_semantic_error(self, client: TestClient, workspace_root: Path) -> None:
+        """Test that intelligence results are retained when AST is constructed despite errors."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"undef.cbl": _COBOL_UNDEFINED},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "undef.cbl"},
+        ).json()
+
+        assert body["success"] is False
+        assert body["status"] == "ANALYSIS_ERROR"
+
+        # Verify diagnostics
+        assert len(body["diagnostics"]) > 0
+
+        # Available intelligence remains available
+        assert body["dependency_summary"] is not None
+        assert body["dependency_graph"] is not None
+        assert body["business_rules"] is not None
+
+    def test_internal_error(
+        self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When AST creation fails, verify unavailable conventions are followed."""
+        from app.analysis.models import AnalysisResult
+
+        def mock_analyze_file(*args, **kwargs) -> AnalysisResult:
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[],
+                semantic_diagnostics=[],
+                success=False,
+                error=Exception("Internal error"),
+                dependencies=[],
+                ast=None,
+                ir=None,
+            )
+
+        monkeypatch.setattr(
+            "app.api.routers.analysis.AnalysisService.analyze_file", mock_analyze_file
+        )
+
+        ws_id = _create_workspace(
+            workspace_root,
+            {"hello.cbl": _COBOL_HELLO},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+
+        assert body["success"] is False
+        assert body["status"] == "INTERNAL_ERROR"
+
+        # Dependency graph follows unavailable convention
+        assert body.get("dependency_graph") is None
+        # Dependency summary follows unavailable convention
+        assert body.get("dependency_summary") is None
+        # Business rules follows unavailable convention
+        assert body.get("business_rules") is None
+
+    def test_json_serialization(self, client: TestClient, workspace_root: Path) -> None:
+        """Verify the complete response can be serialized to JSON with correct types."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"combined.cbl": _COBOL_COMBINED},
+        )
+        response = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "combined.cbl"},
+        )
+        assert response.status_code == 200
+
+        # It's already JSON serialized by the client, let's verify types
+        body = response.json()
+
+        graph = body["dependency_graph"]
+        assert isinstance(graph["nodes"], list)
+        assert isinstance(graph["edges"], list)
+        for edge in graph["edges"]:
+            assert isinstance(edge["dependency_type"], str)
+
+        rules = body["business_rules"]
+        assert isinstance(rules, list)
+        for rule in rules:
+            assert isinstance(rule["condition"], str)
+            assert isinstance(rule["actions"], list)
+            assert all(isinstance(a, str) for a in rule["actions"])
+            if rule.get("source_location"):
+                loc = rule["source_location"]
+                assert isinstance(loc, dict)
+                assert "line" in loc
+                assert "column" in loc
+                assert "filename" in loc
+
+    def test_backward_compatibility(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Verify existing fields remain available."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"combined.cbl": _COBOL_COMBINED},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "combined.cbl"},
+        ).json()
+
+        expected_fields = {
+            "success",
+            "status",
+            "ast",
+            "ir",
+            "diagnostics",
+            "dependencies",
+            "dependency_summary",
+            "dependency_graph",
+            "business_rules",
+            "error",
+        }
+        actual_fields = set(body.keys())
+        assert expected_fields.issubset(actual_fields)
+
+    def test_determinism(self, client: TestClient, workspace_root: Path) -> None:
+        """Verify deterministic ordering of nodes, edges, rules, and actions."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"combined.cbl": _COBOL_COMBINED},
+        )
+
+        body1 = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "combined.cbl"},
+        ).json()
+
+        body2 = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "combined.cbl"},
+        ).json()
+
+        assert body1["dependency_graph"]["nodes"] == body2["dependency_graph"]["nodes"]
+        assert body1["dependency_graph"]["edges"] == body2["dependency_graph"]["edges"]
+
+        assert body1["business_rules"] == body2["business_rules"]
