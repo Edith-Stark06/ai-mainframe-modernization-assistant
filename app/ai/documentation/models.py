@@ -5,7 +5,6 @@ Defines immutable typed representations of code documentation.
 """
 
 from dataclasses import dataclass, field
-from typing import List
 
 
 @dataclass(frozen=True)
@@ -45,7 +44,7 @@ class Documentation:
 
     title: str
     overview: str
-    sections: List[DocumentationSection] = field(default_factory=list)
+    sections: tuple[DocumentationSection, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if not self.title or not self.title.strip():
