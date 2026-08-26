@@ -155,9 +155,29 @@ _COBOL_COMBINED = b"""        IDENTIFICATION DIVISION.
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
-    """Return a module-scoped test client."""
+    """Return a module-scoped test client with AI mocked out."""
+    from app.api.dependencies.ai import get_ai_orchestrator
+    from app.ai.providers.fake import FakeLLMProvider
+    from app.ai.orchestration.service import AIAnalysisOrchestrator
+    from app.ai.explanation.service import CodeExplanationService
+    from app.ai.documentation.service import DocumentationGenerationService
+
+    def override_orchestrator():
+        exp_provider = FakeLLMProvider(
+            response_text="Summary:\nFake summary\n\nExplanation:\nFake explanation"
+        )
+        doc_provider = FakeLLMProvider(
+            response_text="Title:\nFake doc\n\nOverview:\nFake overview\n\nSection:\nFake heading\nFake content"
+        )
+        return AIAnalysisOrchestrator(
+            explanation_service=CodeExplanationService(exp_provider),
+            documentation_service=DocumentationGenerationService(doc_provider),
+        )
+
+    app.dependency_overrides[get_ai_orchestrator] = override_orchestrator
     with TestClient(app) as tc:
         yield tc  # type: ignore[misc]
+    app.dependency_overrides.pop(get_ai_orchestrator, None)
 
 
 @pytest.fixture()
@@ -1792,3 +1812,300 @@ class TestPhase1IntelligenceIntegration:
 
         for rule1, rule2 in zip(body1["business_rules"], body2["business_rules"]):
             assert rule1["actions"] == rule2["actions"]
+
+
+# ---------------------------------------------------------------------------
+# AI Analysis Orchestration
+# ---------------------------------------------------------------------------
+
+
+class TestAnalyzeEndpointAIOrchestration:
+    """Tests for AI capabilities orchestration during analysis."""
+
+    def test_analyze_omits_ai_when_not_requested_no_provider(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """/analyze works without an LLM provider if AI is not requested."""
+        from app.api.dependencies.ai import get_ai_orchestrator
+
+        # Override to simulate production where orchestrator returns None
+        original_override = client.app.dependency_overrides.get(get_ai_orchestrator)
+        client.app.dependency_overrides[get_ai_orchestrator] = lambda: None
+
+        try:
+            ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+            body = client.post(
+                f"/api/v1/workspaces/{ws_id}/analyze",
+                json={"filename": "hello.cbl"},
+            ).json()
+            assert body["success"] is True
+            assert body.get("ai_analysis") is None
+
+            # Verify Phase-1 fields remain populated
+            assert body.get("ast") is not None
+            assert body.get("dependencies") is not None
+        finally:
+            if original_override:
+                client.app.dependency_overrides[get_ai_orchestrator] = original_override
+            else:
+                client.app.dependency_overrides.pop(get_ai_orchestrator, None)
+
+    def test_analyze_ai_requested_but_no_provider(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """If AI is requested but no provider is configured, it fails gracefully."""
+        from app.api.dependencies.ai import get_ai_orchestrator
+
+        # Override to simulate production where orchestrator returns None
+        original_override = client.app.dependency_overrides.get(get_ai_orchestrator)
+        client.app.dependency_overrides[get_ai_orchestrator] = lambda: None
+
+        try:
+            ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+            body = client.post(
+                f"/api/v1/workspaces/{ws_id}/analyze",
+                json={"filename": "hello.cbl", "ai_capabilities": ["EXPLANATION"]},
+            ).json()
+
+            # Verify it fails gracefully but keeps phase-1 data
+            assert body["success"] is True
+            assert body["status"] == "INTERNAL_ERROR"
+            assert body["error"] is not None
+            assert "not yet configured" in body["error"]
+            assert body.get("ast") is not None
+        finally:
+            if original_override:
+                client.app.dependency_overrides[get_ai_orchestrator] = original_override
+            else:
+                client.app.dependency_overrides.pop(get_ai_orchestrator, None)
+
+    def test_analyze_omits_ai_when_not_requested(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """ai_analysis must be None if ai_capabilities are not requested. Existing fields must be present."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+        assert body["success"] is True
+        assert body.get("ai_analysis") is None
+
+        # Verify backward compatibility for existing fields
+        assert "status" in body
+        assert "ast" in body
+        assert "dependencies" in body
+        assert "dependency_summary" in body
+        assert "dependency_graph" in body
+        assert "business_rules" in body
+        assert "diagnostics" in body
+        assert "error" in body
+        assert "source_metadata" in body
+
+    def test_analyze_with_explanation_capability(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Requesting EXPLANATION must return a populated CodeExplanationResponse."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl", "ai_capabilities": ["EXPLANATION"]},
+        ).json()
+        assert body["success"] is True
+        ai = body["ai_analysis"]
+        assert ai is not None
+        assert ai["explanation"] is not None
+        assert ai["explanation"]["summary"] == "Fake summary"
+        assert ai["explanation"]["explanation"] == "Fake explanation"
+        assert ai["documentation"] is None
+
+    def test_analyze_with_documentation_capability(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Requesting DOCUMENTATION must return a populated DocumentationResponse."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl", "ai_capabilities": ["DOCUMENTATION"]},
+        ).json()
+        assert body["success"] is True
+        ai = body["ai_analysis"]
+        assert ai is not None
+        assert ai["documentation"] is not None
+        assert ai["documentation"]["title"] == "Fake doc"
+        assert ai["documentation"]["overview"] == "Fake overview"
+        assert len(ai["documentation"]["sections"]) == 1
+        assert ai["documentation"]["sections"][0]["heading"] == "Fake heading"
+        assert ai["documentation"]["sections"][0]["content"] == "Fake content"
+        assert ai["explanation"] is None
+
+    def test_analyze_with_combined_capabilities(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Requesting both EXPLANATION and DOCUMENTATION returns both responses."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={
+                "filename": "hello.cbl",
+                "ai_capabilities": ["EXPLANATION", "DOCUMENTATION"],
+            },
+        ).json()
+        assert body["success"] is True
+        ai = body["ai_analysis"]
+        assert ai is not None
+        assert ai["explanation"] is not None
+        assert ai["documentation"] is not None
+
+    def test_analyze_ai_fails_gracefully(
+        self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AI provider failure should not fail the whole request, but update status."""
+        from app.ai.providers.errors import LLMProviderUnavailableError
+
+        def mock_analyze(*args, **kwargs):
+            raise LLMProviderUnavailableError("Fake timeout")
+
+        monkeypatch.setattr(
+            "app.ai.orchestration.service.AIAnalysisOrchestrator.analyze", mock_analyze
+        )
+
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl", "ai_capabilities": ["EXPLANATION"]},
+        ).json()
+
+        # It preserves the analysis result but updates the error and status
+        assert body["success"] is True  # Phase-1 succeeded
+        assert body["status"] == "INTERNAL_ERROR"
+        assert body["ai_analysis"] is None
+        assert "Fake timeout" in body["error"]
+        # Make sure phase 1 data remains intact
+        assert body["ast"] is not None
+        assert body["java_source"] != ""
+
+    def test_analyze_skips_ai_on_phase1_failure(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """If semantic analysis fails, AI shouldn't be executed even if requested."""
+        ws_id = _create_workspace(workspace_root, {"undefined.cbl": _COBOL_UNDEFINED})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "undefined.cbl", "ai_capabilities": ["EXPLANATION"]},
+        ).json()
+        assert body["success"] is False
+        assert body.get("ai_analysis") is None
+
+    def test_analyze_preserves_dependency_and_business_rules(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Using AI should not alter Phase-1 results like dependencies and business rules."""
+        ws_id = _create_workspace(workspace_root, {"combined.cbl": _COBOL_COMBINED})
+
+        # Run without AI
+        body_no_ai = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "combined.cbl"},
+        ).json()
+
+        # Run with AI
+        body_with_ai = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "combined.cbl", "ai_capabilities": ["EXPLANATION"]},
+        ).json()
+
+        assert body_no_ai["dependency_graph"] == body_with_ai["dependency_graph"]
+        assert body_no_ai["business_rules"] == body_with_ai["business_rules"]
+        assert body_no_ai["diagnostics"] == body_with_ai["diagnostics"]
+
+    def test_ai_response_is_json_safe(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """The AI response structures must be fully JSON-serializable."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        response = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={
+                "filename": "hello.cbl",
+                "ai_capabilities": ["EXPLANATION", "DOCUMENTATION"],
+            },
+        )
+        body = response.json()
+        json_str = json.dumps(body)
+        assert isinstance(json_str, str)
+        _assert_json_safe(body)
+
+    def test_analyze_propagates_phase1_context(
+        self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The orchestrator must receive the Phase-1 analysis context."""
+        ws_id = _create_workspace(workspace_root, {"combined.cbl": _COBOL_COMBINED})
+
+        captured_context = {}
+
+        from app.ai.orchestration.service import AIAnalysisOrchestrator
+
+        original_analyze = AIAnalysisOrchestrator.analyze
+
+        def mock_analyze(
+            self_inst, source: str, capabilities: set, context: dict | None = None
+        ):
+            captured_context.update(context or {})
+            return original_analyze(self_inst, source, capabilities, context)
+
+        monkeypatch.setattr(
+            "app.ai.orchestration.service.AIAnalysisOrchestrator.analyze", mock_analyze
+        )
+
+        response = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "combined.cbl", "ai_capabilities": ["EXPLANATION"]},
+        ).json()
+
+        assert response.get("success") is True, f"Response failed: {response}"
+
+        assert captured_context["correlation_id"] == response["analysis_id"]
+        assert len(captured_context["dependencies"]) == len(response["dependencies"])
+        assert (
+            captured_context["dependency_summary"].node_count
+            == response["dependency_summary"]["node_count"]
+        )
+        assert len(captured_context["dependency_graph"].edges) == len(
+            response["dependency_graph"]["edges"]
+        )
+        assert len(captured_context["business_rules"]) == len(
+            response["business_rules"]
+        )
+
+        assert len(captured_context["diagnostics"]) == len(
+            response.get("diagnostics", [])
+        )
+        assert captured_context["source_metadata"] is not None
+        assert len(captured_context["dependencies"]) > 0
+        assert len(captured_context["business_rules"]) > 0
+
+    def test_analyze_determinism(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Two requests for the same source must produce the same AI artifacts."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+
+        body1 = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={
+                "filename": "hello.cbl",
+                "ai_capabilities": ["EXPLANATION", "DOCUMENTATION"],
+            },
+        ).json()
+
+        body2 = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={
+                "filename": "hello.cbl",
+                "ai_capabilities": ["EXPLANATION", "DOCUMENTATION"],
+            },
+        ).json()
+
+        # The AI artifacts should be completely identical for the fake provider
+        assert body1["ai_analysis"] == body2["ai_analysis"]
