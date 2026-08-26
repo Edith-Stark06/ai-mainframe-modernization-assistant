@@ -35,7 +35,9 @@ def _serialize_context_value(val: Any) -> str:
         d = {k: getattr(val, k) for k in getattr(val, "__slots__") if hasattr(val, k)}
         return _serialize_context_value(d)
 
-    return str(val)
+    # Fallback to a deterministic class identifier for unsupported objects
+    # to avoid leaking memory addresses via default str() or repr()
+    return f"<{type(val).__module__}.{type(val).__qualname__}>"
 
 
 def _serialize_collection(collection: Any) -> list[str]:
