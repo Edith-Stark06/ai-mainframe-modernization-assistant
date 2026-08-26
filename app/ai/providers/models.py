@@ -16,9 +16,9 @@ class LLMRequest(BaseModel):
 
     prompt: str = Field(..., description="The prompt to send to the LLM.")
     model: str | None = Field(None, description="Optional model identifier.")
-    temperature: float | None = Field(None, description="Optional temperature.")
+    temperature: float | None = Field(None, ge=0.0, description="Optional temperature.")
     max_tokens: int | None = Field(
-        None, description="Optional maximum tokens to generate."
+        None, gt=0, description="Optional maximum tokens to generate."
     )
 
 

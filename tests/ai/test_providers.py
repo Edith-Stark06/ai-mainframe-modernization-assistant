@@ -42,6 +42,28 @@ def test_request_model() -> None:
         req.prompt = "New prompt"  # type: ignore
 
 
+def test_request_model_validation() -> None:
+    """Test LLMRequest validation for temperature and max_tokens."""
+    # Invalid temperature
+    with pytest.raises(ValidationError):
+        LLMRequest(prompt="Test", temperature=-1)
+
+    # Valid temperatures
+    LLMRequest(prompt="Test", temperature=0)
+    LLMRequest(prompt="Test", temperature=0.7)
+
+    # Invalid max_tokens
+    with pytest.raises(ValidationError):
+        LLMRequest(prompt="Test", max_tokens=0)
+
+    with pytest.raises(ValidationError):
+        LLMRequest(prompt="Test", max_tokens=-10)
+
+    # Valid max_tokens
+    LLMRequest(prompt="Test", max_tokens=1)
+    LLMRequest(prompt="Test", max_tokens=150)
+
+
 def test_response_model() -> None:
     """Test LLMResponse construction, optional fields, and immutability."""
     res = LLMResponse(text="Generated text.")
@@ -79,6 +101,11 @@ def test_fake_provider_deterministic_output() -> None:
 
     # State inspection
     assert provider.last_request == req
+
+
+def test_fake_provider_runtime_protocol_conformance() -> None:
+    """Test that FakeLLMProvider structurally conforms to LLMProvider."""
+    assert isinstance(FakeLLMProvider(), LLMProvider)
 
 
 def test_fake_provider_simulated_failure() -> None:
