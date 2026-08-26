@@ -12,6 +12,8 @@ from app.parser.ast.statements import (
     AddStatementNode,
 )
 from app.parser.lexer.position import Position
+from app.parser.lexer.lexer import CobolLexer
+from app.parser.syntax.program_parser import ProgramParser
 
 
 def _pos() -> Position:
@@ -239,3 +241,66 @@ def test_extract_deterministic_ordering() -> None:
     assert rules[0].actions == ("MOVE 1 TO A",)
     assert rules[1].condition == "2 = 2"
     assert rules[1].actions == ("MOVE 2 TO B",)
+
+
+
+
+def test_extractor_can_be_reused_without_state_leak() -> None:
+    """An extractor can be reused without leaking state."""
+    move1 = MoveStatementNode(
+        start_position=_pos(), end_position=_pos(), source="1", target="A"
+    )
+    if1 = IfStatementNode(
+        start_position=_pos(),
+        end_position=_pos(),
+        condition_left="1",
+        condition_operator="=",
+        condition_right="1",
+        then_statements=(move1,),
+    )
+
+    move2 = MoveStatementNode(
+        start_position=_pos(), end_position=_pos(), source="2", target="B"
+    )
+    if2 = IfStatementNode(
+        start_position=_pos(),
+        end_position=_pos(),
+        condition_left="2",
+        condition_operator="=",
+        condition_right="2",
+        then_statements=(move2,),
+    )
+
+    prog1 = _prog((if1,))
+    prog2 = _prog((if2,))
+
+    extractor = BusinessRuleExtractor()
+    rules1 = extractor.extract(prog1)
+    rules2 = extractor.extract(prog2)
+
+    assert len(rules1) == 1
+    assert rules1[0].condition == "1 = 1"
+
+    assert len(rules2) == 1
+    assert rules2[0].condition == "2 = 2"
+
+
+def test_real_parser_integration() -> None:
+    """End-to-end extraction from COBOL source through real parser."""
+    source = """       PROCEDURE DIVISION.
+       MAIN-PARA.
+           IF A > B
+               MOVE 1 TO X
+           END-IF.
+"""
+    tokens = CobolLexer().tokenize(source, filename="test.cbl")
+    prog = ProgramParser().parse(tokens)
+
+    extractor = BusinessRuleExtractor()
+    rules = extractor.extract(prog)
+
+    assert len(rules) == 1
+    assert rules[0].condition == "A > B"
+    assert rules[0].actions == ("MOVE 1 TO X",)
+    assert rules[0].source_location.line == 4
+    assert rules[0].source_location.filename == "test.cbl"
