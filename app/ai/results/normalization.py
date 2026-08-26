@@ -6,14 +6,20 @@ Purpose:
     deterministic, and serialization-safe `NormalizedAIResult`.
 """
 
-import copy
-from types import MappingProxyType
 from typing import Any, Mapping
 
 from app.ai.documentation.models import Documentation
 from app.ai.explanation.models import CodeExplanation
 from app.ai.orchestration.models import AIAnalysisResult
-from app.ai.results.models import AIArtifact, ArtifactType, NormalizedAIResult
+from app.ai.results.models import (
+    AIArtifact,
+    ArtifactType,
+    ImmutableDict,
+    NormalizedAIResult,
+    NormalizedDocumentationPayload,
+    NormalizedDocumentationSection,
+    NormalizedExplanationPayload,
+)
 
 
 def normalize_result(result: AIAnalysisResult) -> NormalizedAIResult:
@@ -38,9 +44,13 @@ def normalize_result(result: AIAnalysisResult) -> NormalizedAIResult:
             raise TypeError(
                 f"Invalid payload for EXPLANATION: {type(result.explanation)}"
             )
+        explanation_payload = NormalizedExplanationPayload(
+            summary=result.explanation.summary,
+            explanation=result.explanation.explanation,
+        )
         artifacts.append(
             AIArtifact(
-                artifact_type=ArtifactType.EXPLANATION, payload=result.explanation
+                artifact_type=ArtifactType.EXPLANATION, payload=explanation_payload
             )
         )
 
@@ -49,10 +59,16 @@ def normalize_result(result: AIAnalysisResult) -> NormalizedAIResult:
             raise TypeError(
                 f"Invalid payload for DOCUMENTATION: {type(result.documentation)}"
             )
+        doc_payload = NormalizedDocumentationPayload(
+            title=result.documentation.title,
+            overview=result.documentation.overview,
+            sections=tuple(
+                NormalizedDocumentationSection(heading=s.heading, content=s.content)
+                for s in result.documentation.sections
+            ),
+        )
         artifacts.append(
-            AIArtifact(
-                artifact_type=ArtifactType.DOCUMENTATION, payload=result.documentation
-            )
+            AIArtifact(artifact_type=ArtifactType.DOCUMENTATION, payload=doc_payload)
         )
 
     if not artifacts:
@@ -63,49 +79,82 @@ def normalize_result(result: AIAnalysisResult) -> NormalizedAIResult:
 
     return NormalizedAIResult(
         artifacts=tuple(artifacts),
-        context=MappingProxyType(isolated_context),
+        context=isolated_context,
     )
 
 
-def _deep_isolate_context(context: Mapping[str, Any]) -> dict[str, Any]:
+def _deep_isolate_context(context: Mapping[str, Any]) -> ImmutableDict:
     """
     Recursively isolates and normalizes the Phase-1 analysis context.
-    - Dicts are deep copied and keys are sorted.
+    - Dicts are deep copied and converted to ImmutableDict.
     - Sets are converted to sorted tuples.
     - Lists/Tuples are deep copied.
-    - Domain Dataclasses are deeply copied.
+    - Domain Dataclasses are converted to dicts to prevent memory address leaks.
     """
-    return {k: _deep_serialize_value(v) for k, v in sorted(context.items())}
+    raw_dict = {k: _deep_serialize_value(v) for k, v in sorted(context.items())}
+    # Initialize the ImmutableDict with the items. Once created, it cannot be modified.
+    return ImmutableDict(raw_dict)
 
 
 def _deep_serialize_value(value: Any) -> Any:
     """
-    Recursively deep copies and normalizes values to ensure immutability
-    and determinism.
+    Recursively deep copies and normalizes values to ensure immutability,
+    determinism, and JSON serialization safety.
     """
-    if isinstance(value, (dict, MappingProxyType)):
-        return {k: _deep_serialize_value(v) for k, v in sorted(value.items())}
+    if isinstance(value, dict) or type(value).__name__ == "MappingProxyType":
+        return ImmutableDict(
+            {k: _deep_serialize_value(v) for k, v in sorted(value.items())}
+        )
     elif isinstance(value, (list, tuple)):
         return tuple(_deep_serialize_value(v) for v in value)
-    elif isinstance(value, frozenset):
-        return tuple(_deep_serialize_value(v) for v in _sort_set_or_frozenset(value))
-    elif isinstance(value, set):
-        return tuple(_deep_serialize_value(v) for v in _sort_set_or_frozenset(value))
+    elif isinstance(value, (set, frozenset)):
+        serialized_items = [_deep_serialize_value(v) for v in value]
+
+        # Sort serialized items deterministically using a structural string
+        def sort_key(item: Any) -> str:
+            import json
+
+            # Convert to standard dict/list for json.dumps just in case
+            def _to_std(val: Any) -> Any:
+                if isinstance(val, Mapping):
+                    return {k: _to_std(v) for k, v in val.items()}
+                elif isinstance(val, tuple):
+                    return [_to_std(v) for v in val]
+                return val
+
+            return json.dumps(_to_std(item), sort_keys=True)
+
+        return tuple(sorted(serialized_items, key=sort_key))
     elif hasattr(value, "__dataclass_fields__"):
-        # Explicit deep copy for domain dataclasses to avoid memory address leakage
-        # while preserving domain structures required by downstream API/routers.
-        return copy.deepcopy(value)
-    else:
-        # Primitives or base objects without state
+        from dataclasses import asdict
+
+        return ImmutableDict(
+            {k: _deep_serialize_value(v) for k, v in sorted(asdict(value).items())}
+        )
+    elif (
+        hasattr(value, "name")
+        and hasattr(value, "value")
+        and type(value).__name__ != "type"
+    ):
+        return value.name
+    elif hasattr(value, "__dict__") and not isinstance(value, type):
+        return ImmutableDict(
+            {k: _deep_serialize_value(v) for k, v in sorted(vars(value).items())}
+        )
+    elif isinstance(value, (str, int, float, bool, type(None))):
         return value
-
-
-def _sort_set_or_frozenset(s: set[Any] | frozenset[Any]) -> list[Any]:
-    """
-    Sorts a set/frozenset deterministically, falling back to string representation
-    if elements are inherently unorderable.
-    """
-    try:
-        return sorted(list(s))
-    except TypeError:
-        return sorted(list(s), key=str)
+    else:
+        # Fallback for unrecognizable un-serializable objects (e.g. __slots__ only)
+        qual_name = f"{value.__class__.__module__}.{value.__class__.__qualname__}"
+        if hasattr(value, "__slots__"):
+            state = {}
+            for attr in value.__slots__:
+                if hasattr(value, attr):
+                    state[attr] = getattr(value, attr)
+            return ImmutableDict(
+                {
+                    "__class__": qual_name,
+                    **{k: _deep_serialize_value(v) for k, v in sorted(state.items())},
+                }
+            )
+        return ImmutableDict({"__class__": qual_name})
