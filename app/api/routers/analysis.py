@@ -69,6 +69,9 @@ from app.analysis.serializers.diagnostics import serialize_diagnostics
 from app.analysis.serializers.ir import serialize_ir
 from app.analysis.serializers.dependencies import serialize_dependencies
 from app.analysis.service import AnalysisService
+from app.analysis.rules.extractor import BusinessRuleExtractor
+from app.analysis.rules.normalization import normalize_business_rule
+from app.api.schemas.rules import BusinessRuleResponse
 from app.backend.java.generator import BackendSeverity
 from app.api.schemas.analysis import (
     AnalysisRequest,
@@ -258,6 +261,7 @@ async def analyze_source(
     # ------------------------------------------------------------------
     dependency_summary = None
     dependency_graph = None
+    business_rules = None
     if result.ast is not None:
         program_name = source_path.stem.upper()
         ident_div = getattr(result.ast, "identification_division", None)
@@ -306,6 +310,32 @@ async def analyze_source(
             ],
         )
 
+        # ------------------------------------------------------------------
+        # Extract Business Rules
+        # ------------------------------------------------------------------
+        extractor = BusinessRuleExtractor()
+        extracted_rules = extractor.extract(result.ast)
+        business_rules = []
+        for rule in extracted_rules:
+            normalized_rule = normalize_business_rule(rule)
+            source_loc = None
+            if normalized_rule.source_location:
+                source_loc = PositionResponse(
+                    type="Position",
+                    line=normalized_rule.source_location.line,
+                    column=normalized_rule.source_location.column,
+                    offset=normalized_rule.source_location.offset,
+                    filename=normalized_rule.source_location.filename,
+                )
+
+            business_rules.append(
+                BusinessRuleResponse(
+                    condition=normalized_rule.condition,
+                    actions=list(normalized_rule.actions),
+                    source_location=source_loc,
+                )
+            )
+
     if result.error is not None:
         status = AnalysisStatus.INTERNAL_ERROR
     elif any(
@@ -332,6 +362,7 @@ async def analyze_source(
         dependencies=serialized_dependencies,
         dependency_summary=dependency_summary,
         dependency_graph=dependency_graph,
+        business_rules=business_rules,
         error=str(result.error) if result.error is not None else None,
     )
 
