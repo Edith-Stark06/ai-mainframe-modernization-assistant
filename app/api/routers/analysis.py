@@ -391,22 +391,24 @@ async def analyze_source(
 
                 # Map domain models to API response schemas
                 explanation_resp = None
-                if ai_result.explanation:
+                explanation = ai_result.get_explanation()
+                if explanation:
                     explanation_resp = CodeExplanationResponse(
-                        summary=ai_result.explanation.summary,
-                        explanation=ai_result.explanation.explanation,
+                        summary=explanation.summary,
+                        explanation=explanation.explanation,
                     )
 
                 documentation_resp = None
-                if ai_result.documentation:
+                documentation = ai_result.get_documentation()
+                if documentation:
                     documentation_resp = DocumentationResponse(
-                        title=ai_result.documentation.title,
-                        overview=ai_result.documentation.overview,
+                        title=documentation.title,
+                        overview=documentation.overview,
                         sections=[
                             DocumentationSectionResponse(
                                 heading=sec.heading, content=sec.content
                             )
-                            for sec in ai_result.documentation.sections
+                            for sec in documentation.sections
                         ],
                     )
 
