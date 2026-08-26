@@ -60,12 +60,14 @@ from app.api.schemas.dependencies import (
     DependencyGraphResponse,
     DependencyResponse,
 )
+from app.api.schemas.rules import BusinessRuleResponse
 
 __all__ = [
     "AnalysisRequest",
     "AnalysisResponse",
     "AnalysisSourceMetadata",
     "AnalysisStatus",
+    "BusinessRuleResponse",
     "DependencyAnalysisSummaryResponse",
     "DependencyGraphResponse",
     "DependencyResponse",
@@ -229,6 +231,10 @@ class AnalysisResponse(BaseModel):
     dependency_graph: DependencyGraphResponse | None = Field(
         default=None,
         description="Serialized dependency graph containing nodes and edges, or null if unavailable.",
+    )
+    business_rules: list[BusinessRuleResponse] | None = Field(
+        default=None,
+        description="Normalized business rules extracted from the source, or null if analysis failed before AST construction.",
     )
     error: str | None = Field(
         default=None,
