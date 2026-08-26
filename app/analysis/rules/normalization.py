@@ -72,21 +72,8 @@ def normalize_business_rule(rule: BusinessRule) -> BusinessRule:
             return " ".join(normalized_parts)
         except LexerError:
             # Fallback for unsupported or invalid syntax
-            # Preserve quoted/string literal content while safely upper-casing the rest.
-            result = []
-            in_quote = None
-            for char in s:
-                if in_quote:
-                    result.append(char)
-                    if char == in_quote:
-                        in_quote = None
-                else:
-                    if char in ("'", '"'):
-                        in_quote = char
-                        result.append(char)
-                    else:
-                        result.append(char.upper())
-            return " ".join("".join(result).split())
+            # Preserve original textual content and case, just collapse runs of whitespace.
+            return " ".join(s.split())
 
     return BusinessRule(
         condition=_normalize_string(rule.condition),

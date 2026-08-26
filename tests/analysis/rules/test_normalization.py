@@ -69,6 +69,12 @@ def test_normalize_unsupported_input() -> None:
     assert normalized.condition == "A = 'unclosed"
     assert normalized.actions == ("B = 1",)
 
+    # If the lexer is forced to fail (e.g., syntax error), verify fallback doesn't mutate literals
+    rule2 = BusinessRule(condition="bonus = salary * 0.20 '", actions=("X = 1",))
+    normalized2 = normalize_business_rule(rule2)
+    assert normalized2.condition == "bonus = salary * 0.20 '"
+    assert normalized2.actions == ("X = 1",)
+
 
 def test_normalize_numeric_literals() -> None:
     """Numeric literals should not be erroneously spaced."""
