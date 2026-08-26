@@ -258,3 +258,32 @@ def test_build_documentation_prompt_no_mutation() -> None:
 
     # The original list should remain unmodified
     assert deps == ["B", "A", "C"]
+
+
+class UnstableStringObject:
+    def __getattribute__(self, name: str):
+        if name in ("__dict__", "__slots__", "model_dump", "dict"):
+            raise AttributeError()
+        return super().__getattribute__(name)
+
+    def __str__(self) -> str:
+        return "<object at 0xDEADBEEF>"
+
+
+def test_build_documentation_prompt_unsupported_object_fallback() -> None:
+    source = "       IDENTIFICATION DIVISION."
+    obj = UnstableStringObject()
+    context = {"analysis_metadata": {"unstable": obj}}
+
+    prompt1 = build_documentation_prompt(source, context)
+    prompt2 = build_documentation_prompt(source, context)
+
+    # 1. 0xDEADBEEF is NOT present
+    assert "0xDEADBEEF" not in prompt1
+
+    # The output should contain the deterministic fallback string
+    assert "UnstableStringObject" in prompt1
+    assert "<" in prompt1 and ">" in prompt1
+
+    # 2. prompt construction succeeds and repeated calls return identical prompts
+    assert prompt1 == prompt2
