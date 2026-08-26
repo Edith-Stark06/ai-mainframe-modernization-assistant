@@ -6,6 +6,7 @@ while preserving input context.
 """
 
 import copy
+from types import MappingProxyType
 from typing import Any
 
 from app.ai.documentation.service import DocumentationGenerationService
@@ -56,20 +57,28 @@ class AIAnalysisOrchestrator:
         if not capabilities:
             raise ValueError("At least one capability must be requested.")
 
-        # Preserve the caller's context by creating a deepcopy
-        preserved_context = copy.deepcopy(context) if context else {}
+        # Preserve the caller's context by creating a deepcopy protected by a MappingProxyType
+        copied_context = copy.deepcopy(context) if context else {}
+        preserved_context = MappingProxyType(copied_context)
 
         explanation = None
-        if AICapability.EXPLANATION in capabilities:
-            explanation = self._explanation_service.explain_code(
-                source, context=preserved_context
-            )
-
         documentation = None
-        if AICapability.DOCUMENTATION in capabilities:
-            documentation = self._documentation_service.generate_documentation(
-                source, context=preserved_context
-            )
+
+        # Execute capabilities in a stable, deterministic order
+        EXECUTION_ORDER = (AICapability.EXPLANATION, AICapability.DOCUMENTATION)
+
+        for capability in EXECUTION_ORDER:
+            if capability not in capabilities:
+                continue
+
+            if capability == AICapability.EXPLANATION:
+                explanation = self._explanation_service.explain_code(
+                    source, context=copied_context
+                )
+            elif capability == AICapability.DOCUMENTATION:
+                documentation = self._documentation_service.generate_documentation(
+                    source, context=copied_context
+                )
 
         return AIAnalysisResult(
             explanation=explanation,

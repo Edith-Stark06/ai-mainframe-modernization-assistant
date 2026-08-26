@@ -6,7 +6,8 @@ Defines the capabilities and the structured orchestration result.
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 
 from app.ai.documentation.models import Documentation
 from app.ai.explanation.models import CodeExplanation
@@ -34,7 +35,7 @@ class AIAnalysisResult:
 
     explanation: CodeExplanation | None = None
     documentation: Documentation | None = None
-    context: dict[str, Any] = field(default_factory=dict)
+    context: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
     def __post_init__(self) -> None:
         if self.explanation is None and self.documentation is None:
