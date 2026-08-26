@@ -40,6 +40,11 @@ class BusinessRuleExtractor(ASTVisitor):
         """
         Extract rules from a parsed ProgramNode.
         """
+        self.rules = []
+        self._condition_stack = []
+        self._current_actions = []
+        self._current_rule_position = None
+
         node.accept(self)
         self._flush_actions()
         return self.rules
