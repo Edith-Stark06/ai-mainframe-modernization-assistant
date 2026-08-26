@@ -1822,6 +1822,63 @@ class TestPhase1IntelligenceIntegration:
 class TestAnalyzeEndpointAIOrchestration:
     """Tests for AI capabilities orchestration during analysis."""
 
+    def test_analyze_omits_ai_when_not_requested_no_provider(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """/analyze works without an LLM provider if AI is not requested."""
+        from app.api.dependencies.ai import get_ai_orchestrator
+
+        # Override to simulate production where orchestrator returns None
+        original_override = client.app.dependency_overrides.get(get_ai_orchestrator)
+        client.app.dependency_overrides[get_ai_orchestrator] = lambda: None
+
+        try:
+            ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+            body = client.post(
+                f"/api/v1/workspaces/{ws_id}/analyze",
+                json={"filename": "hello.cbl"},
+            ).json()
+            assert body["success"] is True
+            assert body.get("ai_analysis") is None
+
+            # Verify Phase-1 fields remain populated
+            assert body.get("ast") is not None
+            assert body.get("dependencies") is not None
+        finally:
+            if original_override:
+                client.app.dependency_overrides[get_ai_orchestrator] = original_override
+            else:
+                client.app.dependency_overrides.pop(get_ai_orchestrator, None)
+
+    def test_analyze_ai_requested_but_no_provider(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """If AI is requested but no provider is configured, it fails gracefully."""
+        from app.api.dependencies.ai import get_ai_orchestrator
+
+        # Override to simulate production where orchestrator returns None
+        original_override = client.app.dependency_overrides.get(get_ai_orchestrator)
+        client.app.dependency_overrides[get_ai_orchestrator] = lambda: None
+
+        try:
+            ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+            body = client.post(
+                f"/api/v1/workspaces/{ws_id}/analyze",
+                json={"filename": "hello.cbl", "ai_capabilities": ["EXPLANATION"]},
+            ).json()
+
+            # Verify it fails gracefully but keeps phase-1 data
+            assert body["success"] is True
+            assert body["status"] == "INTERNAL_ERROR"
+            assert body["error"] is not None
+            assert "not yet configured" in body["error"]
+            assert body.get("ast") is not None
+        finally:
+            if original_override:
+                client.app.dependency_overrides[get_ai_orchestrator] = original_override
+            else:
+                client.app.dependency_overrides.pop(get_ai_orchestrator, None)
+
     def test_analyze_omits_ai_when_not_requested(
         self, client: TestClient, workspace_root: Path
     ) -> None:
