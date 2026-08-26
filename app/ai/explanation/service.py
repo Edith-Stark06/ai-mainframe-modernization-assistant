@@ -55,29 +55,29 @@ class CodeExplanationService:
         return self._parse_explanation_result(response.text)
 
     def _parse_explanation_result(self, raw_text: str) -> CodeExplanation:
-        """Parse the raw text from the LLM into the CodeExplanation model."""
-        summary = "No summary provided."
-        explanation = raw_text.strip()
+        """Parse the raw text from the LLM into the CodeExplanation model.
 
-        # Simple heuristic to extract Summary and Explanation if the model followed instructions
-        if "Summary:" in raw_text and "Explanation:" in raw_text:
-            try:
-                parts = raw_text.split("Explanation:", 1)
-                summary_part = parts[0].split("Summary:", 1)[1].strip()
-                explanation_part = parts[1].strip()
+        Raises:
+            ValueError: If the response is malformed, missing required sections,
+                or contains empty sections.
+        """
+        text = raw_text.strip()
+        if not text:
+            raise ValueError("Provider response is empty or whitespace-only.")
 
-                if summary_part:
-                    summary = summary_part
-                if explanation_part:
-                    explanation = explanation_part
-            except Exception:
-                # Fallback to the whole text if parsing fails
-                pass
+        if "Summary:" not in text or "Explanation:" not in text:
+            raise ValueError(
+                "Provider response is missing required 'Summary:' or 'Explanation:' sections."
+            )
 
-        # Ensure we always return a valid object that passes our domain validation
-        if not summary.strip():
-            summary = "Summary generated."
-        if not explanation.strip():
-            explanation = "Explanation generated."
+        parts = text.split("Explanation:", 1)
+        summary_part = parts[0].split("Summary:", 1)[-1].strip()
+        explanation_part = parts[1].strip()
 
-        return CodeExplanation(summary=summary, explanation=explanation)
+        if not summary_part:
+            raise ValueError("Parsed summary section is empty.")
+
+        if not explanation_part:
+            raise ValueError("Parsed explanation section is empty.")
+
+        return CodeExplanation(summary=summary_part, explanation=explanation_part)

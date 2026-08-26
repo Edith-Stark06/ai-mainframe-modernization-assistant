@@ -96,16 +96,62 @@ def test_service_rejects_empty_source() -> None:
     assert provider.last_request is None
 
 
-def test_service_handles_unstructured_response() -> None:
-    """Test parsing fallback when LLM does not follow Summary/Explanation structure."""
-    fake_response = "This program just prints hello."
-    provider = FakeLLMProvider(response_text=fake_response)
+def test_service_rejects_empty_response() -> None:
+    """Test that empty response raises an error."""
+    provider = FakeLLMProvider(response_text="")
     service = CodeExplanationService(provider=provider)
 
-    result = service.explain_code("DISPLAY 'HELLO'")
+    with pytest.raises(ValueError, match="empty or whitespace-only"):
+        service.explain_code("DISPLAY 'HELLO'")
 
-    assert result.summary == "No summary provided."
-    assert result.explanation == "This program just prints hello."
+
+def test_service_rejects_whitespace_response() -> None:
+    """Test that whitespace-only response raises an error."""
+    provider = FakeLLMProvider(response_text="   \n  \t")
+    service = CodeExplanationService(provider=provider)
+
+    with pytest.raises(ValueError, match="empty or whitespace-only"):
+        service.explain_code("DISPLAY 'HELLO'")
+
+
+def test_service_rejects_missing_explanation() -> None:
+    """Test that missing explanation section raises an error."""
+    provider = FakeLLMProvider(response_text="Summary: A simple program.")
+    service = CodeExplanationService(provider=provider)
+
+    with pytest.raises(ValueError, match="missing required"):
+        service.explain_code("DISPLAY 'HELLO'")
+
+
+def test_service_rejects_missing_summary() -> None:
+    """Test that missing summary section raises an error."""
+    provider = FakeLLMProvider(response_text="Explanation: A simple program.")
+    service = CodeExplanationService(provider=provider)
+
+    with pytest.raises(ValueError, match="missing required"):
+        service.explain_code("DISPLAY 'HELLO'")
+
+
+def test_service_rejects_empty_summary() -> None:
+    """Test that empty summary section raises an error."""
+    provider = FakeLLMProvider(
+        response_text="Summary:\n\nExplanation: It displays a message."
+    )
+    service = CodeExplanationService(provider=provider)
+
+    with pytest.raises(ValueError, match="Parsed summary section is empty"):
+        service.explain_code("DISPLAY 'HELLO'")
+
+
+def test_service_rejects_empty_explanation() -> None:
+    """Test that empty explanation section raises an error."""
+    provider = FakeLLMProvider(
+        response_text="Summary: It displays a message.\n\nExplanation:"
+    )
+    service = CodeExplanationService(provider=provider)
+
+    with pytest.raises(ValueError, match="Parsed explanation section is empty"):
+        service.explain_code("DISPLAY 'HELLO'")
 
 
 def test_service_provider_failure() -> None:
