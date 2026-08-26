@@ -28,17 +28,33 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def client() -> TestClient:
     """
-    Return a module-scoped synchronous test client for the application.
-
-    Using ``scope="module"`` amortises application startup cost across
-    all tests within a single module while still ensuring isolation
-    between test modules.
+    Return a synchronous test client for the application.
 
     Returns:
         A :class:`fastapi.testclient.TestClient` wrapping the application.
     """
+    from app.api.dependencies.ai import get_ai_orchestrator
+    from app.ai.providers.fake import FakeLLMProvider
+    from app.ai.orchestration.service import AIAnalysisOrchestrator
+    from app.ai.explanation.service import CodeExplanationService
+    from app.ai.documentation.service import DocumentationGenerationService
+
+    def override_orchestrator():
+        exp_provider = FakeLLMProvider(
+            response_text="Summary:\nFake summary\n\nExplanation:\nFake explanation"
+        )
+        doc_provider = FakeLLMProvider(
+            response_text="Title:\nFake doc\n\nOverview:\nFake overview\n\nSection:\nFake heading\nFake content"
+        )
+        return AIAnalysisOrchestrator(
+            explanation_service=CodeExplanationService(exp_provider),
+            documentation_service=DocumentationGenerationService(doc_provider),
+        )
+
+    app.dependency_overrides[get_ai_orchestrator] = override_orchestrator
     with TestClient(app) as test_client:
         yield test_client
+    app.dependency_overrides.pop(get_ai_orchestrator, None)

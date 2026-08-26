@@ -61,12 +61,9 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends
 
-from app.ai.documentation.service import DocumentationGenerationService
-from app.ai.explanation.service import CodeExplanationService
-from app.ai.orchestration.models import AIAnalysisResult, AICapability
+from app.ai.orchestration.models import AICapability
 from app.ai.orchestration.service import AIAnalysisOrchestrator
 from app.ai.providers.errors import LLMProviderUnavailableError
-from app.ai.providers.fake import FakeLLMProvider
 
 from app.analysis.dependencies.graph import DependencyGraph
 from app.analysis.dependencies.resolver import WorkspaceDependencyResolver
@@ -100,6 +97,7 @@ from app.api.schemas.dependencies import (
     DependencyResponse,
     PositionResponse,
 )
+from app.api.dependencies.ai import get_ai_orchestrator
 from app.core.exceptions import ResourceNotFoundException, ValidationException
 from app.core.logging import logger
 from app.ingestion.workspace import WorkspaceManager
@@ -113,21 +111,6 @@ router = APIRouter(
     prefix="/workspaces",
     tags=["Analysis"],
 )
-
-
-def get_ai_orchestrator() -> AIAnalysisOrchestrator:
-    """Provides a default orchestrator with a fake LLM provider for tests/offline execution."""
-    # Constructing using the FakeLLMProvider per TASK-070
-    exp_provider = FakeLLMProvider(
-        response_text="Summary:\nFake summary\n\nExplanation:\nFake explanation"
-    )
-    doc_provider = FakeLLMProvider(
-        response_text="Title:\nFake doc\n\nOverview:\nFake overview\n\nSection:\nFake heading\nFake content"
-    )
-    return AIAnalysisOrchestrator(
-        explanation_service=CodeExplanationService(exp_provider),
-        documentation_service=DocumentationGenerationService(doc_provider),
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -428,11 +411,11 @@ async def analyze_source(
         except LLMProviderUnavailableError as e:
             logger.error("AI Provider failed during analysis: {}", e)
             status = AnalysisStatus.INTERNAL_ERROR
-            result.error = str(e)
+            result.error = e
         except Exception as e:
             logger.exception("Unexpected error during AI orchestration")
             status = AnalysisStatus.INTERNAL_ERROR
-            result.error = f"AI analysis failed: {e}"
+            result.error = Exception(f"AI analysis failed: {e}")
 
     if result.error is not None:
         status = AnalysisStatus.INTERNAL_ERROR
