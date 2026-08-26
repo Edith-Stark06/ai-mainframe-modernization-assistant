@@ -1,18 +1,15 @@
 """
-AI Package
-
-Contains all artificial intelligence capabilities, abstractions, and LLM integrations.
+AI Provider Abstractions
 """
 
-from app.ai.providers import (
-    FakeLLMProvider,
+from app.ai.providers.base import LLMProvider
+from app.ai.providers.errors import (
     LLMConfigurationError,
-    LLMProvider,
     LLMProviderError,
     LLMProviderUnavailableError,
-    LLMRequest,
-    LLMResponse,
 )
+from app.ai.providers.fake import FakeLLMProvider
+from app.ai.providers.models import LLMRequest, LLMResponse
 
 __all__ = [
     "LLMProvider",
