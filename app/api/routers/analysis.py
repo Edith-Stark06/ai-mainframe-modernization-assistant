@@ -138,7 +138,7 @@ _ALLOWED_ANALYSIS_EXTENSIONS: frozenset[str] = frozenset({".cbl", ".cob"})
 async def analyze_source(
     workspace_id: str,
     request: AnalysisRequest,
-    orchestrator: AIAnalysisOrchestrator = Depends(get_ai_orchestrator),
+    orchestrator: AIAnalysisOrchestrator | None = Depends(get_ai_orchestrator),
 ) -> AnalysisResponse:
     """
     Analyze a COBOL source file within an existing workspace.
@@ -354,68 +354,74 @@ async def analyze_source(
     # ------------------------------------------------------------------
     ai_analysis = None
     if request.ai_capabilities and result.success and source_path.is_file():
-        try:
-            with open(source_path, "r", encoding="utf-8") as f:
-                source_text = f.read()
+        if orchestrator is None:
+            logger.error("AI Provider is unavailable (not configured)")
+            status = AnalysisStatus.INTERNAL_ERROR
+            result.error = Exception("Production LLM provider is not yet configured.")
+        else:
+            try:
+                with open(source_path, "r", encoding="utf-8") as f:
+                    source_text = f.read()
 
-            # Construct phase-1 context to pass to orchestrator
-            ai_context = {
-                "correlation_id": analysis_id,
-                "dependencies": result.dependencies,
-                "dependency_summary": dependency_summary,
-                "dependency_graph": dependency_graph,
-                "business_rules": business_rules,
-                "diagnostics": result.semantic_diagnostics + result.backend_diagnostics,
-                "source_metadata": source_metadata,
-            }
+                # Construct phase-1 context to pass to orchestrator
+                ai_context = {
+                    "correlation_id": analysis_id,
+                    "dependencies": result.dependencies,
+                    "dependency_summary": dependency_summary,
+                    "dependency_graph": dependency_graph,
+                    "business_rules": business_rules,
+                    "diagnostics": result.semantic_diagnostics
+                    + result.backend_diagnostics,
+                    "source_metadata": source_metadata,
+                }
 
-            # Map capabilities
-            domain_capabilities = set()
-            for cap in request.ai_capabilities:
-                if cap.name == "EXPLANATION":
-                    domain_capabilities.add(AICapability.EXPLANATION)
-                elif cap.name == "DOCUMENTATION":
-                    domain_capabilities.add(AICapability.DOCUMENTATION)
+                # Map capabilities
+                domain_capabilities = set()
+                for cap in request.ai_capabilities:
+                    if cap.name == "EXPLANATION":
+                        domain_capabilities.add(AICapability.EXPLANATION)
+                    elif cap.name == "DOCUMENTATION":
+                        domain_capabilities.add(AICapability.DOCUMENTATION)
 
-            ai_result = orchestrator.analyze(
-                source=source_text,
-                capabilities=domain_capabilities,
-                context=ai_context,
-            )
-
-            # Map domain models to API response schemas
-            explanation_resp = None
-            if ai_result.explanation:
-                explanation_resp = CodeExplanationResponse(
-                    summary=ai_result.explanation.summary,
-                    explanation=ai_result.explanation.explanation,
+                ai_result = orchestrator.analyze(
+                    source=source_text,
+                    capabilities=domain_capabilities,
+                    context=ai_context,
                 )
 
-            documentation_resp = None
-            if ai_result.documentation:
-                documentation_resp = DocumentationResponse(
-                    title=ai_result.documentation.title,
-                    overview=ai_result.documentation.overview,
-                    sections=[
-                        DocumentationSectionResponse(
-                            heading=sec.heading, content=sec.content
-                        )
-                        for sec in ai_result.documentation.sections
-                    ],
-                )
+                # Map domain models to API response schemas
+                explanation_resp = None
+                if ai_result.explanation:
+                    explanation_resp = CodeExplanationResponse(
+                        summary=ai_result.explanation.summary,
+                        explanation=ai_result.explanation.explanation,
+                    )
 
-            ai_analysis = AIAnalysisResponse(
-                explanation=explanation_resp,
-                documentation=documentation_resp,
-            )
-        except LLMProviderUnavailableError as e:
-            logger.error("AI Provider failed during analysis: {}", e)
-            status = AnalysisStatus.INTERNAL_ERROR
-            result.error = e
-        except Exception as e:
-            logger.exception("Unexpected error during AI orchestration")
-            status = AnalysisStatus.INTERNAL_ERROR
-            result.error = Exception(f"AI analysis failed: {e}")
+                documentation_resp = None
+                if ai_result.documentation:
+                    documentation_resp = DocumentationResponse(
+                        title=ai_result.documentation.title,
+                        overview=ai_result.documentation.overview,
+                        sections=[
+                            DocumentationSectionResponse(
+                                heading=sec.heading, content=sec.content
+                            )
+                            for sec in ai_result.documentation.sections
+                        ],
+                    )
+
+                ai_analysis = AIAnalysisResponse(
+                    explanation=explanation_resp,
+                    documentation=documentation_resp,
+                )
+            except LLMProviderUnavailableError as e:
+                logger.error("AI Provider failed during analysis: {}", e)
+                status = AnalysisStatus.INTERNAL_ERROR
+                result.error = e
+            except Exception as e:
+                logger.exception("Unexpected error during AI orchestration")
+                status = AnalysisStatus.INTERNAL_ERROR
+                result.error = Exception(f"AI analysis failed: {e}")
 
     if result.error is not None:
         status = AnalysisStatus.INTERNAL_ERROR
