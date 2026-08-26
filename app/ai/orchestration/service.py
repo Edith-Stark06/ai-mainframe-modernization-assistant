@@ -12,8 +12,6 @@ from typing import Any
 from app.ai.documentation.service import DocumentationGenerationService
 from app.ai.explanation.service import CodeExplanationService
 from app.ai.orchestration.models import AIAnalysisResult, AICapability
-from app.ai.results.models import NormalizedAIResult
-from app.ai.results.normalization import normalize_result
 
 
 class AIAnalysisOrchestrator:
@@ -37,7 +35,7 @@ class AIAnalysisOrchestrator:
         source: str,
         capabilities: set[AICapability],
         context: dict[str, Any] | None = None,
-    ) -> NormalizedAIResult:
+    ) -> AIAnalysisResult:
         """
         Run the requested AI capabilities for the provided source and context.
 
@@ -47,7 +45,7 @@ class AIAnalysisOrchestrator:
             context: The Phase-1 analysis context (e.g. dependencies, business rules).
 
         Returns:
-            NormalizedAIResult: The combined, normalized results of the executed capabilities.
+            AIAnalysisResult: The combined results of the executed capabilities.
 
         Raises:
             ValueError: If source is empty/whitespace, or if capabilities is empty.
@@ -82,10 +80,8 @@ class AIAnalysisOrchestrator:
                     source, context=copied_context
                 )
 
-        raw_result = AIAnalysisResult(
+        return AIAnalysisResult(
             explanation=explanation,
             documentation=documentation,
             context=preserved_context,
         )
-
-        return normalize_result(raw_result)
