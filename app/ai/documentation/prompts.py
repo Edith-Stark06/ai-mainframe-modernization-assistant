@@ -7,6 +7,50 @@ Deterministic prompt builders for COBOL code documentation.
 from typing import Any, Optional
 
 
+def _serialize_context_value(val: Any) -> str:
+    """Deterministically serialize a context value without memory addresses."""
+    if isinstance(val, str):
+        return val
+    if isinstance(val, (int, float, bool, type(None))):
+        return str(val)
+    if isinstance(val, dict):
+        parts = []
+        for k in sorted(val.keys(), key=str):
+            parts.append(f"{k}: {_serialize_context_value(val[k])}")
+        return "{" + ", ".join(parts) + "}"
+    if isinstance(val, (set, frozenset)):
+        parts = [_serialize_context_value(item) for item in val]
+        return "{" + ", ".join(sorted(parts)) + "}"
+    if isinstance(val, (list, tuple)):
+        parts = [_serialize_context_value(item) for item in val]
+        return "[" + ", ".join(parts) + "]"
+
+    if hasattr(val, "model_dump") and callable(val.model_dump):
+        return _serialize_context_value(val.model_dump())
+    if hasattr(val, "dict") and callable(val.dict):
+        return _serialize_context_value(val.dict())
+    if hasattr(val, "__dict__"):
+        return _serialize_context_value(vars(val))
+    if hasattr(val, "__slots__"):
+        d = {k: getattr(val, k) for k in getattr(val, "__slots__") if hasattr(val, k)}
+        return _serialize_context_value(d)
+
+    return str(val)
+
+
+def _serialize_collection(collection: Any) -> list[str]:
+    """Serialize a collection into a deterministic list of strings."""
+    if isinstance(collection, (set, frozenset)):
+        return sorted(_serialize_context_value(item) for item in collection)
+    if isinstance(collection, dict):
+        return sorted(
+            f"{k}: {_serialize_context_value(v)}" for k, v in collection.items()
+        )
+    if isinstance(collection, (list, tuple)):
+        return [_serialize_context_value(item) for item in collection]
+    return [_serialize_context_value(collection)]
+
+
 def build_documentation_prompt(
     source: str, context: Optional[dict[str, Any]] = None
 ) -> str:
@@ -46,27 +90,26 @@ def build_documentation_prompt(
 
     if "dependencies" in ctx:
         prompt_parts.append("=== DEPENDENCIES ===")
-        # Keep dependencies output deterministic
-        for dep in sorted(ctx["dependencies"]):
-            prompt_parts.append(f"- {dep}")
+        for dep_str in _serialize_collection(ctx["dependencies"]):
+            prompt_parts.append(f"- {dep_str}")
         prompt_parts.append("====================\n")
 
     if "business_rules" in ctx:
         prompt_parts.append("=== BUSINESS RULES ===")
-        for rule in ctx["business_rules"]:
-            prompt_parts.append(str(rule))
+        for rule_str in _serialize_collection(ctx["business_rules"]):
+            prompt_parts.append(rule_str)
         prompt_parts.append("====================\n")
 
     if "diagnostics" in ctx:
         prompt_parts.append("=== DIAGNOSTICS ===")
-        for diag in ctx["diagnostics"]:
-            prompt_parts.append(str(diag))
+        for diag_str in _serialize_collection(ctx["diagnostics"]):
+            prompt_parts.append(diag_str)
         prompt_parts.append("====================\n")
 
     if "analysis_metadata" in ctx:
         prompt_parts.append("=== ANALYSIS METADATA ===")
-        for key, value in sorted(ctx["analysis_metadata"].items()):
-            prompt_parts.append(f"{key}: {value}")
+        for meta_str in _serialize_collection(ctx["analysis_metadata"]):
+            prompt_parts.append(meta_str)
         prompt_parts.append("====================\n")
 
     prompt_parts.append(

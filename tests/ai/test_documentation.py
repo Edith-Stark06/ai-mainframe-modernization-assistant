@@ -166,3 +166,95 @@ def test_service_generate_documentation_empty_response() -> None:
 
     with pytest.raises(ValueError, match="empty or whitespace-only"):
         service.generate_documentation("       IDENTIFICATION DIVISION.")
+
+
+def test_documentation_models_sections_immutability() -> None:
+    doc = Documentation(
+        title="T",
+        overview="O",
+        sections=(DocumentationSection(heading="H", content="C"),),
+    )
+    with pytest.raises(AttributeError):
+        # Tuple has no attribute 'append'
+        doc.sections.append(DocumentationSection(heading="H2", content="C2"))  # type: ignore
+
+    # Verify construction with multiple sections still works
+    doc2 = Documentation(
+        title="T",
+        overview="O",
+        sections=(
+            DocumentationSection(heading="H1", content="C1"),
+            DocumentationSection(heading="H2", content="C2"),
+        ),
+    )
+    assert len(doc2.sections) == 2
+
+
+class DummyContextObject:
+    def __init__(self, value: str):
+        self.value = value
+
+
+class DummyContextSlotsObject:
+    __slots__ = ("value",)
+
+    def __init__(self, value: str):
+        self.value = value
+
+
+def test_build_documentation_prompt_determinism_sets() -> None:
+    source = "       IDENTIFICATION DIVISION."
+    context1 = {"dependencies": {"A", "B", "C"}}
+    context2 = {"dependencies": {"C", "A", "B"}}
+
+    prompt1 = build_documentation_prompt(source, context1)
+    prompt2 = build_documentation_prompt(source, context2)
+
+    assert prompt1 == prompt2
+    # Ensure they are sorted
+    idx_a = prompt1.find("\n- A\n")
+    idx_b = prompt1.find("\n- B\n")
+    idx_c = prompt1.find("\n- C\n")
+    assert idx_a < idx_b < idx_c
+
+
+def test_build_documentation_prompt_determinism_dicts() -> None:
+    source = "       IDENTIFICATION DIVISION."
+    context1 = {"analysis_metadata": {"z": 1, "a": 2, "m": 3}}
+    context2 = {"analysis_metadata": {"m": 3, "z": 1, "a": 2}}
+
+    prompt1 = build_documentation_prompt(source, context1)
+    prompt2 = build_documentation_prompt(source, context2)
+
+    assert prompt1 == prompt2
+    # Ensure they are sorted
+    idx_a = prompt1.find("a: 2")
+    idx_m = prompt1.find("m: 3")
+    idx_z = prompt1.find("z: 1")
+    assert idx_a < idx_m < idx_z
+
+
+def test_build_documentation_prompt_determinism_objects() -> None:
+    source = "       IDENTIFICATION DIVISION."
+    obj1 = DummyContextObject("test1")
+    obj2 = DummyContextSlotsObject("test2")
+
+    context = {"business_rules": [obj1, obj2]}
+
+    prompt = build_documentation_prompt(source, context)
+
+    # Should not contain memory address (e.g. '0x...') for default repr
+    assert "0x" not in prompt
+    assert "{value: test1}" in prompt
+    assert "{value: test2}" in prompt
+
+
+def test_build_documentation_prompt_no_mutation() -> None:
+    source = "       IDENTIFICATION DIVISION."
+    deps = ["B", "A", "C"]
+    context = {"dependencies": deps}
+
+    build_documentation_prompt(source, context)
+
+    # The original list should remain unmodified
+    assert deps == ["B", "A", "C"]

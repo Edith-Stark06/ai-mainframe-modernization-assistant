@@ -104,5 +104,5 @@ class DocumentationGenerationService:
             raise ValueError("Parsed overview section is empty.")
 
         return Documentation(
-            title=title_part, overview=overview_part, sections=sections
+            title=title_part, overview=overview_part, sections=tuple(sections)
         )
