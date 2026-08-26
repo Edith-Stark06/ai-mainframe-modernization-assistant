@@ -46,11 +46,11 @@ def test_orchestration_both_capabilities() -> None:
 
     result = orchestrator.analyze(source, capabilities)
 
-    assert result.explanation is not None
-    assert result.explanation.summary == "Test sum"
+    assert result.get_explanation() is not None
+    assert result.get_explanation().summary == "Test sum"
 
-    assert result.documentation is not None
-    assert result.documentation.title == "Test doc"
+    assert result.get_documentation() is not None
+    assert result.get_documentation().title == "Test doc"
 
 
 def test_orchestration_explanation_only() -> None:
@@ -63,8 +63,8 @@ def test_orchestration_explanation_only() -> None:
     # Should succeed because documentation is not requested, despite doc provider being set to fail
     result = orchestrator.analyze(source, capabilities)
 
-    assert result.explanation is not None
-    assert result.documentation is None
+    assert result.get_explanation() is not None
+    assert result.get_documentation() is None
 
 
 def test_orchestration_documentation_only() -> None:
@@ -77,8 +77,8 @@ def test_orchestration_documentation_only() -> None:
     # Should succeed because explanation is not requested
     result = orchestrator.analyze(source, capabilities)
 
-    assert result.explanation is None
-    assert result.documentation is not None
+    assert result.get_explanation() is None
+    assert result.get_documentation() is not None
 
 
 def test_orchestration_phase1_context_propagation() -> None:
@@ -97,7 +97,7 @@ def test_orchestration_phase1_context_propagation() -> None:
 
     # Context should be preserved
     assert result.context["correlation_id"] == "c-123"
-    assert result.context["dependencies"] == ["A", "B"]
+    assert result.context["dependencies"] == ("A", "B")
 
 
 def test_orchestration_provider_failure() -> None:
@@ -163,8 +163,8 @@ def test_orchestration_determinism() -> None:
     result1 = orchestrator.analyze(source, capabilities, context)
     result2 = orchestrator.analyze(source, capabilities, context)
 
-    assert result1.explanation == result2.explanation
-    assert result1.documentation == result2.documentation
+    assert result1.get_explanation() == result2.get_explanation()
+    assert result1.get_documentation() == result2.get_documentation()
     assert result1.context == result2.context
 
 
