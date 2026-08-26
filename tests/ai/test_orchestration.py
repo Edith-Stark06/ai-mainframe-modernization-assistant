@@ -3,6 +3,8 @@ Tests for AI Analysis Orchestrator.
 """
 
 import pytest
+from unittest.mock import MagicMock
+from typing import Any
 
 from app.ai.documentation.service import DocumentationGenerationService
 from app.ai.explanation.models import CodeExplanation
@@ -11,6 +13,7 @@ from app.ai.orchestration.models import AIAnalysisResult, AICapability
 from app.ai.orchestration.service import AIAnalysisOrchestrator
 from app.ai.providers.errors import LLMProviderUnavailableError
 from app.ai.providers.fake import FakeLLMProvider
+from app.ai.documentation.models import Documentation
 
 
 def _get_services(
@@ -171,17 +174,19 @@ def test_orchestration_context_immutability() -> None:
 
     source = "       IDENTIFICATION DIVISION."
     capabilities = {AICapability.EXPLANATION}
-    context = {"nested": {"key": "value"}}
-
-    # Keep a reference to the original nested dict
-    original_nested = context["nested"]
+    context: dict[str, Any] = {"nested": {"key": "value"}}
 
     result = orchestrator.analyze(source, capabilities, context)
 
-    # The result context should be a deepcopy
+    # 1. caller_context != result.context by identity
     assert result.context is not context
-    assert result.context["nested"] is not original_nested
-    assert result.context["nested"] == original_nested
+    # 2. Mutating the caller after orchestration does not alter the result
+    context["nested"]["key"] = "mutated"
+    assert result.context["nested"]["key"] == "value"
+
+    # Also prove result context itself is an immutable mapping proxy
+    with pytest.raises(TypeError):
+        result.context["new"] = "k"  # type: ignore
 
 
 def test_orchestration_result_immutability() -> None:
@@ -192,3 +197,35 @@ def test_orchestration_result_immutability() -> None:
     )
     with pytest.raises(Exception):
         result.context = {"new": "k"}  # type: ignore
+
+
+def test_orchestration_execution_order() -> None:
+    """Equivalent capability sets must always execute in EXPLANATION -> DOCUMENTATION order."""
+    exp_svc, doc_svc = _get_services()
+
+    # We will wrap the underlying methods with mocks to track call order
+    exp_svc.explain_code = MagicMock(return_value=CodeExplanation("S", "E"))  # type: ignore
+    doc_svc.generate_documentation = MagicMock(return_value=Documentation("T", "O"))  # type: ignore
+
+    orchestrator = AIAnalysisOrchestrator(exp_svc, doc_svc)
+    source = "       IDENTIFICATION DIVISION."
+
+    # Python sets do not guarantee order.
+    # Whether we build {A, B} or {B, A}, it is the same set.
+    # The orchestrator MUST enforce a stable execution order internally.
+    capabilities = {AICapability.DOCUMENTATION, AICapability.EXPLANATION}
+
+    # Verify execution order: explanation, then documentation
+    # We can attach a common parent mock to track order
+    parent = MagicMock()
+    parent.attach_mock(exp_svc.explain_code, "explain")
+    parent.attach_mock(doc_svc.generate_documentation, "document")
+
+    # Run to capture in parent
+    orchestrator.analyze(source, capabilities)
+
+    calls = parent.mock_calls
+    # Should see explain followed by document
+    assert len(calls) == 2
+    assert calls[0][0] == "explain"
+    assert calls[1][0] == "document"
