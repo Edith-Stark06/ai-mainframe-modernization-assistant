@@ -122,6 +122,19 @@ _COBOL_DIFFERENT_NAME = b"""        IDENTIFICATION DIVISION.
             STOP RUN.
 """
 
+_COBOL_WITH_BUSINESS_RULES = b"""        IDENTIFICATION DIVISION.
+        PROGRAM-ID. RULE-TEST.
+
+        PROCEDURE DIVISION.
+        MAIN-PARAGRAPH.
+            IF A > B
+                MOVE 1 TO X
+            ELSE
+                MOVE 2 TO Y
+            END-IF.
+            STOP RUN.
+"""
+
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
@@ -1336,3 +1349,112 @@ class TestAnalyzeEndpointDependenciesSummary:
 
         assert graph1["nodes"] == graph2["nodes"]
         assert graph1["edges"] == graph2["edges"]
+
+
+class TestAnalyzeBusinessRules:
+    """Tests for the business_rules extraction integration in the analysis API."""
+
+    def test_analyze_business_rules_nominal(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Verify business rules are extracted and returned for valid source."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"rules.cbl": _COBOL_WITH_BUSINESS_RULES},
+        )
+        response = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "rules.cbl"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+
+        rules = body.get("business_rules")
+        assert rules is not None
+        assert len(rules) == 2
+
+        # Verify normalization and literals preservation
+        assert rules[0]["condition"] == "A > B"
+        assert rules[0]["actions"] == ["MOVE 1 TO X"]
+
+        assert rules[1]["condition"] == "NOT ( A > B )"
+        assert rules[1]["actions"] == ["MOVE 2 TO Y"]
+
+    def test_analyze_business_rules_empty(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Verify empty rules result is returned when no rules are present."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"hello.cbl": _COBOL_HELLO},
+        )
+        response = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+
+        rules = body.get("business_rules")
+        assert rules is not None
+        assert len(rules) == 0
+
+    def test_analyze_business_rules_semantic_error(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Verify rules are returned even if semantic errors exist, provided AST is valid."""
+        ws_id = _create_workspace(
+            workspace_root,
+            {"undef.cbl": _COBOL_UNDEFINED},
+        )
+        response = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "undef.cbl"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is False
+        assert body["status"] == "ANALYSIS_ERROR"
+
+        # AST is constructed despite undefined variables
+        assert body["business_rules"] is not None
+
+    def test_analyze_business_rules_internal_error(
+        self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify rules are null if analysis fails before AST creation."""
+        from app.analysis.models import AnalysisResult
+
+        def mock_analyze_file(*args, **kwargs) -> AnalysisResult:
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[],
+                semantic_diagnostics=[],
+                success=False,
+                error=Exception("Simulated internal compiler crash"),
+                dependencies=[],
+                ast=None,
+                ir=None,
+            )
+
+        monkeypatch.setattr(
+            "app.api.routers.analysis.AnalysisService.analyze_file", mock_analyze_file
+        )
+
+        ws_id = _create_workspace(
+            workspace_root,
+            {"hello.cbl": _COBOL_HELLO},
+        )
+        response = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is False
+        assert body["status"] == "INTERNAL_ERROR"
+
+        # No AST, so no rules could be extracted
+        assert body.get("business_rules") is None
