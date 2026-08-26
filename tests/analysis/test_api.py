@@ -141,10 +141,11 @@ _COBOL_COMBINED = b"""        IDENTIFICATION DIVISION.
         PROCEDURE DIVISION.
         MAIN-PARAGRAPH.
             CALL "OTHER-PROG"
+            PERFORM SUB-PARA
             IF A > B
                 MOVE 1 TO X
             ELSE
-                PERFORM SUB-PARA
+                MOVE 2 TO Y
             END-IF.
             STOP RUN.
         SUB-PARA.
@@ -1510,7 +1511,7 @@ class TestPhase1IntelligenceIntegration:
         # Business rules follows empty-result convention
         rules = body.get("business_rules")
         assert rules is not None
-        assert len(rules) == 0
+        assert rules == []
 
     def test_analyze_business_rule_only(
         self, client: TestClient, workspace_root: Path
@@ -1574,11 +1575,11 @@ class TestPhase1IntelligenceIntegration:
         assert len(graph["edges"]) == 2  # CALL, PERFORM
 
         # Verify business rules
-        assert len(rules) == 1
+        assert len(rules) == 2
         assert rules[0]["condition"] == "A > B"
         assert rules[0]["actions"] == ["MOVE 1 TO X"]
-        # The ELSE branch with PERFORM SUB-PARA does not extract an action
-        # because the extractor doesn't support PERFORM, so no rule is emitted.
+        assert rules[1]["condition"] == "NOT ( A > B )"
+        assert rules[1]["actions"] == ["MOVE 2 TO Y"]
 
     def test_graph_summary_consistency(
         self, client: TestClient, workspace_root: Path
@@ -1614,8 +1615,9 @@ class TestPhase1IntelligenceIntegration:
 
         rules = body.get("business_rules")
         assert rules is not None
-        assert len(rules) == 1
+        assert len(rules) == 2
         assert rules[0]["condition"] == "A > B"
+        assert rules[1]["condition"] == "NOT ( A > B )"
 
     def test_empty_analysis(self, client: TestClient, workspace_root: Path) -> None:
         """Test a valid program containing neither dependencies nor business rules."""
@@ -1787,3 +1789,6 @@ class TestPhase1IntelligenceIntegration:
         assert body1["dependency_graph"]["edges"] == body2["dependency_graph"]["edges"]
 
         assert body1["business_rules"] == body2["business_rules"]
+
+        for rule1, rule2 in zip(body1["business_rules"], body2["business_rules"]):
+            assert rule1["actions"] == rule2["actions"]

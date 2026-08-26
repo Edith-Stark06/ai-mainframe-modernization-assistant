@@ -70,3 +70,15 @@ Before implementation:
 git fetch origin
 git checkout main
 git pull origin main
+```
+
+---
+
+# INTEGRATION TESTING SPECIFICS
+
+The Phase 1 integration test utilizes only currently supported constructs for both the DependencyAnalyzer and the BusinessRuleExtractor:
+- `CALL` and `PERFORM` are validated as dependencies.
+- `IF`/`ELSE` combined with `MOVE` are validated as business rules.
+- `PERFORM` is NOT treated as a business-rule action because the `BusinessRuleExtractor` does not currently support `PERFORM` as a valid business rule action.
+
+This ensures both intelligence subsystems are validated simultaneously without requiring unsupported behavior.
