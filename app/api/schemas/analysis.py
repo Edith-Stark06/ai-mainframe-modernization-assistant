@@ -61,7 +61,7 @@ from app.api.schemas.dependencies import (
     DependencyResponse,
 )
 from app.api.schemas.rules import BusinessRuleResponse
-from app.api.schemas.ai import AIAnalysisResponse, AICapabilityRequest
+from app.api.schemas.ai import AIResultResponse, AICapabilityRequest
 
 __all__ = [
     "AnalysisRequest",
@@ -246,7 +246,7 @@ class AnalysisResponse(BaseModel):
         default=None,
         description="Human-readable error message, or null on success.",
     )
-    ai_analysis: AIAnalysisResponse | None = Field(
+    ai_result: AIResultResponse | None = Field(
         default=None,
         description="Optional AI analysis result, if requested and successfully produced.",
     )

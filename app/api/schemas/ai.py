@@ -9,11 +9,13 @@ Purpose:
 from __future__ import annotations
 
 from enum import Enum
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
-    "AIAnalysisResponse",
+    "AIResultResponse",
+    "AIArtifactResponse",
     "CodeExplanationResponse",
     "DocumentationResponse",
     "DocumentationSectionResponse",
@@ -85,18 +87,40 @@ class DocumentationResponse(BaseModel):
     )
 
 
-class AIAnalysisResponse(BaseModel):
+class ExplanationArtifactResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    artifact_type: Literal["EXPLANATION"] = Field(
+        ..., description="The type of the artifact."
+    )
+    payload: CodeExplanationResponse
+
+
+class DocumentationArtifactResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    artifact_type: Literal["DOCUMENTATION"] = Field(
+        ..., description="The type of the artifact."
+    )
+    payload: DocumentationResponse
+
+
+AIArtifactResponse = Annotated[
+    Union[ExplanationArtifactResponse, DocumentationArtifactResponse],
+    Field(discriminator="artifact_type"),
+]
+
+
+class AIResultResponse(BaseModel):
     """
-    Response envelope for combined AI analysis artifacts.
+    Response envelope for normalized AI analysis artifacts and context.
     """
 
     model_config = ConfigDict(populate_by_name=True)
 
-    explanation: CodeExplanationResponse | None = Field(
-        default=None,
-        description="The generated code explanation, if requested.",
+    artifacts: list[AIArtifactResponse] = Field(
+        default_factory=list,
+        description="A list of normalized AI artifacts.",
     )
-    documentation: DocumentationResponse | None = Field(
-        default=None,
-        description="The generated COBOL documentation, if requested.",
+    context: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Phase-1 analysis context safe for JSON serialization.",
     )
