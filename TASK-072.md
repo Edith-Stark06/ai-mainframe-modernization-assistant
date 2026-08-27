@@ -14,10 +14,12 @@ This task integrates with the work already completed in Tasks 069–071.
 
 ## Implementation Details
 
-- **API Schemas:** Replaced the interim `AIAnalysisResponse` with a strict `AIResultResponse` schema that enforces standard payload types and leverages a discriminated union `AIArtifactResponse` based on `artifact_type`. 
-- **Router Integration:** `app/api/routers/analysis.py` now maps `AIResultResponse` to the normalized output of `normalize_result()`.
+- **API Schemas:** Replaced the interim `AIAnalysisResponse` with a strict `AIResultResponse` schema that enforces standard payload types and leverages a discriminated union `AIArtifactResponse` based on `artifact_type`.
+- **Public Field Preservation:** The public API field `ai_analysis` remains unchanged to preserve backward compatibility. Its internal contents now use the finalized `AIResultResponse` contract, with normalized AI artifacts exposed through this existing field.
+- **Router Integration:** `app/api/routers/analysis.py` now maps the new `AIResultResponse` schema back to the `ai_analysis` field using the normalized output of `normalize_result()`.
 - **Serialization and Clean Boundaries:** By relying on `.to_dict()` provided by `NormalizedAIResult`, internal Python types (like `ImmutableDict` and dataclasses) are seamlessly serialized before hitting Pydantic validators, ensuring no internal objects leak out into the public API boundary.
-- **Fail-Safe Orchestration:** If AI generation fails (or artifacts are improperly structured), the router suppresses the AI response gracefully by returning `ai_result = None`, alongside an `INTERNAL_ERROR` status, while still fully preserving all existing Phase-1 analysis data (such as AST and IR).
+- **Fail-Safe Orchestration:** If AI generation fails (or artifacts are improperly structured), the router suppresses the AI response gracefully by returning `ai_analysis = None`, alongside an `INTERNAL_ERROR` status, while still fully preserving all existing Phase-1 analysis data (such as AST and IR).
+
 
 ## Validation & Tests
 

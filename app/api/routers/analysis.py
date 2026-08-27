@@ -348,7 +348,7 @@ async def analyze_source(
     # ------------------------------------------------------------------
     # AI Analysis Orchestration
     # ------------------------------------------------------------------
-    ai_result = None
+    ai_analysis = None
     if request.ai_capabilities and result.success and source_path.is_file():
         if orchestrator is None:
             logger.error("AI Provider is unavailable (not configured)")
@@ -386,7 +386,7 @@ async def analyze_source(
                 )
 
                 normalized_result = normalize_result(ai_result_raw)
-                ai_result = AIResultResponse.model_validate(normalized_result.to_dict())
+                ai_analysis = AIResultResponse.model_validate(normalized_result.to_dict())
             except LLMProviderUnavailableError as e:
                 logger.error("AI Provider failed during analysis: {}", e)
                 status = AnalysisStatus.INTERNAL_ERROR
@@ -424,7 +424,7 @@ async def analyze_source(
         dependency_graph=dependency_graph,
         business_rules=business_rules,
         error=str(result.error) if result.error is not None else None,
-        ai_result=ai_result,
+        ai_analysis=ai_analysis,
     )
 
     logger.info(
