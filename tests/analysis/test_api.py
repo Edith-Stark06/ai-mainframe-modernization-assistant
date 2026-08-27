@@ -1839,7 +1839,7 @@ class TestAnalyzeEndpointAIOrchestration:
                 json={"filename": "hello.cbl"},
             ).json()
             assert body["success"] is True
-            assert body.get("ai_result") is None
+            assert body.get("ai_analysis") is None
 
             # Verify Phase-1 fields remain populated
             assert body.get("ast") is not None
@@ -1882,14 +1882,14 @@ class TestAnalyzeEndpointAIOrchestration:
     def test_analyze_omits_ai_when_not_requested(
         self, client: TestClient, workspace_root: Path
     ) -> None:
-        """ai_result must be None if ai_capabilities are not requested. Existing fields must be present."""
+        """ai_analysis must be None if ai_capabilities are not requested. Existing fields must be present."""
         ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
         body = client.post(
             f"/api/v1/workspaces/{ws_id}/analyze",
             json={"filename": "hello.cbl"},
         ).json()
         assert body["success"] is True
-        assert body.get("ai_result") is None
+        assert body.get("ai_analysis") is None
 
         # Verify backward compatibility for existing fields
         assert "status" in body
@@ -1912,7 +1912,7 @@ class TestAnalyzeEndpointAIOrchestration:
             json={"filename": "hello.cbl", "ai_capabilities": ["EXPLANATION"]},
         ).json()
         assert body["success"] is True
-        ai = body["ai_result"]
+        ai = body["ai_analysis"]
         assert ai is not None
         assert len(ai["artifacts"]) == 1
         assert ai["artifacts"][0]["artifact_type"] == "EXPLANATION"
@@ -1933,7 +1933,7 @@ class TestAnalyzeEndpointAIOrchestration:
             json={"filename": "hello.cbl", "ai_capabilities": ["DOCUMENTATION"]},
         ).json()
         assert body["success"] is True
-        ai = body["ai_result"]
+        ai = body["ai_analysis"]
         assert ai is not None
         assert len(ai["artifacts"]) == 1
         assert ai["artifacts"][0]["artifact_type"] == "DOCUMENTATION"
@@ -1957,7 +1957,7 @@ class TestAnalyzeEndpointAIOrchestration:
             },
         ).json()
         assert body["success"] is True
-        ai = body["ai_result"]
+        ai = body["ai_analysis"]
         assert ai is not None
         assert len(ai["artifacts"]) == 2
         # Deterministic ordering check (EXPLANATION then DOCUMENTATION)
@@ -1986,7 +1986,7 @@ class TestAnalyzeEndpointAIOrchestration:
         # It preserves the analysis result but updates the error and status
         assert body["success"] is True  # Phase-1 succeeded
         assert body["status"] == "INTERNAL_ERROR"
-        assert body.get("ai_result") is None
+        assert body.get("ai_analysis") is None
         assert "Fake timeout" in body["error"]
         # Make sure phase 1 data remains intact
         assert body["ast"] is not None
@@ -2002,7 +2002,7 @@ class TestAnalyzeEndpointAIOrchestration:
             json={"filename": "undefined.cbl", "ai_capabilities": ["EXPLANATION"]},
         ).json()
         assert body["success"] is False
-        assert body.get("ai_result") is None
+        assert body.get("ai_analysis") is None
 
     def test_analyze_preserves_dependency_and_business_rules(
         self, client: TestClient, workspace_root: Path
@@ -2045,7 +2045,7 @@ class TestAnalyzeEndpointAIOrchestration:
         assert isinstance(parsed, dict)
 
         # Verify JSON preservation of basic types in nested context
-        context = parsed["ai_result"]["context"]
+        context = parsed["ai_analysis"]["context"]
         assert isinstance(context["source_metadata"]["size_bytes"], int)
         assert isinstance(context["source_metadata"]["extension"], str)
         assert type(context) is dict
@@ -2122,7 +2122,7 @@ class TestAnalyzeEndpointAIOrchestration:
         ).json()
 
         # The AI artifacts should be completely identical for the fake provider
-        assert body1["ai_result"]["artifacts"] == body2["ai_result"]["artifacts"]
+        assert body1["ai_analysis"]["artifacts"] == body2["ai_analysis"]["artifacts"]
 
     def test_schema_validation_invalid_payload(self) -> None:
         from app.api.schemas.ai import AIResultResponse
@@ -2132,3 +2132,16 @@ class TestAnalyzeEndpointAIOrchestration:
             AIResultResponse.model_validate(
                 {"artifacts": [{"artifact_type": "UNKNOWN_TYPE", "payload": {}}]}
             )
+
+    def test_backward_compatibility_public_field(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Verify that the public API field is named 'ai_analysis', not 'ai_result'."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl", "ai_capabilities": ["EXPLANATION"]},
+        ).json()
+        assert "ai_analysis" in body
+        assert "ai_result" not in body
+        assert body["ai_analysis"] is not None

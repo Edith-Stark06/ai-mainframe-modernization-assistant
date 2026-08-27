@@ -246,7 +246,7 @@ class AnalysisResponse(BaseModel):
         default=None,
         description="Human-readable error message, or null on success.",
     )
-    ai_result: AIResultResponse | None = Field(
+    ai_analysis: AIResultResponse | None = Field(
         default=None,
         description="Optional AI analysis result, if requested and successfully produced.",
     )
