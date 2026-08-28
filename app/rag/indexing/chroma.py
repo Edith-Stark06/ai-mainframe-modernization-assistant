@@ -6,6 +6,7 @@ from chromadb.api.models.Collection import Collection
 from app.rag.indexing.base import VectorIndex
 from app.rag.embeddings.models import Embedding
 from app.rag.models import KnowledgeChunk
+from app.rag.retrieval.models import RetrievalResult
 
 
 class ChromaIndex(VectorIndex):
@@ -135,3 +136,89 @@ class ChromaIndex(VectorIndex):
 
     def size(self) -> int:
         return self._collection.count()
+
+    def search(
+        self,
+        query_vector: tuple[float, ...],
+        top_k: int,
+        filter_metadata: dict[str, str | int | float | bool] | None = None,
+    ) -> list[RetrievalResult]:
+        if top_k <= 0:
+            raise ValueError("top_k must be positive")
+        if len(query_vector) != self.expected_dimension:
+            raise ValueError("query_vector dimension mismatch")
+
+        # ChromaDB query syntax uses "where" for metadata filtering
+        kwargs: dict[str, Any] = {
+            "query_embeddings": [list(query_vector)],
+            "n_results": top_k,
+            "include": ["documents", "metadatas", "distances"],
+        }
+        if filter_metadata:
+            # For simple key-value match
+            kwargs["where"] = filter_metadata
+
+        # mypy will complain if we don't handle Optional properly
+        # Since we might query an empty DB, chromadb returns empty lists
+        result = self._collection.query(**kwargs)
+
+        ids_list = result.get("ids")
+        if not ids_list or not ids_list[0]:
+            return []
+
+        distances_list = result.get("distances")
+        if not distances_list or not distances_list[0]:
+            return []
+
+        documents_list = result.get("documents")
+        if not documents_list or not documents_list[0]:
+            return []
+
+        metadatas_list = result.get("metadatas")
+        if not metadatas_list or not metadatas_list[0]:
+            return []
+
+        # They are returned as list of lists (one per query)
+        batch_ids = ids_list[0]
+        batch_distances = distances_list[0]
+        batch_documents = documents_list[0]
+        batch_metadatas = metadatas_list[0]
+
+        parsed_results: list[RetrievalResult] = []
+
+        for i in range(len(batch_ids)):
+            chunk_id = batch_ids[i]
+            dist = float(batch_distances[i])
+            doc_content = batch_documents[i]
+            meta = batch_metadatas[i] or {}
+
+            # Extract reserved metadata
+            doc_id = str(meta.get("document_id", ""))
+            chunk_idx_raw = meta.get("chunk_index", 0)
+            chunk_idx = (
+                int(chunk_idx_raw)
+                if isinstance(chunk_idx_raw, (int, float, str))
+                else 0
+            )
+
+            # Remove them from the chunk metadata mapping to avoid duplication?
+            # Or leave them, but chunk.metadata should just be the dictionary.
+            # We'll put all meta in metadata for simplicity, since it's an ImmutableDict.
+            # But the chunk requires them explicitly for initialization.
+            parsed_results.append(
+                RetrievalResult(
+                    chunk_id=chunk_id,
+                    document_id=doc_id,
+                    content=doc_content,
+                    chunk_index=chunk_idx,
+                    metadata=meta,
+                    score=dist,
+                )
+            )
+
+        # Ensure deterministic ordering: distance (asc), doc_id, chunk_index, chunk_id
+        parsed_results.sort(
+            key=lambda r: (r.score, r.document_id, r.chunk_index, r.chunk_id)
+        )
+
+        return parsed_results
