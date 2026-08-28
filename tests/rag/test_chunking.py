@@ -336,7 +336,7 @@ def test_json_safe_source_path() -> None:
         id="doc1",
         source_name="test.txt",
         document_type="text",
-        source_path=pathlib.Path("/tmp/foo/bar.txt"),
+        source_path=pathlib.Path("/tmp/foo/bar.txt"),  # type: ignore
         content="Hello",
         metadata={"foo": "bar"},
     )
