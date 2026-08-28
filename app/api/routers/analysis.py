@@ -386,7 +386,9 @@ async def analyze_source(
                 )
 
                 normalized_result = normalize_result(ai_result_raw)
-                ai_analysis = AIResultResponse.model_validate(normalized_result.to_dict())
+                ai_analysis = AIResultResponse.model_validate(
+                    normalized_result.to_dict()
+                )
             except LLMProviderUnavailableError as e:
                 logger.error("AI Provider failed during analysis: {}", e)
                 status = AnalysisStatus.INTERNAL_ERROR
