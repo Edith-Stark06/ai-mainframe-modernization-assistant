@@ -63,11 +63,17 @@ class DocumentChunker:
         if not content.strip():
             return None
 
+        import pathlib
+
+        source_path = document.source_path
+        if isinstance(source_path, pathlib.Path):
+            source_path = source_path.as_posix()
+
         chunk_id = self._generate_chunk_id(document.id, chunk_index, content)
         metadata: dict[str, Any] = {
             "source_id": document.id,
             "source_name": document.source_name,
-            "source_path": document.source_path,
+            "source_path": source_path,
             "document_type": document.document_type,
             "chunk_size": self.chunk_size,
             "overlap": self.overlap,
