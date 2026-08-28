@@ -63,12 +63,6 @@ def test_text_chunking_overlap() -> None:
     assert chunks[2].content == "6789"
 
 
-def test_text_chunking_coverage() -> None:
-    # 01234 34567 6789
-    # Coverage is correct since overlapping starts at correct index
-    pass
-
-
 def test_code_chunking_lines() -> None:
     doc = _create_doc("LINE 1\nLINE 2\nLINE 3\nLINE 4\n", doc_type="cobol")
     chunker = DocumentChunker(chunk_size=16, overlap=8)
@@ -91,6 +85,10 @@ def test_code_chunking_long_line() -> None:
     assert chunks[1].content == "S A VERY L"
     assert chunks[2].content == "RY LONG LI"
     assert chunks[3].content == "G LINE"
+
+    for i in range(len(chunks) - 1):
+        assert chunks[i].metadata["start_char"] < chunks[i].metadata["end_char"]
+        assert chunks[i + 1].metadata["start_char"] > chunks[i].metadata["start_char"]
 
 
 def test_code_chunking_no_newline_before_overlap() -> None:
@@ -305,3 +303,26 @@ def test_immutability_metadata() -> None:
     metadata["key"] = "mutated"
     # Document shouldn't change (tested in task 073, but let's verify chunks don't have it either)
     assert doc.metadata["key"] == "value"
+
+
+def test_chunk_boundary_invariant() -> None:
+    source = "0123456789" * 10  # 100 chars
+    doc = _create_doc(source)
+    chunker = DocumentChunker(chunk_size=15, overlap=5)
+    chunks = chunker.chunk_document(doc)
+
+    for i, chunk in enumerate(chunks):
+        start = chunk.metadata["start_char"]
+        end = chunk.metadata["end_char"]
+        assert 0 <= start < end <= len(source)
+        assert chunk.content == source[start:end]
+
+        if i > 0:
+            prev_chunk = chunks[i - 1]
+            prev_start = prev_chunk.metadata["start_char"]
+            prev_end = prev_chunk.metadata["end_char"]
+
+            assert start > prev_start
+            assert end > prev_start  # end is greater than prev start
+            # For this simple text chunker:
+            assert start == prev_end - 5
