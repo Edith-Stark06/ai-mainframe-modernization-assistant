@@ -1,5 +1,6 @@
 from app.api.schemas.ai import (
-    AIAnalysisResponse,
+    AIResultResponse,
+    AIArtifactResponse,
     AICapabilityRequest,
     CodeExplanationResponse,
     DocumentationResponse,
@@ -22,7 +23,8 @@ from app.api.schemas.dependencies import (
 from app.api.schemas.rules import BusinessRuleResponse
 
 __all__ = [
-    "AIAnalysisResponse",
+    "AIResultResponse",
+    "AIArtifactResponse",
     "AICapabilityRequest",
     "AnalysisRequest",
     "AnalysisResponse",
