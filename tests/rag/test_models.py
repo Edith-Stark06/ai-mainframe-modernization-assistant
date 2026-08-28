@@ -251,3 +251,116 @@ def test_metadata_ordering_determinism() -> None:
     # sorts the keys, so `list(chunk1.metadata.keys())` should equal `['a', 'b', 'c']`
     assert list(chunk1.metadata.keys()) == ["a", "b", "c"]
     assert list(chunk2.metadata.keys()) == ["a", "b", "c"]
+
+
+def test_unsupported_metadata_rejection() -> None:
+    class CustomObj:
+        pass
+
+    with pytest.raises(ValueError, match="Unsupported metadata type"):
+        KnowledgeDocument(
+            id="doc",
+            source_name="src",
+            document_type="type",
+            source_path=None,
+            content="content",
+            metadata={"key": CustomObj()},
+        )
+
+
+def test_metadata_keys_must_be_strings() -> None:
+    with pytest.raises(ValueError, match="Metadata keys must be strings"):
+        KnowledgeChunk(
+            id="chunk",
+            document_id="doc",
+            content="content",
+            chunk_index=0,
+            metadata={1: "value"},  # type: ignore
+        )
+
+
+def test_whitespace_validation() -> None:
+    with pytest.raises(ValueError, match="Document ID cannot be empty"):
+        KnowledgeDocument(
+            id="   ",
+            source_name="src",
+            document_type="type",
+            source_path=None,
+            content="content",
+            metadata={},
+        )
+
+    with pytest.raises(ValueError, match="Document content cannot be empty"):
+        KnowledgeDocument(
+            id="doc",
+            source_name="src",
+            document_type="type",
+            source_path=None,
+            content="   ",
+            metadata={},
+        )
+
+    with pytest.raises(ValueError, match="Chunk ID cannot be empty"):
+        KnowledgeChunk(
+            id="   ", document_id="doc", content="content", chunk_index=0, metadata={}
+        )
+
+    with pytest.raises(ValueError, match="Parent document ID cannot be empty"):
+        KnowledgeChunk(
+            id="chunk", document_id="   ", content="content", chunk_index=0, metadata={}
+        )
+
+    with pytest.raises(ValueError, match="Chunk content cannot be empty"):
+        KnowledgeChunk(
+            id="chunk", document_id="doc", content="   ", chunk_index=0, metadata={}
+        )
+
+
+def test_structural_equality() -> None:
+    doc1 = KnowledgeDocument(
+        id="doc",
+        source_name="src",
+        document_type="type",
+        source_path=None,
+        content="content",
+        metadata={"a": 1},
+    )
+    doc2 = KnowledgeDocument(
+        id="doc",
+        source_name="src",
+        document_type="type",
+        source_path=None,
+        content="content",
+        metadata={"a": 1},
+    )
+    doc3 = KnowledgeDocument(
+        id="doc2",
+        source_name="src",
+        document_type="type",
+        source_path=None,
+        content="content",
+        metadata={"a": 1},
+    )
+
+    assert doc1 == doc2
+    assert doc1 != doc3
+
+
+def test_metadata_isolation() -> None:
+    mutable_dict = {"nested": {"value": 1}}
+    chunk = KnowledgeChunk(
+        id="c1",
+        document_id="d1",
+        content="content",
+        chunk_index=0,
+        metadata=mutable_dict,
+    )
+
+    # Mutating original dict shouldn't affect stored
+    mutable_dict["nested"]["value"] = 2
+
+    assert chunk.metadata["nested"]["value"] == 1
+
+    # Attempting to mutate through the object should fail
+    with pytest.raises(TypeError):
+        chunk.metadata["nested"]["value"] = 3  # type: ignore

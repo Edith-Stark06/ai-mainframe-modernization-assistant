@@ -41,15 +41,29 @@ def _freeze_metadata(data: Any) -> Any:
     """
     Recursively convert dictionaries to ImmutableDict and lists to tuples
     to prevent caller mutation and ensure immutability of the metadata.
+    Enforces JSON-compatible values and deterministic sorting.
     """
-    if isinstance(data, Mapping):
+    if data is None or isinstance(data, (str, int, float, bool)):
+        return data
+    elif isinstance(data, Mapping):
+        frozen_dict = {}
+        for k, v in data.items():
+            if not isinstance(k, str):
+                raise ValueError(
+                    f"Metadata keys must be strings, got {type(k).__name__}"
+                )
+            frozen_dict[k] = _freeze_metadata(v)
         # Sort keys to ensure deterministic ordering of dictionaries
-        return ImmutableDict(
-            {k: _freeze_metadata(data[k]) for k in sorted(data.keys())}
-        )
+        return ImmutableDict({k: frozen_dict[k] for k in sorted(frozen_dict.keys())})
     elif isinstance(data, (list, tuple)):
         return tuple(_freeze_metadata(item) for item in data)
-    return data
+    elif isinstance(data, (set, frozenset)):
+        frozen_items = [_freeze_metadata(item) for item in data]
+        try:
+            return tuple(sorted(frozen_items))
+        except TypeError:
+            return tuple(frozen_items)
+    raise ValueError(f"Unsupported metadata type: {type(data).__name__}")
 
 
 def _to_json_compatible(val: Any) -> Any:
@@ -78,9 +92,9 @@ class KnowledgeDocument:
     metadata: Mapping[str, Any]
 
     def __post_init__(self) -> None:
-        if not self.id:
+        if not self.id or not self.id.strip():
             raise ValueError("Document ID cannot be empty.")
-        if not self.content:
+        if not self.content or not self.content.strip():
             raise ValueError("Document content cannot be empty.")
 
         # Bypass frozen dataclass to set the frozen metadata safely
@@ -113,11 +127,11 @@ class KnowledgeChunk:
     metadata: Mapping[str, Any]
 
     def __post_init__(self) -> None:
-        if not self.id:
+        if not self.id or not self.id.strip():
             raise ValueError("Chunk ID cannot be empty.")
-        if not self.document_id:
+        if not self.document_id or not self.document_id.strip():
             raise ValueError("Parent document ID cannot be empty.")
-        if not self.content:
+        if not self.content or not self.content.strip():
             raise ValueError("Chunk content cannot be empty.")
         if self.chunk_index < 0:
             raise ValueError("Chunk index cannot be negative.")
