@@ -1,0 +1,27 @@
+# TASK-074: Code and Document Chunking
+
+## Objective
+Implement the Phase-3 knowledge-base chunking layer to split `KnowledgeDocument` instances into deterministic `KnowledgeChunk` instances suitable for embedding and retrieval.
+
+## Inputs
+- `KnowledgeDocument` with varied `document_type` values (e.g. `text`, `cobol`, `python`).
+
+## Chunking Strategy
+- **Text Chunking**: Simple character-based sliding window.
+- **Code Chunking**: Line-aware sliding window that prioritizes splitting at logical line boundaries (newlines).
+
+## Sizing and Overlap
+- Configurable `chunk_size` (max characters per chunk).
+- Configurable `overlap` (characters to overlap between adjacent chunks).
+- Must satisfy: `chunk_size > 0` and `0 <= overlap < chunk_size`.
+
+## Deterministic Rules
+- **Identifiers**: Generated using `SHA-256` hash of `document_id`, `chunk_index`, and `content`.
+- **Ordering**: Output tuples are always sequentially ordered.
+- **Metadata**: Carries over document origin details and chunk boundaries without exposing mutable references.
+
+## Edge Cases Handled
+- Extremely long lines exceeding `chunk_size`.
+- Documents smaller than `chunk_size`.
+- Exact size matching.
+- Empty or whitespace-only chunks are discarded during generation according to domain rules.
