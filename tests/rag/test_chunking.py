@@ -326,3 +326,24 @@ def test_chunk_boundary_invariant() -> None:
             assert end > prev_start  # end is greater than prev start
             # For this simple text chunker:
             assert start == prev_end - 5
+
+
+def test_json_safe_source_path() -> None:
+    import pathlib
+    import json
+
+    doc = KnowledgeDocument(
+        id="doc1",
+        source_name="test.txt",
+        document_type="text",
+        source_path=pathlib.Path("/tmp/foo/bar.txt"),
+        content="Hello",
+        metadata={"foo": "bar"},
+    )
+    chunker = DocumentChunker(chunk_size=10, overlap=0)
+    chunks = chunker.chunk_document(doc)
+
+    # Must serialize successfully without TypeError
+    serialized = json.dumps(chunks[0].to_dict())
+    assert "/tmp/foo/bar.txt" in serialized
+    assert isinstance(chunks[0].metadata["source_path"], str)
