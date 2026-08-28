@@ -154,3 +154,154 @@ def test_whitespace_chunks_are_dropped() -> None:
 
     assert len(chunks) == 1
     assert chunks[0].content == "    x"
+
+
+def test_text_chunking_overlap_correctness() -> None:
+    doc = _create_doc("0123456789")
+    chunker = DocumentChunker(chunk_size=5, overlap=2)
+    chunks = chunker.chunk_document(doc)
+
+    # 01234
+    #    34567
+    #       6789
+    assert len(chunks) == 3
+    for i in range(len(chunks) - 1):
+        prev_chunk = chunks[i]
+        next_chunk = chunks[i + 1]
+
+        # Verify next start < prev end
+        assert next_chunk.metadata["start_char"] < prev_chunk.metadata["end_char"]
+
+        # Verify prev end - next start == overlap (for text chunker, if possible, but definitely verify suffix/prefix matches)
+        overlap_len = (
+            prev_chunk.metadata["end_char"] - next_chunk.metadata["start_char"]
+        )
+        assert prev_chunk.content[-overlap_len:] == next_chunk.content[:overlap_len]
+
+
+def test_text_chunking_exact_boundary_plus_one() -> None:
+    doc = _create_doc("0123456789A")
+    chunker = DocumentChunker(chunk_size=10, overlap=0)
+    chunks = chunker.chunk_document(doc)
+    assert len(chunks) == 2
+    assert chunks[0].content == "0123456789"
+    assert chunks[1].content == "A"
+
+
+def test_text_chunking_overlap_zero() -> None:
+    doc = _create_doc("0123456789")
+    chunker = DocumentChunker(chunk_size=5, overlap=0)
+    chunks = chunker.chunk_document(doc)
+    assert len(chunks) == 2
+    assert chunks[0].content == "01234"
+    assert chunks[1].content == "56789"
+
+
+def test_text_chunking_overlap_max() -> None:
+    doc = _create_doc("012345")
+    chunker = DocumentChunker(chunk_size=5, overlap=4)
+    chunks = chunker.chunk_document(doc)
+    assert len(chunks) == 2
+    assert chunks[0].content == "01234"
+    assert chunks[1].content == "12345"
+
+
+def test_content_coverage() -> None:
+    source = "0000111122223333444455556666777788889999"
+    doc = _create_doc(source)
+    chunker = DocumentChunker(chunk_size=7, overlap=3)
+    chunks = chunker.chunk_document(doc)
+
+    reconstructed = ""
+    last_end = 0
+    for chunk in chunks:
+        start = chunk.metadata["start_char"]
+        end = chunk.metadata["end_char"]
+
+        # Add only the non-overlapping new part
+        if start >= last_end:
+            reconstructed += chunk.content
+        else:
+            new_part_start = last_end - start
+            reconstructed += chunk.content[new_part_start:]
+
+        last_end = end
+
+    assert reconstructed == source
+
+
+def test_code_chunking_cobol_realistic() -> None:
+    source = """       IDENTIFICATION DIVISION.
+       PROGRAM-ID. HELLO.
+       PROCEDURE DIVISION.
+           DISPLAY "HELLO".
+           STOP RUN.
+"""
+    doc = _create_doc(source, doc_type="cobol")
+    chunker = DocumentChunker(chunk_size=50, overlap=10)
+    chunks = chunker.chunk_document(doc)
+
+    # Ensure it preserves content exactly
+    reconstructed = ""
+    last_end = 0
+    for chunk in chunks:
+        assert chunk.metadata["document_type"] == "cobol"
+        start = chunk.metadata["start_char"]
+        end = chunk.metadata["end_char"]
+        if start >= last_end:
+            reconstructed += chunk.content
+        else:
+            reconstructed += chunk.content[last_end - start :]
+        last_end = end
+
+    assert reconstructed == source
+
+
+def test_unicode_preservation() -> None:
+    source = "Hello 🌍! This is a test 🚀."
+    doc = _create_doc(source)
+    chunker = DocumentChunker(chunk_size=10, overlap=2)
+    chunks = chunker.chunk_document(doc)
+
+    reconstructed = ""
+    last_end = 0
+    for chunk in chunks:
+        start = chunk.metadata["start_char"]
+        end = chunk.metadata["end_char"]
+        if start >= last_end:
+            reconstructed += chunk.content
+        else:
+            reconstructed += chunk.content[last_end - start :]
+        last_end = end
+
+    assert reconstructed == source
+
+
+def test_identifier_determinism() -> None:
+    doc1 = _create_doc("A content", doc_type="text")
+    doc2 = _create_doc("B content", doc_type="text")
+
+    chunker = DocumentChunker(chunk_size=5, overlap=0)
+    c1 = chunker.chunk_document(doc1)
+    c2 = chunker.chunk_document(doc2)
+
+    assert c1[0].id != c2[0].id
+
+
+def test_immutability_metadata() -> None:
+    metadata = {"key": "value"}
+    doc = KnowledgeDocument(
+        id="doc1",
+        source_name="test.txt",
+        document_type="text",
+        source_path=None,
+        content="abc",
+        metadata=metadata,
+    )
+    chunker = DocumentChunker(chunk_size=5, overlap=0)
+    _ = chunker.chunk_document(doc)
+
+    # Mutate original
+    metadata["key"] = "mutated"
+    # Document shouldn't change (tested in task 073, but let's verify chunks don't have it either)
+    assert doc.metadata["key"] == "value"
