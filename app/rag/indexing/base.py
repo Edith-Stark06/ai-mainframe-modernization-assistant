@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Sequence
 from app.rag.embeddings.models import Embedding
 from app.rag.models import KnowledgeChunk
+from app.rag.retrieval.models import RetrievalResult
 
 
 class VectorIndex(ABC):
@@ -31,4 +32,14 @@ class VectorIndex(ABC):
     @abstractmethod
     def size(self) -> int:
         """Return the number of embeddings in the index."""
+        pass
+
+    @abstractmethod
+    def search(
+        self,
+        query_vector: tuple[float, ...],
+        top_k: int,
+        filter_metadata: dict[str, str | int | float | bool] | None = None,
+    ) -> list["RetrievalResult"]:
+        """Search the index for chunks closest to the query_vector."""
         pass
