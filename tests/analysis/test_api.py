@@ -1914,10 +1914,14 @@ class TestAnalyzeEndpointAIOrchestration:
         assert body["success"] is True
         ai = body["ai_analysis"]
         assert ai is not None
-        assert ai["explanation"] is not None
-        assert ai["explanation"]["summary"] == "Fake summary"
-        assert ai["explanation"]["explanation"] == "Fake explanation"
-        assert ai["documentation"] is None
+        assert len(ai["artifacts"]) == 1
+        assert ai["artifacts"][0]["artifact_type"] == "EXPLANATION"
+        assert ai["artifacts"][0]["payload"]["summary"] == "Fake summary"
+        assert ai["artifacts"][0]["payload"]["explanation"] == "Fake explanation"
+
+        # Check that context preserves Phase-1 cleanly
+        assert "context" in ai
+        assert "correlation_id" in ai["context"]
 
     def test_analyze_with_documentation_capability(
         self, client: TestClient, workspace_root: Path
@@ -1931,31 +1935,34 @@ class TestAnalyzeEndpointAIOrchestration:
         assert body["success"] is True
         ai = body["ai_analysis"]
         assert ai is not None
-        assert ai["documentation"] is not None
-        assert ai["documentation"]["title"] == "Fake doc"
-        assert ai["documentation"]["overview"] == "Fake overview"
-        assert len(ai["documentation"]["sections"]) == 1
-        assert ai["documentation"]["sections"][0]["heading"] == "Fake heading"
-        assert ai["documentation"]["sections"][0]["content"] == "Fake content"
-        assert ai["explanation"] is None
+        assert len(ai["artifacts"]) == 1
+        assert ai["artifacts"][0]["artifact_type"] == "DOCUMENTATION"
+        doc = ai["artifacts"][0]["payload"]
+        assert doc["title"] == "Fake doc"
+        assert doc["overview"] == "Fake overview"
+        assert len(doc["sections"]) == 1
+        assert doc["sections"][0]["heading"] == "Fake heading"
+        assert doc["sections"][0]["content"] == "Fake content"
 
     def test_analyze_with_combined_capabilities(
         self, client: TestClient, workspace_root: Path
     ) -> None:
-        """Requesting both EXPLANATION and DOCUMENTATION returns both responses."""
+        """Requesting both EXPLANATION and DOCUMENTATION returns both responses in deterministic order."""
         ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
         body = client.post(
             f"/api/v1/workspaces/{ws_id}/analyze",
             json={
                 "filename": "hello.cbl",
-                "ai_capabilities": ["EXPLANATION", "DOCUMENTATION"],
+                "ai_capabilities": ["DOCUMENTATION", "EXPLANATION"],
             },
         ).json()
         assert body["success"] is True
         ai = body["ai_analysis"]
         assert ai is not None
-        assert ai["explanation"] is not None
-        assert ai["documentation"] is not None
+        assert len(ai["artifacts"]) == 2
+        # Deterministic ordering check (EXPLANATION then DOCUMENTATION)
+        assert ai["artifacts"][0]["artifact_type"] == "EXPLANATION"
+        assert ai["artifacts"][1]["artifact_type"] == "DOCUMENTATION"
 
     def test_analyze_ai_fails_gracefully(
         self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
@@ -1979,7 +1986,7 @@ class TestAnalyzeEndpointAIOrchestration:
         # It preserves the analysis result but updates the error and status
         assert body["success"] is True  # Phase-1 succeeded
         assert body["status"] == "INTERNAL_ERROR"
-        assert body["ai_analysis"] is None
+        assert body.get("ai_analysis") is None
         assert "Fake timeout" in body["error"]
         # Make sure phase 1 data remains intact
         assert body["ast"] is not None
@@ -2022,7 +2029,7 @@ class TestAnalyzeEndpointAIOrchestration:
     def test_ai_response_is_json_safe(
         self, client: TestClient, workspace_root: Path
     ) -> None:
-        """The AI response structures must be fully JSON-serializable."""
+        """The AI response structures must be fully JSON-serializable without leaking internal dicts."""
         ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
         response = client.post(
             f"/api/v1/workspaces/{ws_id}/analyze",
@@ -2031,10 +2038,17 @@ class TestAnalyzeEndpointAIOrchestration:
                 "ai_capabilities": ["EXPLANATION", "DOCUMENTATION"],
             },
         )
-        body = response.json()
-        json_str = json.dumps(body)
-        assert isinstance(json_str, str)
-        _assert_json_safe(body)
+        body_str = response.text
+        import json
+
+        parsed = json.loads(body_str)
+        assert isinstance(parsed, dict)
+
+        # Verify JSON preservation of basic types in nested context
+        context = parsed["ai_analysis"]["context"]
+        assert isinstance(context["source_metadata"]["size_bytes"], int)
+        assert isinstance(context["source_metadata"]["extension"], str)
+        assert type(context) is dict
 
     def test_analyze_propagates_phase1_context(
         self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
@@ -2108,4 +2122,26 @@ class TestAnalyzeEndpointAIOrchestration:
         ).json()
 
         # The AI artifacts should be completely identical for the fake provider
-        assert body1["ai_analysis"] == body2["ai_analysis"]
+        assert body1["ai_analysis"]["artifacts"] == body2["ai_analysis"]["artifacts"]
+
+    def test_schema_validation_invalid_payload(self) -> None:
+        from app.api.schemas.ai import AIResultResponse
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError):
+            AIResultResponse.model_validate(
+                {"artifacts": [{"artifact_type": "UNKNOWN_TYPE", "payload": {}}]}
+            )
+
+    def test_backward_compatibility_public_field(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """Verify that the public API field is named 'ai_analysis', not 'ai_result'."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl", "ai_capabilities": ["EXPLANATION"]},
+        ).json()
+        assert "ai_analysis" in body
+        assert "ai_result" not in body
+        assert body["ai_analysis"] is not None

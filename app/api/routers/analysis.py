@@ -83,12 +83,8 @@ from app.api.schemas.analysis import (
     AnalysisSourceMetadata,
     AnalysisStatus,
 )
-from app.api.schemas.ai import (
-    AIAnalysisResponse,
-    CodeExplanationResponse,
-    DocumentationResponse,
-    DocumentationSectionResponse,
-)
+from app.ai.results.normalization import normalize_result
+from app.api.schemas.ai import AIResultResponse
 from app.api.schemas.dependencies import (
     DependencyAnalysisSummaryResponse,
     DependencyGraphEdgeResponse,
@@ -383,37 +379,14 @@ async def analyze_source(
                     elif cap.name == "DOCUMENTATION":
                         domain_capabilities.add(AICapability.DOCUMENTATION)
 
-                ai_result = orchestrator.analyze(
+                ai_result_raw = orchestrator.analyze(
                     source=source_text,
                     capabilities=domain_capabilities,
                     context=ai_context,
                 )
 
-                # Map domain models to API response schemas
-                explanation_resp = None
-                if ai_result.explanation:
-                    explanation_resp = CodeExplanationResponse(
-                        summary=ai_result.explanation.summary,
-                        explanation=ai_result.explanation.explanation,
-                    )
-
-                documentation_resp = None
-                if ai_result.documentation:
-                    documentation_resp = DocumentationResponse(
-                        title=ai_result.documentation.title,
-                        overview=ai_result.documentation.overview,
-                        sections=[
-                            DocumentationSectionResponse(
-                                heading=sec.heading, content=sec.content
-                            )
-                            for sec in ai_result.documentation.sections
-                        ],
-                    )
-
-                ai_analysis = AIAnalysisResponse(
-                    explanation=explanation_resp,
-                    documentation=documentation_resp,
-                )
+                normalized_result = normalize_result(ai_result_raw)
+                ai_analysis = AIResultResponse.model_validate(normalized_result.to_dict())
             except LLMProviderUnavailableError as e:
                 logger.error("AI Provider failed during analysis: {}", e)
                 status = AnalysisStatus.INTERNAL_ERROR
