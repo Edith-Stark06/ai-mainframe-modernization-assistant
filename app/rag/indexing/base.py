@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Sequence
 from app.rag.embeddings.models import Embedding
+from app.rag.models import KnowledgeChunk
 
 
 class VectorIndex(ABC):
@@ -9,8 +10,12 @@ class VectorIndex(ABC):
     """
 
     @abstractmethod
-    def add(self, embeddings: Sequence[Embedding]) -> None:
-        """Add or update embeddings in the index."""
+    def add(
+        self,
+        embeddings: Sequence[Embedding],
+        chunks: Sequence[KnowledgeChunk] | None = None,
+    ) -> None:
+        """Add or update embeddings in the index. Optionally include chunks for persistent storage."""
         pass
 
     @abstractmethod
