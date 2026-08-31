@@ -46,14 +46,7 @@ class FlowGenerationVisitor(IRVisitor):
 
             candidates = self.known_functions.get(raw_target, [])
 
-            if len(candidates) == 1:
-                # Unambiguous target
-                target_mod = candidates[0]
-                target_id = f"fn_{target_mod}_{raw_target}"
-                node_type = NodeType.PROCESS
-            elif len(candidates) > 1 and req_mod:
-                # Multiple candidates, but caller provided a qualification
-                # Ensure the qualification actually exists among candidates
+            if req_mod:
                 if req_mod in candidates:
                     target_id = f"fn_{req_mod}_{raw_target}"
                     node_type = NodeType.PROCESS
@@ -61,9 +54,13 @@ class FlowGenerationVisitor(IRVisitor):
                     target_id = f"ext_{raw_target}"
                     node_type = NodeType.EXTERNAL
             else:
-                # Zero candidates, or multiple candidates with no qualification
-                target_id = f"ext_{raw_target}"
-                node_type = NodeType.EXTERNAL
+                if len(candidates) == 1:
+                    target_mod = candidates[0]
+                    target_id = f"fn_{target_mod}_{raw_target}"
+                    node_type = NodeType.PROCESS
+                else:
+                    target_id = f"ext_{raw_target}"
+                    node_type = NodeType.EXTERNAL
 
             # Create external/resolved node if it doesn't exist
             if target_id not in self.nodes:
