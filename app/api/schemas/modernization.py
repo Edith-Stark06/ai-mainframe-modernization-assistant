@@ -1,10 +1,11 @@
-from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional
+from pydantic import BaseModel, Field, StringConstraints
+from typing import List, Dict, Any
+from typing_extensions import Annotated
 
 
 class ModernizationRequest(BaseModel):
-    filename: str = Field(
-        ..., description="The source filename to analyze and modernize"
+    filename: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = (
+        Field(..., description="The source filename to analyze and modernize")
     )
 
 
@@ -46,6 +47,6 @@ class RecommendationResponse(BaseModel):
 
 
 class ModernizationPipelineResponse(BaseModel):
-    flow: Optional[FlowResponse] = None
-    score: Optional[ModernizationScoreResponse] = None
-    recommendations: Optional[List[RecommendationResponse]] = None
+    flow: FlowResponse
+    score: ModernizationScoreResponse
+    recommendations: List[RecommendationResponse]

@@ -9,7 +9,8 @@ from app.ir.visitors import IRVisitor, traverse_ir
 
 
 class FlowGenerationVisitor(IRVisitor):
-    def __init__(self) -> None:
+    def __init__(self, known_functions: Dict[str, str]) -> None:
+        self.known_functions = known_functions
         self.nodes: Dict[str, FlowNode] = {}
         # Keep track of logical edges to prevent duplicates
         self._seen_logical_edges: Set[Tuple[str, str, EdgeType]] = set()
@@ -35,13 +36,19 @@ class FlowGenerationVisitor(IRVisitor):
 
     def visit_call(self, node: IRCall) -> None:
         if self.current_function:
-            mod_prefix = self.current_module if self.current_module else "unknown"
-            target_id = f"fn_{mod_prefix}_{node.target}"
+            # Resolve target identity using known functions mapping
+            if node.target in self.known_functions:
+                target_mod = self.known_functions[node.target]
+                target_id = f"fn_{target_mod}_{node.target}"
+                node_type = NodeType.PROCESS
+            else:
+                target_id = f"ext_{node.target}"
+                node_type = NodeType.EXTERNAL
 
-            # Create external node if it doesn't exist
+            # Create external/resolved node if it doesn't exist
             if target_id not in self.nodes:
                 self.nodes[target_id] = FlowNode(
-                    id=target_id, node_type=NodeType.EXTERNAL, name=node.target
+                    id=target_id, node_type=node_type, name=node.target
                 )
 
             logical_edge = (self.current_function, target_id, EdgeType.CALLS)
@@ -77,7 +84,13 @@ def generate_flow(analysis: AnalysisResult) -> Flow:
             edges=[],
         )
 
-    visitor = FlowGenerationVisitor()
+    # Pre-compute all known functions to resolve cross-module targets
+    known_functions: Dict[str, str] = {}
+    for mod in analysis.ir.modules:
+        for fn in mod.functions:
+            known_functions[fn.name] = mod.name
+
+    visitor = FlowGenerationVisitor(known_functions)
     traverse_ir(analysis.ir, visitor)
 
     nodes = list(visitor.nodes.values())
@@ -88,13 +101,15 @@ def generate_flow(analysis: AnalysisResult) -> Flow:
 
     flow_name = analysis.ir.name if analysis.ir.name else "Unknown Program"
 
-    # Stable deterministic flow ID derived from workspace/program identity
-    # Instead of just the program name, we incorporate the module names
-    modules_sig = "_".join(m.name for m in analysis.ir.modules)
-    sig_str = f"{flow_name}_{modules_sig}"
+    # Stable deterministic flow ID derived from canonical structure
+    nodes_sig = ",".join(n.id for n in nodes)
+    edges_sig = ",".join(e.id for e in visitor.edges)
+    canonical_str = f"{flow_name}|nodes:{nodes_sig}|edges:{edges_sig}"
+
+    flow_id = f"flow_{hashlib.sha256(canonical_str.encode()).hexdigest()[:16]}"
 
     return Flow(
-        id=f"flow_{hashlib.md5(sig_str.encode()).hexdigest()[:8]}",
+        id=flow_id,
         name=flow_name,
         nodes=nodes,
         edges=visitor.edges,
