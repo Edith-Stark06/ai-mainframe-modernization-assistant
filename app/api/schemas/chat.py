@@ -1,13 +1,16 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 from typing import List, Dict, Any, Optional
+from typing_extensions import Annotated
 import uuid
 
 
 class ChatRequest(BaseModel):
-    query: str = Field(min_length=1)
+    query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     workspace_id: uuid.UUID
     top_k: int = Field(default=5, ge=1, le=100)
-    filename: Optional[str] = Field(default=None)
+    filename: Optional[
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    ] = None
     include_modernization_context: bool = False
     ai_capabilities: List[str] = Field(default_factory=lambda: ["EXPLANATION"])
 

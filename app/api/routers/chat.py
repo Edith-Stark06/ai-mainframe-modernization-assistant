@@ -42,8 +42,6 @@ def get_rag_orchestrator(
     )
 
 
-
-
 def get_analysis_service() -> AnalysisService:
     return AnalysisService()
 
@@ -68,11 +66,53 @@ def chat_endpoint(
     if request.filename:
         filters["filename"] = request.filename
 
+    modernization_data = None
+    if request.include_modernization_context:
+        if not request.filename:
+            raise HTTPException(
+                status_code=400,
+                detail="Filename is required when include_modernization_context is true",
+            )
+        try:
+            ws = workspace_manager.get(str(request.workspace_id))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Workspace not found")
+
+        ws_root = Path(ws.path).resolve()
+        source_path = (ws_root / request.filename).resolve()
+
+        if not source_path.is_relative_to(ws_root):
+            raise HTTPException(status_code=403, detail="Path traversal not allowed")
+
+        if not source_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+
+        try:
+            analysis_result = analysis_service.analyze_file(source_path)
+            flow = generate_flow(analysis_result)
+            score = calculate_scores(analysis_result, flow)
+            recs = generate_recommendations(flow, score)
+            mod_resp = ModernizationPipelineResponse(
+                flow=FlowResponse(**flow.to_dict()),
+                score=ModernizationScoreResponse(**score.to_dict()),
+                recommendations=[RecommendationResponse(**r.to_dict()) for r in recs],
+            )
+            modernization_data = mod_resp.model_dump()
+        except Exception as e:
+            logger.error(
+                f"Failed to generate modernization context for {request.filename}: {e}"
+            )
+            # Raise generic 500 error to avoid exposing internal details
+            raise HTTPException(
+                status_code=500, detail="Internal server error during analysis"
+            )
+
     rag_request = RAGRequest(
         query=request.query,
         top_k=request.top_k,
         filters=filters,
         ai_capabilities=frozenset(capabilities),
+        modernization_context=modernization_data,
     )
 
     try:
@@ -85,6 +125,7 @@ def chat_endpoint(
             answer="",
             context=[],
             error="RAG Orchestration failed due to an internal error.",
+            modernization_data=modernization_data,
         )
 
     answer = ""
@@ -107,33 +148,6 @@ def chat_endpoint(
     context = [
         {"id": r.chunk_id, "content": r.content} for r in rag_result.context.results
     ]
-
-    modernization_data = None
-    if request.include_modernization_context:
-        if not request.filename:
-            raise HTTPException(status_code=400, detail="Filename is required when include_modernization_context is true")
-        try:
-            ws = workspace_manager.get(str(request.workspace_id))
-            ws_root = Path(ws.path).resolve()
-            source_path = (ws_root / request.filename).resolve()
-            if source_path.is_relative_to(ws_root) and source_path.exists():
-                analysis_result = analysis_service.analyze_file(source_path)
-                flow = generate_flow(analysis_result)
-                score = calculate_scores(analysis_result, flow)
-                recs = generate_recommendations(flow, score)
-                mod_resp = ModernizationPipelineResponse(
-                    flow=FlowResponse(**flow.to_dict()),
-                    score=ModernizationScoreResponse(**score.to_dict()),
-                    recommendations=[
-                        RecommendationResponse(**r.to_dict()) for r in recs
-                    ],
-                )
-                modernization_data = mod_resp.model_dump()
-        except Exception as e:
-            logger.error(
-                f"Failed to generate modernization context for {request.filename}: {e}"
-            )
-            # Non-fatal, just omit the data
 
     return ChatResponse(
         query=request.query,

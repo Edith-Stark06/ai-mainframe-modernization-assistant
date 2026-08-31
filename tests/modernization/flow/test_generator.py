@@ -88,7 +88,7 @@ def test_generate_flow_with_external_call() -> None:
     # Expected 2 nodes: MAIN (PROCESS), EXT1 (EXTERNAL)
     assert len(flow.nodes) == 2
 
-    n_ext = next(n for n in flow.nodes if n.id == "fn_MOD1_EXT1")
+    n_ext = next(n for n in flow.nodes if n.id == "ext_EXT1")
     assert n_ext.node_type == NodeType.EXTERNAL
 
     n_main = next(n for n in flow.nodes if n.id == "fn_MOD1_MAIN")
@@ -126,3 +126,71 @@ def test_duplicate_calls_prevented() -> None:
     assert len(flow.edges) == 1
     assert flow.edges[0].source_id == "fn_MOD1_MAIN"
     assert flow.edges[0].target_id == "fn_MOD1_SUB1"
+
+
+def test_cross_module_calls() -> None:
+    call_inst = IRCall(target="SUB1")
+    bb1 = IRBasicBlock(label="L1", instructions=(call_inst,))
+    func1 = IRFunction(name="MAIN", blocks=(bb1,))
+    mod1 = IRModule(name="MOD_A", functions=(func1,))
+
+    bb2 = IRBasicBlock(label="L2", instructions=())
+    func2 = IRFunction(name="SUB1", blocks=(bb2,))
+    mod2 = IRModule(name="MOD_B", functions=(func2,))
+
+    prog = IRProgram(name="PROG1", modules=(mod1, mod2))
+
+    result = AnalysisResult(
+        java_source="",
+        backend_diagnostics=[],
+        semantic_diagnostics=[],
+        success=True,
+        dependencies=[],
+        error=None,
+        ast=None,
+        ir=prog,
+    )
+
+    flow = generate_flow(result)
+
+    assert len(flow.edges) == 1
+    assert flow.edges[0].source_id == "fn_MOD_A_MAIN"
+    assert flow.edges[0].target_id == "fn_MOD_B_SUB1"
+
+
+def test_deterministic_flow_hash() -> None:
+    func1 = IRFunction(name="MAIN", blocks=())
+    mod1 = IRModule(name="MOD_A", functions=(func1,))
+    prog1 = IRProgram(name="PROG1", modules=(mod1,))
+
+    res1 = AnalysisResult(
+        java_source="",
+        backend_diagnostics=[],
+        semantic_diagnostics=[],
+        success=True,
+        dependencies=[],
+        error=None,
+        ast=None,
+        ir=prog1,
+    )
+    flow1 = generate_flow(res1)
+    flow2 = generate_flow(res1)
+
+    assert flow1.id == flow2.id
+
+    mod2 = IRModule(name="MOD_B", functions=(func1,))
+    prog2 = IRProgram(name="PROG1", modules=(mod2,))
+    res2 = AnalysisResult(
+        java_source="",
+        backend_diagnostics=[],
+        semantic_diagnostics=[],
+        success=True,
+        dependencies=[],
+        error=None,
+        ast=None,
+        ir=prog2,
+    )
+    flow3 = generate_flow(res2)
+
+    # Different module structure -> different flow ID
+    assert flow1.id != flow3.id

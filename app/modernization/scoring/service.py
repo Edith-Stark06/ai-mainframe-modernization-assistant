@@ -24,6 +24,9 @@ def calculate_scores(analysis: AnalysisResult, flow: Flow) -> ModernizationScore
     raw_complexity = num_nodes / 50.0
 
     # Incorporate analysis signals (e.g. semantic errors indicate higher complexity to modernize)
+    # The penalty formula adds 0.05 (5%) complexity for each semantic diagnostic found during analysis.
+    # Semantic diagnostics often represent unstructured code or ambiguous syntax which requires
+    # more manual intervention, directly reducing modernization readiness.
     diag_penalty = len(analysis.semantic_diagnostics) * 0.05
     raw_complexity += diag_penalty
 

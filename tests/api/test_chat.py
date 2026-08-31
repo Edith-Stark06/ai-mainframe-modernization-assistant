@@ -14,6 +14,8 @@ client = TestClient(app)
 
 class MockRAGOrchestrator:
     def orchestrate(self, request: RAGRequest) -> RAGResult:
+        assert "workspace_id" in request.filters, "workspace_id filter must be set"
+
         if request.query == "rag_fail":
             raise RuntimeError("Secret RAG Failure")
 
@@ -55,6 +57,12 @@ def test_chat_endpoint_validation():
     # Empty query should fail
     resp = client.post(
         "/api/v1/chat/", json={"query": "", "workspace_id": str(uuid.uuid4())}
+    )
+    assert resp.status_code == 422
+
+    # Whitespace-only query should fail
+    resp = client.post(
+        "/api/v1/chat/", json={"query": "   ", "workspace_id": str(uuid.uuid4())}
     )
     assert resp.status_code == 422
 
@@ -125,6 +133,8 @@ def test_chat_endpoint_modernization_context(monkeypatch, tmp_path):
 
     class MockWSManager:
         def get(self, ws_id):
+            if ws_id == "00000000-0000-0000-0000-000000000000":
+                raise KeyError("Workspace not found")
             from app.ingestion.models import WorkspaceRecord
 
             return WorkspaceRecord(workspace_id=ws_id, path=str(tmp_path))
@@ -147,11 +157,13 @@ def test_chat_endpoint_modernization_context(monkeypatch, tmp_path):
     app.dependency_overrides[get_workspace_manager] = lambda: MockWSManager()
     app.dependency_overrides[get_analysis_service] = lambda: MockAnalysisService()
 
+    valid_uuid = str(uuid.uuid4())
+
     resp = client.post(
         "/api/v1/chat/",
         json={
             "query": "hello",
-            "workspace_id": str(uuid.uuid4()),
+            "workspace_id": valid_uuid,
             "include_modernization_context": True,
             "filename": "valid.cbl",
         },
@@ -164,9 +176,38 @@ def test_chat_endpoint_modernization_context(monkeypatch, tmp_path):
 
     # Missing filename should raise 400
     resp_missing = client.post(
-        "/api/v1/chat/", json={"query": "hello", "workspace_id": str(uuid.uuid4()), "include_modernization_context": True}
+        "/api/v1/chat/",
+        json={
+            "query": "hello",
+            "workspace_id": valid_uuid,
+            "include_modernization_context": True,
+        },
     )
     assert resp_missing.status_code == 400
+
+    # Missing file should raise 404
+    resp_not_found = client.post(
+        "/api/v1/chat/",
+        json={
+            "query": "hello",
+            "workspace_id": valid_uuid,
+            "include_modernization_context": True,
+            "filename": "missing.cbl",
+        },
+    )
+    assert resp_not_found.status_code == 404
+
+    # Path traversal should raise 403
+    resp_traversal = client.post(
+        "/api/v1/chat/",
+        json={
+            "query": "hello",
+            "workspace_id": valid_uuid,
+            "include_modernization_context": True,
+            "filename": "../secrets.txt",
+        },
+    )
+    assert resp_traversal.status_code == 403
 
     app.dependency_overrides.pop(get_workspace_manager, None)
     app.dependency_overrides.pop(get_analysis_service, None)
