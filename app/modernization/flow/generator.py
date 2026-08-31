@@ -9,7 +9,7 @@ from app.ir.visitors import IRVisitor, traverse_ir
 
 
 class FlowGenerationVisitor(IRVisitor):
-    def __init__(self, known_functions: Dict[str, str]) -> None:
+    def __init__(self, known_functions: Dict[str, List[str]]) -> None:
         self.known_functions = known_functions
         self.nodes: Dict[str, FlowNode] = {}
         # Keep track of logical edges to prevent duplicates
@@ -36,19 +36,39 @@ class FlowGenerationVisitor(IRVisitor):
 
     def visit_call(self, node: IRCall) -> None:
         if self.current_function:
-            # Resolve target identity using known functions mapping
-            if node.target in self.known_functions:
-                target_mod = self.known_functions[node.target]
-                target_id = f"fn_{target_mod}_{node.target}"
-                node_type = NodeType.PROCESS
+            # Check if target is explicitly qualified (e.g. MODULE_B.SUB1)
+            parts = node.target.split(".", 1)
+            if len(parts) == 2:
+                req_mod, raw_target = parts
             else:
-                target_id = f"ext_{node.target}"
+                req_mod = None
+                raw_target = node.target
+
+            candidates = self.known_functions.get(raw_target, [])
+
+            if len(candidates) == 1:
+                # Unambiguous target
+                target_mod = candidates[0]
+                target_id = f"fn_{target_mod}_{raw_target}"
+                node_type = NodeType.PROCESS
+            elif len(candidates) > 1 and req_mod:
+                # Multiple candidates, but caller provided a qualification
+                # Ensure the qualification actually exists among candidates
+                if req_mod in candidates:
+                    target_id = f"fn_{req_mod}_{raw_target}"
+                    node_type = NodeType.PROCESS
+                else:
+                    target_id = f"ext_{raw_target}"
+                    node_type = NodeType.EXTERNAL
+            else:
+                # Zero candidates, or multiple candidates with no qualification
+                target_id = f"ext_{raw_target}"
                 node_type = NodeType.EXTERNAL
 
             # Create external/resolved node if it doesn't exist
             if target_id not in self.nodes:
                 self.nodes[target_id] = FlowNode(
-                    id=target_id, node_type=node_type, name=node.target
+                    id=target_id, node_type=node_type, name=raw_target
                 )
 
             logical_edge = (self.current_function, target_id, EdgeType.CALLS)
@@ -74,6 +94,10 @@ def generate_flow(analysis: AnalysisResult) -> Flow:
     """
     Generate a deterministic Flow graph from an AnalysisResult.
     Handles empty IR gracefully.
+
+    The resulting Flow.id represents the deterministic identity of the logical
+    program flow structure, NOT the global identity of the source workspace or file.
+    Identical programs in different workspaces will correctly receive the same Flow ID.
     """
     if not analysis.ir:
         # Return a deterministic empty flow if IR is missing
@@ -85,10 +109,12 @@ def generate_flow(analysis: AnalysisResult) -> Flow:
         )
 
     # Pre-compute all known functions to resolve cross-module targets
-    known_functions: Dict[str, str] = {}
+    known_functions: Dict[str, List[str]] = {}
     for mod in analysis.ir.modules:
         for fn in mod.functions:
-            known_functions[fn.name] = mod.name
+            if fn.name not in known_functions:
+                known_functions[fn.name] = []
+            known_functions[fn.name].append(mod.name)
 
     visitor = FlowGenerationVisitor(known_functions)
     traverse_ir(analysis.ir, visitor)
@@ -102,6 +128,7 @@ def generate_flow(analysis: AnalysisResult) -> Flow:
     flow_name = analysis.ir.name if analysis.ir.name else "Unknown Program"
 
     # Stable deterministic flow ID derived from canonical structure
+    # This identifies the logical analyzed program structure.
     nodes_sig = ",".join(n.id for n in nodes)
     edges_sig = ",".join(e.id for e in visitor.edges)
     canonical_str = f"{flow_name}|nodes:{nodes_sig}|edges:{edges_sig}"
