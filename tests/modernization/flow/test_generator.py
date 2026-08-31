@@ -276,3 +276,40 @@ def test_qualified_ambiguous_cross_module_calls() -> None:
     n_resolved = next((n for n in flow.nodes if n.id == "fn_MOD_B_SUB1"), None)
     assert n_resolved is not None
     assert n_resolved.node_type == NodeType.PROCESS
+
+
+def test_qualified_missing_cross_module_calls() -> None:
+    # MAIN in MOD_C calls MOD_B.SUB1
+    call_inst = IRCall(target="MOD_B.SUB1")
+    bb1 = IRBasicBlock(label="L1", instructions=(call_inst,))
+    func1 = IRFunction(name="MAIN", blocks=(bb1,))
+    mod_c = IRModule(name="MOD_C", functions=(func1,))
+
+    # Only MOD_A has SUB1, MOD_B does not exist
+    func2 = IRFunction(name="SUB1", blocks=())
+    mod_a = IRModule(name="MOD_A", functions=(func2,))
+
+    prog = IRProgram(name="PROG1", modules=(mod_a, mod_c))
+
+    result = AnalysisResult(
+        java_source="",
+        backend_diagnostics=[],
+        semantic_diagnostics=[],
+        success=True,
+        dependencies=[],
+        error=None,
+        ast=None,
+        ir=prog,
+    )
+
+    flow = generate_flow(result)
+
+    # Since it's qualified as MOD_B.SUB1 but MOD_B does not have SUB1, it must be EXTERNAL
+    assert len(flow.edges) == 1
+    edge = flow.edges[0]
+    assert edge.source_id == "fn_MOD_C_MAIN"
+    assert edge.target_id == "ext_SUB1"
+
+    n_ext = next((n for n in flow.nodes if n.id == "ext_SUB1"), None)
+    assert n_ext is not None
+    assert n_ext.node_type == NodeType.EXTERNAL

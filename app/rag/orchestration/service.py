@@ -71,7 +71,7 @@ class RAGOrchestrator:
             # Pass the query as part of the context for the AI.
             ai_context: dict[str, Any] = {"rag_query": request.query}
 
-            if request.modernization_context:
+            if request.modernization_context is not None:
                 ai_context["modernization_data"] = request.modernization_context
 
             ai_result = self.ai_orchestrator.analyze(
