@@ -19,7 +19,8 @@ def test_scoring_empty_flow() -> None:
     score = calculate_scores(result, flow)
     assert score.complexity_score == 0.0
     assert score.coupling_score == 0.0
-    assert score.overall_readiness == 1.0
+    assert score.overall_readiness == 0.0
+    assert score.metadata.get("insufficient_data") is True
 
 
 def test_scoring_complex_flow() -> None:
@@ -50,6 +51,37 @@ def test_scoring_complex_flow() -> None:
     assert score.overall_readiness == 0.75
 
 
+def test_scoring_with_analysis_diagnostics() -> None:
+    # 5 nodes, 10 edges -> 0.1 complexity. 2 diagnostics -> +0.10 complexity -> 0.2
+    nodes = [
+        FlowNode(id=f"n{i}", node_type=NodeType.PROCESS, name=f"N{i}") for i in range(5)
+    ]
+    edges = [
+        FlowEdge(id=f"e{i}", source_id="n0", target_id="n1", edge_type=EdgeType.CALLS)
+        for i in range(10)
+    ]
+
+    flow = Flow(id="f1", name="F1", nodes=nodes, edges=edges)
+    result = AnalysisResult(
+        java_source="",
+        backend_diagnostics=[],
+        semantic_diagnostics=[
+            Exception("Semantic error 1"),
+            Exception("Semantic error 2"),
+        ],  # length 2
+        success=False,
+        dependencies=[],
+        error=None,
+        ast=None,
+        ir=None,
+    )
+
+    score = calculate_scores(result, flow)
+    assert score.complexity_score == 0.2
+    assert score.coupling_score == 0.4
+    assert score.overall_readiness == 0.7
+
+
 def test_scoring_boundary_values() -> None:
     # Very complex
     nodes = [
@@ -65,8 +97,8 @@ def test_scoring_boundary_values() -> None:
     result = AnalysisResult(
         java_source="",
         backend_diagnostics=[],
-        semantic_diagnostics=[],
-        success=True,
+        semantic_diagnostics=[Exception("Err")] * 50,  # very high error count
+        success=False,
         dependencies=[],
         error=None,
         ast=None,

@@ -44,6 +44,34 @@ def test_generate_recommendations_multiple_and_ordering() -> None:
     assert recs[2].id == "rec_readiness_low"
 
 
+def test_generate_recommendations_insufficient_data() -> None:
+    flow = Flow(id="f1", name="F1", nodes=[], edges=[])
+    score = ModernizationScore(
+        complexity_score=0.0,
+        coupling_score=0.0,
+        overall_readiness=0.0,
+        metadata={"insufficient_data": True},
+    )
+
+    recs = generate_recommendations(flow, score)
+    assert len(recs) == 1
+    assert recs[0].id == "rec_insufficient_data"
+    assert recs[0].priority == Priority.HIGH
+
+
+def test_generate_recommendations_boundaries() -> None:
+    flow = Flow(id="f1", name="F1", nodes=[], edges=[])
+    score = ModernizationScore(
+        complexity_score=0.5, coupling_score=0.7, overall_readiness=0.8
+    )
+
+    recs = generate_recommendations(flow, score)
+    assert len(recs) == 3
+    assert recs[0].id == "rec_coupling_high"  # HIGH
+    assert recs[1].id == "rec_complex_med"  # MEDIUM
+    assert recs[2].id == "rec_ready"  # LOW
+
+
 def test_recommendation_to_dict() -> None:
     rec = Recommendation(
         id="1", title="Title", description="Desc", priority=Priority.MEDIUM
