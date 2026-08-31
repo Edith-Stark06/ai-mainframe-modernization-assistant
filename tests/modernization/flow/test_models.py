@@ -43,7 +43,7 @@ def test_flow_node_immutability() -> None:
     )
     with pytest.raises(FrozenInstanceError):
         node.name = "OTHER"  # type: ignore
-    
+
     with pytest.raises(TypeError):
         node.metadata["nested"] = [3]  # type: ignore
 
@@ -109,7 +109,7 @@ def test_flow_dangling_edge() -> None:
     e1 = FlowEdge(id="e1", source_id="n1", target_id="n2", edge_type=EdgeType.CALLS)
     with pytest.raises(ValueError, match="Dangling edge: target_id 'n2' not found"):
         Flow(id="f1", name="Flow 1", nodes=[n1], edges=[e1])
-        
+
     e2 = FlowEdge(id="e2", source_id="n0", target_id="n1", edge_type=EdgeType.CALLS)
     with pytest.raises(ValueError, match="Dangling edge: source_id 'n0' not found"):
         Flow(id="f1", name="Flow 1", nodes=[n1], edges=[e2])
@@ -138,7 +138,7 @@ def test_flow_deterministic_ordering() -> None:
 def test_flow_caller_isolation() -> None:
     nodes = [FlowNode(id="n1", node_type=NodeType.PROGRAM, name="P1")]
     flow = Flow(id="f1", name="F", nodes=nodes)
-    
+
     # Mutate caller list
     nodes.append(FlowNode(id="n2", node_type=NodeType.PROGRAM, name="P2"))
     assert len(flow.nodes) == 1  # Flow aggregate should remain unaffected
@@ -147,7 +147,13 @@ def test_flow_caller_isolation() -> None:
 def test_flow_serialization() -> None:
     n1 = FlowNode(id="n1", node_type=NodeType.PROGRAM, name="P1", metadata={"loc": 10})
     n2 = FlowNode(id="n2", node_type=NodeType.FILE, name="F1")
-    e1 = FlowEdge(id="e1", source_id="n1", target_id="n2", edge_type=EdgeType.WRITES, metadata={"mode": "append"})
+    e1 = FlowEdge(
+        id="e1",
+        source_id="n1",
+        target_id="n2",
+        edge_type=EdgeType.WRITES,
+        metadata={"mode": "append"},
+    )
 
     flow = Flow(id="f1", name="F", nodes=[n1, n2], edges=[e1], metadata={"tag": "demo"})
 
