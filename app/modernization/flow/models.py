@@ -13,6 +13,7 @@ from app.rag.models import _freeze_metadata, _to_json_compatible
 
 class NodeType(Enum):
     """Supported categories for flow nodes."""
+
     PROGRAM = auto()
     FILE = auto()
     DATABASE = auto()
@@ -24,6 +25,7 @@ class NodeType(Enum):
 
 class EdgeType(Enum):
     """Supported categories for flow edges."""
+
     CALLS = auto()
     READS = auto()
     WRITES = auto()
@@ -140,9 +142,13 @@ class Flow:
             if edge.id in seen_edge_ids:
                 raise ValueError(f"Duplicate edge ID found: {edge.id}")
             if edge.source_id not in seen_node_ids:
-                raise ValueError(f"Dangling edge: source_id '{edge.source_id}' not found in nodes.")
+                raise ValueError(
+                    f"Dangling edge: source_id '{edge.source_id}' not found in nodes."
+                )
             if edge.target_id not in seen_node_ids:
-                raise ValueError(f"Dangling edge: target_id '{edge.target_id}' not found in nodes.")
+                raise ValueError(
+                    f"Dangling edge: target_id '{edge.target_id}' not found in nodes."
+                )
             seen_edge_ids.add(edge.id)
             edge_list.append(edge)
 

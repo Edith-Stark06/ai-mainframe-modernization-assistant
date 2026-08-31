@@ -126,15 +126,38 @@ def test_retrieval_service_metadata_filter(
 ) -> None:
     service = RetrievalService(fake_provider, memory_index)
     chunks = [
-        _create_chunk("c1", metadata={"type": "code"}),
-        _create_chunk("c2", metadata={"type": "doc"}),
+        _create_chunk("c1", metadata={"type": "code", "workspace_id": "ws1"}),
+        _create_chunk("c2", metadata={"type": "doc", "workspace_id": "ws1"}),
+        _create_chunk(
+            "c3",
+            metadata={"type": "code", "workspace_id": "ws2", "filename": "test.py"},
+        ),
     ]
-    vectors = fake_provider.embed_batch([f"text{i}" for i in range(2)])
+    vectors = fake_provider.embed_batch([f"text{i}" for i in range(3)])
     embeddings = [
         Embedding(chunk_id=c.id, vector=v, dimension=4) for c, v in zip(chunks, vectors)
     ]
     memory_index.add(embeddings, chunks)
 
+    # Test basic filtering
     results = service.search("query", filter_metadata={"type": "doc"})
     assert len(results) == 1
     assert results[0].chunk_id == "c2"
+
+    # Test workspace isolation
+    results_ws2 = service.search("query", filter_metadata={"workspace_id": "ws2"})
+    assert len(results_ws2) == 1
+    assert results_ws2[0].chunk_id == "c3"
+
+    # Test multiple filters (workspace_id + filename)
+    results_multi = service.search(
+        "query", filter_metadata={"workspace_id": "ws2", "filename": "test.py"}
+    )
+    assert len(results_multi) == 1
+    assert results_multi[0].chunk_id == "c3"
+
+    # Test multiple filters no match
+    results_nomatch = service.search(
+        "query", filter_metadata={"workspace_id": "ws1", "filename": "test.py"}
+    )
+    assert len(results_nomatch) == 0

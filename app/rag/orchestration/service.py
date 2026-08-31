@@ -4,6 +4,7 @@ RAG Orchestration Service.
 Coordinates RAG requests with RetrievalService and AIAnalysisOrchestrator.
 """
 
+from typing import Any
 from app.ai.orchestration.service import AIAnalysisOrchestrator
 from app.rag.orchestration.models import RAGRequest, RAGResult, RetrievedContext
 from app.rag.retrieval.service import RetrievalService
@@ -68,7 +69,10 @@ class RAGOrchestrator:
             source = "\n\n".join(r.content for r in retrieval_results)
 
             # Pass the query as part of the context for the AI.
-            ai_context = {"rag_query": request.query}
+            ai_context: dict[str, Any] = {"rag_query": request.query}
+
+            if request.modernization_context is not None:
+                ai_context["modernization_data"] = request.modernization_context
 
             ai_result = self.ai_orchestrator.analyze(
                 source=source,
