@@ -209,3 +209,55 @@ def test_rag_result_serialization() -> None:
     assert d["ai_result"]["explanation"]["summary"] == "s"
     assert d["ai_result"]["documentation"] is None
     assert d["ai_result"]["context"]["rag_query"] == "test query"
+
+
+def test_orchestration_modernization_context_propagates_to_ai() -> None:
+    """Verifies modernization context is injected into AI context."""
+    results = [_make_retrieval_result("c1", "content 1")]
+    retrieval = DummyRetrievalService(results)
+
+    class InspectingAIOrchestrator:
+        def __init__(self):
+            self.last_context = None
+
+        def analyze(
+            self,
+            source: str,
+            capabilities: set[AICapability],
+            context: dict[str, Any] | None = None,
+        ) -> AIAnalysisResult:
+            self.last_context = context
+            return AIAnalysisResult(
+                explanation=CodeExplanation(summary="test", explanation="test"),
+                documentation=None,
+                context=context or {},
+            )
+
+    ai_orch = InspectingAIOrchestrator()
+    orchestrator = RAGOrchestrator(retrieval_service=retrieval, ai_orchestrator=ai_orch)  # type: ignore
+
+    mod_data = {"score": {"overall_readiness": 0.8}, "flow": {"id": "test_flow"}}
+    req = RAGRequest(
+        query="test query",
+        ai_capabilities=frozenset([AICapability.EXPLANATION]),
+        modernization_context=mod_data,
+    )
+
+    res = orchestrator.orchestrate(req)
+
+    assert not res.ai_unavailable
+    assert res.ai_error is None
+    assert ai_orch.last_context is not None
+    assert ai_orch.last_context.get("modernization_data") == mod_data
+
+
+def test_rag_request_empty_modernization_serialization() -> None:
+    """Verify empty modernization dict is serialized as {}, not None."""
+    req_none = RAGRequest(query="test", modernization_context=None)
+    assert req_none.to_dict()["modernization_context"] is None
+
+    req_empty = RAGRequest(query="test", modernization_context={})
+    assert req_empty.to_dict()["modernization_context"] == {}
+
+    req_full = RAGRequest(query="test", modernization_context={"k": "v"})
+    assert req_full.to_dict()["modernization_context"] == {"k": "v"}

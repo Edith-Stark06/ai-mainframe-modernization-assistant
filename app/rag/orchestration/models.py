@@ -25,6 +25,7 @@ class RAGRequest:
         default_factory=lambda: MappingProxyType({})
     )
     ai_capabilities: frozenset[AICapability] = field(default_factory=frozenset)
+    modernization_context: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not self.query or not self.query.strip():
@@ -35,6 +36,12 @@ class RAGRequest:
         # Freeze the mutable fields
         object.__setattr__(self, "filters", _freeze_metadata(self.filters))
         object.__setattr__(self, "ai_capabilities", frozenset(self.ai_capabilities))
+        if self.modernization_context is not None:
+            object.__setattr__(
+                self,
+                "modernization_context",
+                _freeze_metadata(self.modernization_context),
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -42,6 +49,11 @@ class RAGRequest:
             "top_k": self.top_k,
             "filters": _to_json_compatible(self.filters),
             "ai_capabilities": [cap.name for cap in self.ai_capabilities],
+            "modernization_context": (
+                _to_json_compatible(self.modernization_context)
+                if self.modernization_context is not None
+                else None
+            ),
         }
 
 

@@ -36,6 +36,8 @@ from app.api.routers.files import router as files_router
 from app.api.routers.health import router as health_router
 from app.api.routers.upload import router as upload_router
 from app.api.routers.workspace import router as workspace_router
+from app.api.routers.modernization import router as modernization_router
+from app.api.routers.chat import router as chat_router
 
 # ---------------------------------------------------------------------------
 # Versioned API router
@@ -48,3 +50,5 @@ api_router.include_router(files_router)
 api_router.include_router(health_router)
 api_router.include_router(upload_router)
 api_router.include_router(workspace_router)
+api_router.include_router(modernization_router)
+api_router.include_router(chat_router)
