@@ -13,6 +13,17 @@ def generate_recommendations(
     """
     recs = []
 
+    if score.metadata.get("insufficient_data"):
+        recs.append(
+            Recommendation(
+                id="rec_insufficient_data",
+                title="Insufficient Data",
+                description="The analysis did not provide enough flow data to make solid modernization recommendations.",
+                priority=Priority.HIGH,
+            )
+        )
+        return recs
+
     if score.complexity_score >= 0.8:
         recs.append(
             Recommendation(
@@ -51,7 +62,7 @@ def generate_recommendations(
                 priority=Priority.HIGH,
             )
         )
-    elif score.overall_readiness > 0.8:
+    elif score.overall_readiness >= 0.8:
         recs.append(
             Recommendation(
                 id="rec_ready",
