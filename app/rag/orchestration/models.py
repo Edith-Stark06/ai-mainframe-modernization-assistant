@@ -51,7 +51,7 @@ class RAGRequest:
             "ai_capabilities": [cap.name for cap in self.ai_capabilities],
             "modernization_context": (
                 _to_json_compatible(self.modernization_context)
-                if self.modernization_context
+                if self.modernization_context is not None
                 else None
             ),
         }
