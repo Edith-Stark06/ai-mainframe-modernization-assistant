@@ -9,10 +9,24 @@ from pathlib import Path
 # top-level `app` package to this very file instead of the real app/
 # package at the project root, and `from app.frontend.client import ...`
 # fails with "No module named 'app.frontend'; 'app' is not a package".
-# Put the project root at the very front of sys.path so it wins first.
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+# Force the project root to the front of sys.path -- removing any existing
+# entry first, in case it is already present but not first -- so it always
+# wins the lookup regardless of what streamlit's bootstrap already did.
+PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
+if PROJECT_ROOT in sys.path:
+    sys.path.remove(PROJECT_ROOT)
+sys.path.insert(0, PROJECT_ROOT)
+
+# Defense in depth: if `app` was already resolved (and cached in
+# sys.modules) to something other than the real app/ package before the
+# sys.path fix above ran -- e.g. this very script, mistaken for it -- the
+# import below would keep reusing that cached, wrong module instead of
+# re-resolving it via the now-corrected sys.path. Drop it so it re-resolves
+# fresh. A correct `app` package always has __path__; a plain module (this
+# script) does not.
+if not hasattr(sys.modules.get("app"), "__path__"):
+    sys.modules.pop("app", None)
+    sys.modules.pop("app.frontend", None)
 
 from typing import Any, Dict, List, Optional  # noqa: E402
 
