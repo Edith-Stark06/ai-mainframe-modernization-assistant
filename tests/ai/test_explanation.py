@@ -62,6 +62,54 @@ def test_build_explanation_prompt_with_context() -> None:
     assert "A > B => MOVE 1 TO X" in prompt
 
 
+def test_build_explanation_prompt_includes_rag_query() -> None:
+    """The user's chat question must reach the prompt, not just the source."""
+    source = "MOVE A TO B."
+    context = {"rag_query": "What does this program do with field B?"}
+
+    prompt = build_explanation_prompt(source, context)
+
+    assert "=== USER QUESTION ===" in prompt
+    assert "What does this program do with field B?" in prompt
+    assert "Directly and specifically answer the user's question" in prompt
+
+
+def test_build_explanation_prompt_includes_modernization_data() -> None:
+    """Modernization context attached to a chat request must inform the prompt."""
+    source = "MOVE A TO B."
+    context = {
+        "modernization_data": {
+            "score": {
+                "complexity_score": 0.9,
+                "coupling_score": 0.1,
+                "overall_readiness": 0.2,
+                "metadata": {},
+            },
+            "recommendations": [
+                {
+                    "id": "rec_complex_high",
+                    "title": "High Complexity Detected",
+                    "description": "Consider splitting it into smaller sub-modules.",
+                    "priority": "HIGH",
+                }
+            ],
+        }
+    }
+
+    prompt = build_explanation_prompt(source, context)
+
+    assert "=== MODERNIZATION CONTEXT ===" in prompt
+    assert "0.20" in prompt
+    assert "High Complexity Detected" in prompt
+
+
+def test_build_explanation_prompt_omits_modernization_section_when_absent() -> None:
+    """No modernization_data key means no fabricated modernization section."""
+    prompt = build_explanation_prompt("MOVE A TO B.", {"program_id": "X"})
+
+    assert "=== MODERNIZATION CONTEXT ===" not in prompt
+
+
 def test_service_basic_explanation() -> None:
     """Test basic service operation returning structured CodeExplanation."""
     fake_response = "Summary: A simple test.\nExplanation: It tests the service."

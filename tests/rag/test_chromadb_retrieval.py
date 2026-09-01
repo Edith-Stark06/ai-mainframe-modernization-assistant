@@ -85,6 +85,37 @@ def test_chromadb_retrieval_metadata_filter(
     assert results[0].metadata.get("type") == "doc"
 
 
+def test_chromadb_retrieval_multi_key_metadata_filter(
+    chroma_index: ChromaIndex, fake_provider: DeterministicFakeProvider
+) -> None:
+    """
+    Regression test: ChromaDB rejects a bare multi-key `where` dict with
+    "Expected where to have exactly one operator". This is exactly the shape
+    the chat API builds whenever a request scopes retrieval by both
+    workspace_id and filename (app.api.routers.chat: filters = {"workspace_id":
+    ..., "filename": ...}), so any such request previously crashed retrieval
+    outright.
+    """
+    service = RetrievalService(fake_provider, chroma_index)
+    chunks = [
+        _create_chunk("c1", metadata={"workspace_id": "ws-1", "filename": "MAIN.cbl"}),
+        _create_chunk("c2", metadata={"workspace_id": "ws-1", "filename": "OTHER.cbl"}),
+        _create_chunk("c3", metadata={"workspace_id": "ws-2", "filename": "MAIN.cbl"}),
+    ]
+    vectors = fake_provider.embed_batch([c.content for c in chunks])
+    embeddings = [
+        Embedding(chunk_id=c.id, vector=v, dimension=4) for c, v in zip(chunks, vectors)
+    ]
+    chroma_index.add(embeddings, chunks)
+
+    results = service.search(
+        "query", filter_metadata={"workspace_id": "ws-1", "filename": "MAIN.cbl"}
+    )
+
+    assert len(results) == 1
+    assert results[0].chunk_id == "c1"
+
+
 def test_chromadb_retrieval_tie_breaking(
     chroma_index: ChromaIndex, fake_provider: DeterministicFakeProvider
 ) -> None:

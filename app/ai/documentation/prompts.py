@@ -6,6 +6,8 @@ Deterministic prompt builders for COBOL code documentation.
 
 from typing import Any, Optional
 
+from app.ai.context_formatting import format_modernization_context
+
 
 def _serialize_context_value(val: Any) -> str:
     """Deterministically serialize a context value without memory addresses."""
@@ -82,6 +84,10 @@ def build_documentation_prompt(
 
     if "diagnostics" in ctx:
         prompt_parts.append("- Diagnostics or limitations supplied below")
+    if ctx.get("rag_query"):
+        prompt_parts.append(
+            "- Directly and specifically answer the user's question supplied below"
+        )
 
     prompt_parts.append("\n=== COBOL SOURCE ===")
     prompt_parts.append(source.strip())
@@ -89,6 +95,11 @@ def build_documentation_prompt(
 
     if "program_id" in ctx:
         prompt_parts.append(f"Program Identifier: {ctx['program_id']}\n")
+
+    if ctx.get("rag_query"):
+        prompt_parts.append("=== USER QUESTION ===")
+        prompt_parts.append(str(ctx["rag_query"]))
+        prompt_parts.append("====================\n")
 
     if "dependencies" in ctx:
         prompt_parts.append("=== DEPENDENCIES ===")
@@ -112,6 +123,11 @@ def build_documentation_prompt(
         prompt_parts.append("=== ANALYSIS METADATA ===")
         for meta_str in _serialize_collection(ctx["analysis_metadata"]):
             prompt_parts.append(meta_str)
+        prompt_parts.append("====================\n")
+
+    if ctx.get("modernization_data"):
+        prompt_parts.append("=== MODERNIZATION CONTEXT ===")
+        prompt_parts.extend(format_modernization_context(ctx["modernization_data"]))
         prompt_parts.append("====================\n")
 
     prompt_parts.append(
