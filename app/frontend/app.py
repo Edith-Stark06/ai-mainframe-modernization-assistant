@@ -108,6 +108,11 @@ def _render_workspace_selection(client: BackendClient) -> None:
             selected = st.selectbox(
                 "Source File", options=filenames, index=index, key="file_select"
             )
+            if selected != current:
+                # Switching files must not leave the previous file's chat
+                # transcript displayed as if it were part of an ongoing
+                # conversation about the newly selected file.
+                st.session_state.messages = []
             st.session_state.filename = selected
 
             if st.button(
@@ -170,7 +175,7 @@ def _render_flow(flow: Dict[str, Any]) -> None:
             {"ID": n.get("id"), "Name": n.get("name"), "Type": n.get("node_type")}
             for n in nodes
         ],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
