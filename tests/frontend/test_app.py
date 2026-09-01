@@ -8,6 +8,7 @@ the :class:`~app.frontend.client.BackendClient` boundary only -- the API
 client itself is covered separately in ``test_client.py``.
 """
 
+import sys
 from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
@@ -15,6 +16,38 @@ from streamlit.testing.v1 import AppTest
 from app.frontend.client import BackendAPIError, BackendClient
 
 APP_PATH = str(Path(__file__).parent.parent.parent / "app" / "frontend" / "app.py")
+
+
+def test_entrypoint_survives_streamlit_sys_path_bootstrap():
+    """
+    Regression test for a real startup failure: `streamlit run app/frontend/app.py`
+    inserts the script's own directory (app/frontend) at the front of sys.path
+    (streamlit.web.bootstrap._fix_sys_path). Since the entrypoint is itself
+    named app.py, Python then resolves the top-level `app` package to that
+    very file instead of the real app/ package at the project root, and
+    `from app.frontend.client import ...` fails with:
+        ModuleNotFoundError: No module named 'app.frontend'; 'app' is not a package
+
+    This reproduces that exact bootstrap step (not a guess at the mechanism --
+    the real streamlit function) before running the script through AppTest, so
+    a regression here fails with the same traceback a user would see.
+    """
+    from streamlit.web.bootstrap import _fix_sys_path
+
+    original_sys_path = list(sys.path)
+    try:
+        _fix_sys_path(APP_PATH)
+        assert sys.path[0] == str(
+            Path(APP_PATH).parent
+        ), "test setup did not reproduce streamlit's sys.path bootstrap"
+
+        at = AppTest.from_file(APP_PATH)
+        at.run(timeout=20)
+    finally:
+        sys.path[:] = original_sys_path
+
+    assert not list(at.exception), [str(e.value) for e in at.exception]
+
 
 INVENTORY_TWO_FILES = {
     "workspace_id": "ws-1",
