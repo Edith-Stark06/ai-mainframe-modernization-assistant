@@ -261,3 +261,61 @@ def test_rag_request_empty_modernization_serialization() -> None:
 
     req_full = RAGRequest(query="test", modernization_context={"k": "v"})
     assert req_full.to_dict()["modernization_context"] == {"k": "v"}
+
+
+def test_orchestration_modernization_context_reaches_generated_prompt() -> None:
+    """
+    End-to-end: the query and modernization context must actually reach the
+    LLM prompt, not just the AI orchestrator's context dict. A prior test
+    (test_orchestration_modernization_context_propagates_to_ai) only checked
+    propagation to the context dict using a fake AI orchestrator; this test
+    uses the real AIAnalysisOrchestrator + CodeExplanationService + a
+    FakeLLMProvider to verify the real prompt text.
+    """
+    from app.ai.explanation.service import CodeExplanationService
+    from app.ai.documentation.service import DocumentationGenerationService
+    from app.ai.orchestration.service import AIAnalysisOrchestrator
+    from app.ai.providers.fake import FakeLLMProvider
+
+    results = [_make_retrieval_result("c1", "IDENTIFICATION DIVISION. PROGRAM-ID. X.")]
+    retrieval = DummyRetrievalService(results)
+
+    exp_provider = FakeLLMProvider(
+        response_text="Summary: s\nExplanation: e",
+    )
+    ai_orchestrator = AIAnalysisOrchestrator(
+        explanation_service=CodeExplanationService(exp_provider),
+        documentation_service=DocumentationGenerationService(FakeLLMProvider()),
+    )
+    orchestrator = RAGOrchestrator(
+        retrieval_service=retrieval, ai_orchestrator=ai_orchestrator
+    )
+
+    mod_data = {
+        "score": {
+            "complexity_score": 0.9,
+            "coupling_score": 0.1,
+            "overall_readiness": 0.2,
+            "metadata": {},
+        },
+        "recommendations": [
+            {
+                "id": "rec_complex_high",
+                "title": "High Complexity Detected",
+                "description": "Split it up.",
+                "priority": "HIGH",
+            }
+        ],
+    }
+    req = RAGRequest(
+        query="What does field X control?",
+        ai_capabilities=frozenset([AICapability.EXPLANATION]),
+        modernization_context=mod_data,
+    )
+
+    res = orchestrator.orchestrate(req)
+
+    assert res.ai_error is None
+    sent_prompt = exp_provider.last_request.prompt
+    assert "What does field X control?" in sent_prompt
+    assert "High Complexity Detected" in sent_prompt

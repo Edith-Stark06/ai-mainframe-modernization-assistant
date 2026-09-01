@@ -162,7 +162,7 @@ def test_chat_endpoint_modernization_context(monkeypatch, tmp_path):
     resp = client.post(
         "/api/v1/chat/",
         json={
-            "query": "hello",
+            "query": "explain this program",
             "workspace_id": valid_uuid,
             "include_modernization_context": True,
             "filename": "valid.cbl",
@@ -173,6 +173,17 @@ def test_chat_endpoint_modernization_context(monkeypatch, tmp_path):
     data = resp.json()
     assert data["modernization_data"] is not None
     assert "flow" in data["modernization_data"]
+
+    # modernization_data being attached to the response is not sufficient on
+    # its own -- the AI generation step must actually succeed and its answer
+    # must reach the response (this exercises chat.py's real answer-extraction
+    # logic against MockRAGOrchestrator's populated-explanation branch; the
+    # deeper "does modernization context actually reach the real AI prompt
+    # without crashing" case is covered end-to-end, with the real
+    # AIAnalysisOrchestrator, by
+    # tests/rag/test_orchestration.py::test_orchestration_modernization_context_reaches_generated_prompt).
+    assert data["error"] is None
+    assert data["answer"] != ""
 
     # Missing filename should raise 400
     resp_missing = client.post(
