@@ -45,6 +45,57 @@ def test_build_documentation_prompt_with_context() -> None:
     assert "complexity: 10" in prompt
 
 
+def test_build_documentation_prompt_includes_rag_query() -> None:
+    prompt = build_documentation_prompt(
+        "IDENTIFICATION DIVISION.", {"rag_query": "How is COPY1 used?"}
+    )
+
+    assert "=== USER QUESTION ===" in prompt
+    assert "How is COPY1 used?" in prompt
+
+
+def test_build_documentation_prompt_includes_modernization_data() -> None:
+    context = {
+        "modernization_data": {
+            "score": {
+                "complexity_score": 0.1,
+                "coupling_score": 0.1,
+                "overall_readiness": 0.9,
+                "metadata": {},
+            },
+            "recommendations": [
+                {
+                    "id": "rec_ready",
+                    "title": "Ready for Modernization",
+                    "description": "Well-structured.",
+                    "priority": "LOW",
+                }
+            ],
+        }
+    }
+    prompt = build_documentation_prompt("IDENTIFICATION DIVISION.", context)
+
+    assert "=== MODERNIZATION CONTEXT ===" in prompt
+    assert "Ready for Modernization" in prompt
+
+
+def test_build_documentation_prompt_insufficient_data_is_stated_plainly() -> None:
+    context = {
+        "modernization_data": {
+            "score": {
+                "complexity_score": 0.0,
+                "coupling_score": 0.0,
+                "overall_readiness": 0.0,
+                "metadata": {"insufficient_data": True},
+            },
+            "recommendations": [],
+        }
+    }
+    prompt = build_documentation_prompt("IDENTIFICATION DIVISION.", context)
+
+    assert "insufficient flow data" in prompt
+
+
 def test_documentation_models_immutability() -> None:
     doc = Documentation(title="T", overview="O")
     with pytest.raises(Exception):  # Frozen instance

@@ -155,8 +155,14 @@ class ChromaIndex(VectorIndex):
             "include": ["documents", "metadatas", "distances"],
         }
         if filter_metadata:
-            # For simple key-value match
-            kwargs["where"] = filter_metadata
+            # ChromaDB's `where` clause requires exactly one top-level
+            # operator: a single {key: value} pair is accepted as-is, but
+            # two or more keys must be combined with an explicit boolean
+            # operator, or the query is rejected outright.
+            if len(filter_metadata) == 1:
+                kwargs["where"] = dict(filter_metadata)
+            else:
+                kwargs["where"] = {"$and": [{k: v} for k, v in filter_metadata.items()]}
 
         # mypy will complain if we don't handle Optional properly
         # Since we might query an empty DB, chromadb returns empty lists

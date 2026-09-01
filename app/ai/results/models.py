@@ -37,6 +37,14 @@ class ImmutableDict(dict):
     def setdefault(self, *args: Any, **kwargs: Any) -> Any:
         raise TypeError("Immutable mapping")
 
+    def __deepcopy__(self, memo: dict[int, Any]) -> "ImmutableDict":
+        # Contents are always fully, recursively frozen at construction time
+        # (see _deep_isolate_context/_deep_serialize_value), so there is
+        # nothing left to protect against mutation. Returning self avoids the
+        # default deepcopy reconstruction path, which calls __setitem__ on a
+        # fresh instance and would raise.
+        return self
+
 
 class ArtifactType(str, Enum):
     """

@@ -1,3 +1,4 @@
+import copy
 import json
 from dataclasses import FrozenInstanceError
 
@@ -34,6 +35,25 @@ def test_immutable_dict_prevents_mutation() -> None:
 
     with pytest.raises(TypeError):
         d.setdefault("d", 4)
+
+
+def test_immutable_dict_supports_deepcopy() -> None:
+    """
+    Regression test: copy.deepcopy() previously crashed on ImmutableDict
+    (and any structure containing one, e.g. RAGRequest.modernization_context)
+    with `TypeError: Immutable mapping`, because the default deepcopy
+    reconstruction path calls __setitem__ on a fresh instance. Since
+    ImmutableDict contents are always fully, recursively frozen at
+    construction, __deepcopy__ should simply return the same instance.
+    """
+    original = _freeze_metadata({"a": {"b": [1, 2, 3]}, "c": "d"})
+    copied = copy.deepcopy(original)
+
+    assert copied is original
+
+    nested = {"outer": original}
+    deep_copied_container = copy.deepcopy(nested)
+    assert deep_copied_container["outer"] is original
 
 
 def test_freeze_metadata_isolation() -> None:

@@ -2,6 +2,7 @@
 Tests for Normalized AI Results.
 """
 
+import copy
 import json
 from typing import Any
 
@@ -17,6 +18,25 @@ from app.ai.results.models import (
     NormalizedExplanationPayload,
 )
 from app.ai.results.normalization import normalize_result
+
+
+def test_immutable_dict_supports_deepcopy() -> None:
+    """
+    Regression test: copy.deepcopy() previously crashed on this ImmutableDict
+    too (see app.ai.orchestration.service.AIAnalysisOrchestrator.analyze,
+    which deepcopies its incoming context dict) with
+    `TypeError: Immutable mapping`. Contents are always fully, recursively
+    frozen at construction (see normalization._deep_serialize_value), so
+    __deepcopy__ should simply return the same instance.
+    """
+    original = ImmutableDict({"a": ImmutableDict({"b": 1})})
+
+    copied = copy.deepcopy(original)
+    assert copied is original
+
+    nested = {"outer": original}
+    deep_copied_container = copy.deepcopy(nested)
+    assert deep_copied_container["outer"] is original
 
 
 def test_explanation_artifact() -> None:
