@@ -237,6 +237,45 @@ def test_switching_file_clears_stale_results(monkeypatch):
     assert any("Click 'Analyze for Modernization' to begin" in i.value for i in at.info)
 
 
+def test_switching_file_clears_stale_chat_history(monkeypatch):
+    """
+    Regression: chat messages about a previously selected file must not
+    remain displayed as if they were part of an ongoing conversation about
+    a newly selected file.
+    """
+    monkeypatch.setattr(
+        BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_TWO_FILES
+    )
+    monkeypatch.setattr(
+        BackendClient,
+        "analyze_modernization",
+        lambda self, ws_id, filename: SUCCESSFUL_PIPELINE,
+    )
+    monkeypatch.setattr(
+        BackendClient,
+        "send_chat_message",
+        lambda self, workspace_id, query, filename=None, include_modernization_context=False, top_k=5: {
+            "query": query,
+            "answer": "This is about MAIN.cbl.",
+            "context": [],
+            "error": None,
+            "modernization_data": None,
+        },
+    )
+
+    at = _make_app()
+    at.run()
+    _load_workspace(at)
+    at.button(key="analyze_button").click().run()
+    at.chat_input(key="chat_input").set_value("What does this do?").run()
+
+    assert len(at.session_state["messages"]) == 2
+
+    at.selectbox(key="file_select").set_value("UTIL.cbl").run()
+
+    assert at.session_state["messages"] == []
+
+
 def test_recommendations_empty_state(monkeypatch):
     pipeline = {
         **SUCCESSFUL_PIPELINE,
