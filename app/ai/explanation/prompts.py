@@ -6,6 +6,8 @@ Deterministic prompt builders for COBOL code explanation.
 
 from typing import Any, Optional
 
+from app.ai.context_formatting import format_modernization_context
+
 
 def build_explanation_prompt(
     source: str, context: Optional[dict[str, Any]] = None
@@ -36,6 +38,10 @@ def build_explanation_prompt(
         prompt_parts.append("- Explain the dependencies supplied below")
     if "business_rules" in ctx:
         prompt_parts.append("- Explain the business rules supplied below")
+    if ctx.get("rag_query"):
+        prompt_parts.append(
+            "- Directly and specifically answer the user's question supplied below"
+        )
 
     prompt_parts.append("\n=== COBOL SOURCE ===")
     prompt_parts.append(source.strip())
@@ -43,6 +49,11 @@ def build_explanation_prompt(
 
     if "program_id" in ctx:
         prompt_parts.append(f"Program Identifier: {ctx['program_id']}\n")
+
+    if ctx.get("rag_query"):
+        prompt_parts.append("=== USER QUESTION ===")
+        prompt_parts.append(str(ctx["rag_query"]))
+        prompt_parts.append("====================\n")
 
     if "dependencies" in ctx:
         prompt_parts.append("=== DEPENDENCIES ===")
@@ -55,6 +66,11 @@ def build_explanation_prompt(
         prompt_parts.append("=== BUSINESS RULES ===")
         for rule in ctx["business_rules"]:
             prompt_parts.append(str(rule))
+        prompt_parts.append("====================\n")
+
+    if ctx.get("modernization_data"):
+        prompt_parts.append("=== MODERNIZATION CONTEXT ===")
+        prompt_parts.extend(format_modernization_context(ctx["modernization_data"]))
         prompt_parts.append("====================\n")
 
     prompt_parts.append(
