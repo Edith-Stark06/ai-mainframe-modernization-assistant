@@ -1,10 +1,24 @@
 """Streamlit UI for the AI-Powered Mainframe Modernization Assistant."""
 
-from typing import Any, Dict, List, Optional
+import sys
+from pathlib import Path
 
-import streamlit as st
+# `streamlit run app/frontend/app.py` inserts this script's own directory
+# (app/frontend) at the front of sys.path (streamlit.web.bootstrap._fix_sys_path).
+# Since this script is itself named app.py, Python then resolves the
+# top-level `app` package to this very file instead of the real app/
+# package at the project root, and `from app.frontend.client import ...`
+# fails with "No module named 'app.frontend'; 'app' is not a package".
+# Put the project root at the very front of sys.path so it wins first.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.frontend.client import BackendAPIError, BackendClient
+from typing import Any, Dict, List, Optional  # noqa: E402
+
+import streamlit as st  # noqa: E402
+
+from app.frontend.client import BackendAPIError, BackendClient  # noqa: E402
 
 PRIORITY_ICONS = {"HIGH": "\U0001f534", "MEDIUM": "\U0001f7e0", "LOW": "\U0001f7e2"}
 
