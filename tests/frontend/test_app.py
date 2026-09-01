@@ -11,6 +11,7 @@ client itself is covered separately in ``test_client.py``.
 import sys
 from pathlib import Path
 
+import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from app.frontend.client import BackendAPIError, BackendClient
@@ -28,25 +29,125 @@ def test_entrypoint_survives_streamlit_sys_path_bootstrap():
     `from app.frontend.client import ...` fails with:
         ModuleNotFoundError: No module named 'app.frontend'; 'app' is not a package
 
-    This reproduces that exact bootstrap step (not a guess at the mechanism --
-    the real streamlit function) before running the script through AppTest, so
-    a regression here fails with the same traceback a user would see.
+    This reproduces the real Streamlit bootstrap ordering precisely (not a
+    guess at the mechanism -- the actual streamlit function), with the
+    project root explicitly made absent from sys.path first (worst case,
+    stronger than merely "not first"), so a regression here fails with the
+    same traceback a user would see.
     """
     from streamlit.web.bootstrap import _fix_sys_path
 
+    project_root = str(Path(APP_PATH).resolve().parents[2])
+    script_dir = str(Path(APP_PATH).resolve().parent)
+
     original_sys_path = list(sys.path)
+    original_app_module = sys.modules.pop("app", None)
+    original_app_frontend_module = sys.modules.pop("app.frontend", None)
+    original_app_frontend_client_module = sys.modules.pop("app.frontend.client", None)
     try:
+        # Simulate the worst case explicitly: the project root is entirely
+        # absent from sys.path (not merely present-but-later), and
+        # app/frontend is not yet at the front either -- _fix_sys_path is
+        # what puts it there, exactly as the real bootstrap does.
+        sys.path[:] = [p for p in sys.path if p not in (project_root, "", script_dir)]
+        assert project_root not in sys.path
+        assert script_dir not in sys.path
+
         _fix_sys_path(APP_PATH)
-        assert sys.path[0] == str(
-            Path(APP_PATH).parent
+        assert (
+            sys.path[0] == script_dir
         ), "test setup did not reproduce streamlit's sys.path bootstrap"
+        assert (
+            project_root not in sys.path[:1]
+        ), "test setup should not already have the project root fixing the bug"
 
         at = AppTest.from_file(APP_PATH)
         at.run(timeout=20)
+
+        assert not list(at.exception), [str(e.value) for e in at.exception]
+
+        # app must resolve to the real top-level package (app/__init__.py),
+        # not to this entry script (app/frontend/app.py) being mistaken for it.
+        resolved_app = sys.modules.get("app")
+        assert resolved_app is not None, "app was not imported during script execution"
+        assert hasattr(resolved_app, "__path__"), (
+            "app resolved to a plain module, not the app/ package -- "
+            f"__file__={getattr(resolved_app, '__file__', None)!r}"
+        )
+        assert Path(resolved_app.__file__).name == "__init__.py"
+        assert Path(resolved_app.__file__).parent == Path(project_root) / "app"
+
+        # app.frontend.client must have actually imported successfully.
+        client_module = sys.modules.get("app.frontend.client")
+        assert client_module is not None
+        assert hasattr(client_module, "BackendClient")
+        assert hasattr(client_module, "BackendAPIError")
     finally:
         sys.path[:] = original_sys_path
+        for name, original in (
+            ("app", original_app_module),
+            ("app.frontend", original_app_frontend_module),
+            ("app.frontend.client", original_app_frontend_client_module),
+        ):
+            if original is not None:
+                sys.modules[name] = original
+            else:
+                sys.modules.pop(name, None)
+        # st.cache_resource is a process-wide cache that outlives this
+        # AppTest run. It may have cached a BackendClient instance built
+        # from the module state that existed during this test (before the
+        # restoration above), which would otherwise leak into later tests
+        # and make their BackendClient monkeypatches silently not apply.
+        st.cache_resource.clear()
 
-    assert not list(at.exception), [str(e.value) for e in at.exception]
+
+def test_entrypoint_recovers_from_poisoned_app_module_cache():
+    """
+    Regression test for a second, independent failure mode: if the
+    top-level `app` name was already resolved to something other than the
+    real app/ package -- e.g. this very script, mistaken for it while
+    app/frontend sat ahead of the project root on sys.path -- Python caches
+    that in sys.modules and would keep reusing it even after sys.path is
+    corrected, since `import app` checks sys.modules first. The entrypoint
+    must detect and discard a non-package `app` cache entry so the import
+    re-resolves fresh.
+    """
+    import types
+
+    original_sys_path = list(sys.path)
+    original_app_module = sys.modules.pop("app", None)
+    original_app_frontend_module = sys.modules.pop("app.frontend", None)
+    original_app_frontend_client_module = sys.modules.pop("app.frontend.client", None)
+    try:
+        # Poison the cache exactly the way the real bug would: `app` bound
+        # to a plain module (no __path__), standing in for app.py itself.
+        fake_app_module = types.ModuleType("app")
+        assert not hasattr(fake_app_module, "__path__")
+        sys.modules["app"] = fake_app_module
+
+        at = AppTest.from_file(APP_PATH)
+        at.run(timeout=20)
+
+        assert not list(at.exception), [str(e.value) for e in at.exception]
+
+        resolved_app = sys.modules.get("app")
+        assert (
+            resolved_app is not fake_app_module
+        ), "the poisoned app module cache entry was never replaced"
+        assert hasattr(resolved_app, "__path__")
+    finally:
+        sys.path[:] = original_sys_path
+        for name, original in (
+            ("app", original_app_module),
+            ("app.frontend", original_app_frontend_module),
+            ("app.frontend.client", original_app_frontend_client_module),
+        ):
+            if original is not None:
+                sys.modules[name] = original
+            else:
+                sys.modules.pop(name, None)
+        # See the matching comment in test_entrypoint_survives_streamlit_sys_path_bootstrap.
+        st.cache_resource.clear()
 
 
 INVENTORY_TWO_FILES = {
