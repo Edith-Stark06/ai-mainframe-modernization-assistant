@@ -1,4 +1,5 @@
 import uuid
+import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 from app.rag.orchestration.models import RAGResult, RAGRequest, RetrievedContext
@@ -50,7 +51,24 @@ def override_get_rag():
     return MockRAGOrchestrator()
 
 
-app.dependency_overrides[get_rag_orchestrator] = override_get_rag
+@pytest.fixture(autouse=True)
+def _mock_rag_orchestrator():
+    """
+    Scope the get_rag_orchestrator override to this file's tests only.
+
+    Regression: this was previously a bare module-level assignment
+    (app.dependency_overrides[get_rag_orchestrator] = override_get_rag) with
+    no teardown. Since pytest imports every test module during collection
+    before running any test, that line executed as soon as this file was
+    collected -- permanently overriding get_rag_orchestrator for the rest of
+    the pytest process, regardless of test/file order. Any other test in the
+    suite that expected the *real* get_rag_orchestrator dependency (e.g. a
+    genuine end-to-end integration test) would silently get this mock
+    instead, with no error -- just wrong results.
+    """
+    app.dependency_overrides[get_rag_orchestrator] = override_get_rag
+    yield
+    app.dependency_overrides.pop(get_rag_orchestrator, None)
 
 
 def test_chat_endpoint_validation():
