@@ -54,6 +54,7 @@ from app.api.schemas.workspace import (
     TypeCountSchema,
 )
 from app.core.config import settings
+from app.core.exceptions import ValidationException
 from app.core.logging import logger
 from app.workspace.inventory import InventoryBuilder
 from app.workspace.summary import SummaryGenerator
@@ -73,6 +74,51 @@ router = APIRouter(
 
 _inventory_builder = InventoryBuilder()
 _summary_generator = SummaryGenerator()
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _resolve_workspace_path(workspace_id: str) -> Path:
+    """
+    Resolve *workspace_id* to a path within the configured workspace root.
+
+    Args:
+        workspace_id: Raw path segment supplied by the caller.
+
+    Returns:
+        The resolved, validated workspace directory path.
+
+    Raises:
+        ValidationException: If the resolved path escapes the workspace
+            root, or *is* the workspace root itself (e.g. ``".."``, ``"."``,
+            or a URL-encoded equivalent — the latter would otherwise scan
+            every workspace combined, since a path is trivially "relative
+            to" itself) — returned as 422 by the global handler.
+    """
+    workspace_root = Path(settings.workspace_dir).resolve()
+    workspace_path = (workspace_root / workspace_id).resolve()
+
+    is_invalid = workspace_path == workspace_root
+    if not is_invalid:
+        try:
+            workspace_path.relative_to(workspace_root)
+        except ValueError:
+            is_invalid = True
+
+    if is_invalid:
+        logger.warning(
+            "Workspace endpoint: path traversal attempt via workspace_id='{}'.",
+            workspace_id,
+        )
+        raise ValidationException(
+            message="Invalid workspace identifier.",
+            details={"workspace_id": workspace_id},
+        )
+
+    return workspace_path
+
 
 # ---------------------------------------------------------------------------
 # Endpoints
@@ -108,7 +154,7 @@ async def get_inventory(
     """
     logger.debug("Workspace inventory endpoint: workspace_id='{}'.", workspace_id)
 
-    workspace_path = Path(settings.workspace_dir) / workspace_id
+    workspace_path = _resolve_workspace_path(workspace_id)
     inventory = _inventory_builder.build(
         workspace_id=workspace_id,
         path=workspace_path,
@@ -160,7 +206,7 @@ async def get_summary(
     """
     logger.debug("Workspace summary endpoint: workspace_id='{}'.", workspace_id)
 
-    workspace_path = Path(settings.workspace_dir) / workspace_id
+    workspace_path = _resolve_workspace_path(workspace_id)
     inventory = _inventory_builder.build(
         workspace_id=workspace_id,
         path=workspace_path,
