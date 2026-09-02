@@ -76,6 +76,7 @@ from app.parser.ast.clauses import (
 )
 from app.parser.ast.identification import IdentificationDivisionNode
 from app.parser.diagnostics.recovery import RecoveryContext
+from app.parser.grammar_words import matches_grammar_word
 from app.parser.lexer.position import Position
 from app.parser.lexer.token import Token
 from app.parser.lexer.token_types import TokenType
@@ -379,16 +380,30 @@ class IdentificationDivisionParser:
             tok = stream.current()
             if tok.type is TokenType.PERIOD:
                 break
-            if tok.type is TokenType.KEYWORD and tok.lexeme.upper() in (
-                _CLAUSE_KEYWORDS | _DIVISION_HEADERS | {"DIVISION"}
+            # A clause name or division header here means the previous
+            # clause was not closed by a period.  Of the clause names
+            # only PROGRAM-ID is a reserved lexer word, so gating this on
+            # TokenType.KEYWORD left AUTHOR, INSTALLATION, DATE-WRITTEN,
+            # DATE-COMPILED and SECURITY undetected: the unterminated
+            # value simply absorbed the next clause name, and that clause
+            # was lost (task #104, F-07).
+            if matches_grammar_word(
+                tok, _CLAUSE_KEYWORDS | _DIVISION_HEADERS | {"DIVISION"}
             ):
-                # Next clause / division started without a closing period
-                raise ParserError(
-                    f"missing period after {clause_name} value",
-                    line=tok.position.line,
-                    column=tok.position.column,
-                    offset=tok.position.offset,
+                # The next clause (or division) began without a closing
+                # period.  Record it and stop *without* consuming the
+                # token: returning the value gathered so far leaves the
+                # dispatcher positioned on the next clause name, so this
+                # clause and the following one both survive.  Raising
+                # here instead sent the dispatcher into panic-mode
+                # recovery, whose paragraph-label heuristic consumed the
+                # following clause name and lost that clause too.
+                state.recovery_manager.record_error(
+                    message=f"missing period after {clause_name} value",
+                    error_token=tok,
+                    context=RecoveryContext.IDENTIFICATION_DIVISION,
                 )
+                return " ".join(parts), start, tok.position
             parts.append(tok.lexeme)
             stream.advance()
 
