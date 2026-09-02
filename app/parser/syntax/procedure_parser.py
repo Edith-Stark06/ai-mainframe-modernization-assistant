@@ -140,6 +140,44 @@ _STATEMENT_LEXEMES: frozenset[str] = frozenset(
     }
 )
 
+# ---------------------------------------------------------------------------
+# Verbs that are real COBOL statements but have no parser and no AST node
+# yet.  They are recognised only so that encountering one produces an
+# explicit diagnostic and skips that single statement, instead of
+# silently abandoning the rest of the paragraph.  Most reach the parser
+# as IDENTIFIER (only COMPUTE is a reserved lexer word), so they are
+# matched by lexeme.
+#
+# This list is deliberately explicit: an identifier that is not named
+# here is still treated as it was before (a paragraph label, or the end
+# of the statement list), so arbitrary data names are never mistaken for
+# statements.
+# ---------------------------------------------------------------------------
+_UNSUPPORTED_STATEMENT_LEXEMES: frozenset[str] = frozenset(
+    {
+        "OPEN",
+        "CLOSE",
+        "READ",
+        "WRITE",
+        "REWRITE",
+        "DELETE",
+        "START",
+        "EVALUATE",
+        "COMPUTE",
+        "STRING",
+        "UNSTRING",
+        "INSPECT",
+        "INITIALIZE",
+        "SEARCH",
+        "SET",
+        "SORT",
+        "MERGE",
+        "RETURN",
+        "RELEASE",
+        "GO",
+    }
+)
+
 
 class ProcedureDivisionParser:
     """
@@ -447,6 +485,16 @@ class ProcedureDivisionParser:
                         )
                     continue
 
+                # A COBOL verb this parser does not implement yet.
+                # Previously the loop simply broke here with no
+                # diagnostic, silently discarding every remaining
+                # statement in the paragraph (task #104, §11).  Report it
+                # and skip just that statement so the ones after it are
+                # still parsed.
+                if upper in _UNSUPPORTED_STATEMENT_LEXEMES:
+                    self._skip_unsupported_statement(state)
+                    continue
+
             # Anything else at statement level — unexpected; stop
             logger.debug(
                 "ProcedureDivisionParser: stopping statement loop at token {!r}.",
@@ -455,6 +503,55 @@ class ProcedureDivisionParser:
             break
 
         return statements
+
+    # ------------------------------------------------------------------
+    # Unsupported statement handling
+    # ------------------------------------------------------------------
+
+    def _skip_unsupported_statement(self, state: ParserState) -> None:
+        """
+        Record and skip one statement whose verb has no parser yet.
+
+        The cursor must be on the verb token.  Everything up to and
+        including the statement's terminating period is consumed, so a
+        scope-delimited construct such as ``EVALUATE ... END-EVALUATE.``
+        is skipped whole.  The scan stops short at EOF or at the next
+        division header so it can never run past the procedure division.
+
+        Args:
+            state: Active parser state, positioned on the verb.
+        """
+        stream = state.stream
+        verb_token = stream.advance()
+
+        logger.debug(
+            "ProcedureDivisionParser: skipping unsupported statement {!r}.",
+            verb_token.lexeme,
+        )
+        state.recovery_manager.record_error(
+            message=(
+                f"unsupported statement {verb_token.lexeme.upper()!r}; "
+                "skipped to the end of the statement"
+            ),
+            error_token=verb_token,
+            context=RecoveryContext.STATEMENT,
+        )
+
+        while not stream.eof():
+            tok = stream.current()
+            if tok.type is TokenType.EOF:
+                break
+            if tok.type is TokenType.PERIOD:
+                stream.advance()  # consume the terminator
+                break
+            if (
+                tok.type is TokenType.KEYWORD
+                and tok.lexeme.upper() in _DIVISION_KEYWORDS
+                and stream.peek().type is TokenType.KEYWORD
+                and stream.peek().lexeme.upper() == "DIVISION"
+            ):
+                break
+            stream.advance()
 
     # ------------------------------------------------------------------
     # Statement dispatcher
