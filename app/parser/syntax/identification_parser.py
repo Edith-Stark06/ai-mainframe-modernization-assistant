@@ -223,8 +223,20 @@ class IdentificationDivisionParser:
                 stream.advance()
                 continue
 
-            # Only KEYWORD tokens can open a clause
-            if tok.type is not TokenType.KEYWORD:
+            # A clause can be opened by a KEYWORD token, or by an
+            # IDENTIFIER token whose lexeme matches a known clause name.
+            # AUTHOR, INSTALLATION, DATE-WRITTEN, DATE-COMPILED, and
+            # SECURITY are not in the lexer's reserved-keyword set (only
+            # PROGRAM-ID is), so the lexer emits them as IDENTIFIER
+            # tokens. The grammar position here only ever expects a
+            # clause name or the next division header, so matching by
+            # uppercased lexeme is unambiguous -- the same approach the
+            # procedure-division parser already uses for GOBACK.
+            upper = tok.lexeme.upper()
+            is_clause_candidate = tok.type is TokenType.KEYWORD or (
+                tok.type is TokenType.IDENTIFIER and upper in _CLAUSE_KEYWORDS
+            )
+            if not is_clause_candidate:
                 logger.debug(
                     "IdentificationDivisionParser: unexpected token {!r}; recovering.",
                     tok.lexeme,
@@ -236,7 +248,7 @@ class IdentificationDivisionParser:
                 )
                 continue
 
-            keyword = tok.lexeme.upper()
+            keyword = upper
 
             if keyword not in _CLAUSE_KEYWORDS:
                 logger.debug(
