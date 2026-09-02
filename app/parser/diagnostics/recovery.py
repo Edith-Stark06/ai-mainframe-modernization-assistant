@@ -162,6 +162,8 @@ class RecoveryContext(Enum):
     Members:
         IDENTIFICATION_DIVISION:
             Error occurred inside the IDENTIFICATION DIVISION parser.
+        ENVIRONMENT_DIVISION:
+            Error occurred inside the ENVIRONMENT DIVISION parser.
         DATA_DIVISION:
             Error occurred inside the DATA DIVISION parser.
         PROCEDURE_DIVISION:
@@ -181,6 +183,7 @@ class RecoveryContext(Enum):
     """
 
     IDENTIFICATION_DIVISION = "identification_division"
+    ENVIRONMENT_DIVISION = "environment_division"
     DATA_DIVISION = "data_division"
     PROCEDURE_DIVISION = "procedure_division"
     WORKING_STORAGE_SECTION = "working_storage_section"
