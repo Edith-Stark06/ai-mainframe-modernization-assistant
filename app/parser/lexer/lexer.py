@@ -92,6 +92,7 @@ _SYMBOLS: dict[str, TokenType] = {
     "(": TokenType.LPAREN,
     ")": TokenType.RPAREN,
     ":": TokenType.UNKNOWN,  # colon — stored as UNKNOWN until parser promotes
+    "$": TokenType.UNKNOWN,  # currency symbol (PICTURE clause editing, e.g. PIC $$$9.99)
     "+": TokenType.UNKNOWN,
     "-": TokenType.UNKNOWN,
     "*": TokenType.UNKNOWN,
