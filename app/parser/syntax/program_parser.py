@@ -7,15 +7,18 @@ Purpose:
     division-level parsers and assembles the final
     :class:`~app.parser.ast.program.ProgramNode`.
 
-    In this milestone the IDENTIFICATION DIVISION, DATA DIVISION, and
-    PROCEDURE DIVISION are parsed.  Future tasks will add the ENVIRONMENT
-    DIVISION parser.
+    All four COBOL divisions are now recognised.  The ENVIRONMENT
+    DIVISION is parsed to a deliberately limited representation — see
+    :mod:`app.parser.syntax.environment_parser` — because no downstream
+    consumer reads environment metadata yet.
 
 Responsibilities:
     - Accept a ``list[Token]`` and return a
       :class:`~app.parser.ast.program.ProgramNode`.
     - Detect whether an IDENTIFICATION DIVISION is present and delegate
       to :class:`~app.parser.syntax.identification_parser.IdentificationDivisionParser`.
+    - Detect whether an ENVIRONMENT DIVISION is present and delegate to
+      :class:`~app.parser.syntax.environment_parser.EnvironmentDivisionParser`.
     - Satisfy :class:`~app.parser.syntax.parser_interfaces.ParserProtocol`
       structurally.
 
@@ -27,6 +30,7 @@ Non-responsibilities:
 Dependencies:
     - :mod:`app.parser.ast.program`                    — ``ProgramNode``.
     - :mod:`app.parser.ast.identification`             — ``IdentificationDivisionNode``.
+    - :mod:`app.parser.ast.division`                   — ``DivisionNode``.
     - :mod:`app.parser.ast.data`                       — ``DataDivisionNode``.
     - :mod:`app.parser.ast.procedure`                  — ``ProcedureDivisionNode``.
     - :mod:`app.parser.lexer.token`                    — ``Token``.
@@ -34,6 +38,7 @@ Dependencies:
     - :mod:`app.parser.syntax.token_stream`            — ``TokenStream``.
     - :mod:`app.parser.syntax.parser_state`            — ``ParserState``.
     - :mod:`app.parser.syntax.identification_parser`   — ``IdentificationDivisionParser``.
+    - :mod:`app.parser.syntax.environment_parser`      — ``EnvironmentDivisionParser``.
     - :mod:`app.parser.syntax.data_parser`             — ``DataDivisionParser``.
     - :mod:`app.parser.syntax.procedure_parser`        — ``ProcedureDivisionParser``.
     - Python standard library only.
@@ -64,12 +69,14 @@ from __future__ import annotations
 from loguru import logger
 
 from app.parser.ast.data import DataDivisionNode
+from app.parser.ast.division import DivisionNode
 from app.parser.ast.identification import IdentificationDivisionNode
 from app.parser.ast.procedure import ProcedureDivisionNode
 from app.parser.ast.program import ProgramNode
 from app.parser.lexer.token import Token
 from app.parser.lexer.token_types import TokenType
 from app.parser.syntax.data_parser import DataDivisionParser
+from app.parser.syntax.environment_parser import EnvironmentDivisionParser
 from app.parser.syntax.identification_parser import IdentificationDivisionParser
 from app.parser.syntax.parser_state import ParserState
 from app.parser.syntax.procedure_parser import ProcedureDivisionParser
@@ -83,9 +90,10 @@ class ProgramParser:
     Top-level COBOL program parser.
 
     :class:`ProgramParser` coordinates parsing of all four COBOL
-    divisions.  The IDENTIFICATION DIVISION, DATA DIVISION, and PROCEDURE
-    DIVISION are implemented; the ENVIRONMENT DIVISION is left for a
-    future task.
+    divisions.  The ENVIRONMENT DIVISION is recognised and consumed to a
+    deliberately limited representation (see
+    :mod:`app.parser.syntax.environment_parser`); the other three are
+    parsed in full detail by their dedicated sub-parsers.
 
     The class satisfies
     :class:`~app.parser.syntax.parser_interfaces.ParserProtocol`
@@ -106,6 +114,7 @@ class ProgramParser:
     def __init__(self) -> None:
         """Initialise the parser and its division sub-parsers."""
         self._identification_parser = IdentificationDivisionParser()
+        self._environment_parser = EnvironmentDivisionParser()
         self._data_parser = DataDivisionParser()
         self._procedure_parser = ProcedureDivisionParser()
 
@@ -154,6 +163,7 @@ class ProgramParser:
 
             program ::=
                 [ identification-division ]
+                [ environment-division ]
                 [ data-division ]
                 [ procedure-division ]
                 EOF
@@ -168,12 +178,17 @@ class ProgramParser:
         start = stream.current().position
 
         identification: IdentificationDivisionNode | None = None
+        environment: DivisionNode | None = None
         data: DataDivisionNode | None = None
         procedure: ProcedureDivisionNode | None = None
 
         # Detect IDENTIFICATION DIVISION
         if self._is_identification_division(state):
             identification = self._identification_parser.parse(state)
+
+        # Detect ENVIRONMENT DIVISION
+        if self._is_environment_division(state):
+            environment = self._environment_parser.parse(state)
 
         # Detect DATA DIVISION
         if self._is_data_division(state):
@@ -189,6 +204,7 @@ class ProgramParser:
             start_position=start,
             end_position=end,
             identification_division=identification,
+            environment_division=environment,
             data_division=data,
             procedure_division=procedure,
         )
@@ -216,6 +232,31 @@ class ProgramParser:
         if tok.type is not TokenType.KEYWORD:
             return False
         if tok.lexeme.upper() != "IDENTIFICATION":
+            return False
+        next_tok = stream.peek()
+        if next_tok.type is not TokenType.KEYWORD:
+            return False
+        return next_tok.lexeme.upper() == "DIVISION"
+
+    @staticmethod
+    def _is_environment_division(state: ParserState) -> bool:
+        """
+        Return ``True`` if the stream is positioned on an ENVIRONMENT DIVISION header.
+
+        Looks at the current token (``ENVIRONMENT``) and the next token
+        (``DIVISION``) without consuming either.
+
+        Args:
+            state: The active :class:`~app.parser.syntax.parser_state.ParserState`.
+
+        Returns:
+            ``True`` if the next two tokens are ``ENVIRONMENT DIVISION``.
+        """
+        stream = state.stream
+        tok = stream.current()
+        if tok.type is not TokenType.KEYWORD:
+            return False
+        if tok.lexeme.upper() != "ENVIRONMENT":
             return False
         next_tok = stream.peek()
         if next_tok.type is not TokenType.KEYWORD:
