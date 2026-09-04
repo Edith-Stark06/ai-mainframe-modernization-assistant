@@ -110,6 +110,9 @@ _WORD_CONTINUE: frozenset[str] = frozenset(
 _WORD_START: frozenset[str] = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 )
+# Word characters excluding the hyphen: a hyphen only continues a word
+# when another word character follows it.
+_WORD_CONTINUE_NO_HYPHEN: frozenset[str] = _WORD_CONTINUE - {"-"}
 
 
 class CobolLexer:
@@ -359,9 +362,22 @@ class CobolLexer:
 
     def _read_number(self, scanner: CharacterScanner, filename: str) -> Token:
         """
-        Read an integer numeric literal from the scanner.
+        Read an integer numeric literal, or a word that begins with digits.
 
         Consumes consecutive digit characters.  No decimal-point handling.
+
+        A COBOL user-defined word may begin with digits — procedure names
+        such as ``0000-MAIN`` and ``3000-VALIDATE-INPUT`` are the common
+        case.  Because this method is reached before :meth:`_read_word`
+        (and ``_WORD_START`` holds only letters), such a name used to be
+        split into ``NUMBER('0000')``, ``UNKNOWN('-')``,
+        ``IDENTIFIER('MAIN')``, which the procedure parser cannot read as
+        a paragraph label.
+
+        The digits are therefore treated as the start of a word only when
+        they are followed by a hyphen *and a letter*.  That is the
+        narrowest rule that recovers those names: ``0000``, ``2026-09-02``
+        and ``1-2`` are unaffected because no letter follows their hyphen.
         """
         start_pos = self._position(scanner, filename)
         digits: list[str] = []
@@ -374,11 +390,82 @@ class CobolLexer:
             else:
                 break
 
+        if self._at_numeric_prefixed_word(scanner):
+            return self._read_word_continuation(scanner, start_pos, digits)
+
         return Token(
             type=TokenType.NUMBER,
             lexeme="".join(digits),
             position=start_pos,
         )
+
+    @staticmethod
+    def _at_numeric_prefixed_word(scanner: CharacterScanner) -> bool:
+        """
+        Return ``True`` if a hyphen + letter follows the digits just read.
+
+        This is the single test that separates the paragraph name
+        ``0000-MAIN`` from the numeric forms that must stay numeric.  The
+        character after the hyphen must be a **letter**: requiring a
+        letter rather than any word character leaves ``2026-09-02`` and
+        ``1-2`` lexing exactly as they did before.
+
+        Args:
+            scanner: The scanner, positioned just past the digits.
+
+        Returns:
+            ``True`` if the digits begin a COBOL word.
+        """
+        if scanner.current() != "-":
+            return False
+        following = scanner.peek(1)
+        return following is not None and following in _WORD_START
+
+    def _read_word_continuation(
+        self,
+        scanner: CharacterScanner,
+        start_pos: Position,
+        prefix: list[str],
+    ) -> Token:
+        """
+        Finish reading a COBOL word whose leading characters are *prefix*.
+
+        Consumes word characters, treating a hyphen as part of the word
+        only when another word character follows it, so a trailing hyphen
+        is left in the stream for the next token rather than being
+        swallowed.
+
+        Args:
+            scanner:   The scanner, positioned on the first unread character.
+            start_pos: Position of the word's first character.
+            prefix:    Characters already consumed for this word.
+
+        Returns:
+            A ``KEYWORD`` or ``IDENTIFIER`` token carrying the whole word.
+        """
+        chars: list[str] = list(prefix)
+
+        while not scanner.eof():
+            ch = scanner.current()
+            if ch is None:
+                break
+            if ch == "-":
+                following = scanner.peek(1)
+                if following is None or following not in _WORD_CONTINUE_NO_HYPHEN:
+                    break
+                chars.append(ch)
+                scanner.advance()
+                continue
+            if ch in _WORD_CONTINUE:
+                chars.append(ch)
+                scanner.advance()
+                continue
+            break
+
+        word = "".join(chars).upper()
+        token_type = TokenType.KEYWORD if is_keyword(word) else TokenType.IDENTIFIER
+
+        return Token(type=token_type, lexeme=word, position=start_pos)
 
     def _read_word(self, scanner: CharacterScanner, filename: str) -> Token:
         """
