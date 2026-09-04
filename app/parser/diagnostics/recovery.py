@@ -65,6 +65,7 @@ from dataclasses import dataclass
 from enum import Enum, unique
 from typing import TYPE_CHECKING
 
+from app.parser.grammar_words import matches_grammar_word
 from app.parser.lexer.token_types import TokenType
 
 if TYPE_CHECKING:
@@ -102,7 +103,10 @@ _DIVISION_KEYWORDS: frozenset[str] = frozenset(
     }
 )
 
-#: Keyword lexemes that mark a section within a division.
+#: Lexemes that mark a section within a division.  Only WORKING-STORAGE
+#: is a reserved word; the rest reach the parser as IDENTIFIER, so these
+#: are matched with :func:`~app.parser.grammar_words.matches_grammar_word`
+#: rather than a TokenType.KEYWORD test.
 _SECTION_KEYWORDS: frozenset[str] = frozenset(
     {
         "WORKING-STORAGE",
@@ -114,6 +118,10 @@ _SECTION_KEYWORDS: frozenset[str] = frozenset(
         "COMMUNICATION",
     }
 )
+
+#: The literal word that must follow a section name to confirm a section
+#: header.  ``SECTION`` is not a reserved word either.
+_SECTION_WORD: frozenset[str] = frozenset({"SECTION"})
 
 
 # ---------------------------------------------------------------------------
@@ -320,22 +328,32 @@ def synchronise(stream: TokenStream) -> tuple[SynchronisationPoint, int]:
             skipped += 1
             return SynchronisationPoint.PERIOD, skipped
 
-        # ---- Division keyword (do NOT consume) ----------------------
-        if tok.type is TokenType.KEYWORD:
-            upper = tok.lexeme.upper()
+        # ---- Division boundary (do NOT consume) ---------------------
+        # Every COBOL division name is in the lexer's reserved-word set,
+        # so requiring TokenType.KEYWORD here is correct and is kept
+        # deliberately strict.
+        if tok.type is TokenType.KEYWORD and tok.lexeme.upper() in _DIVISION_KEYWORDS:
+            next_tok = stream.peek()
+            if (
+                next_tok.type is TokenType.KEYWORD
+                and next_tok.lexeme.upper() == "DIVISION"
+            ):
+                return SynchronisationPoint.DIVISION, skipped
 
-            # Division boundary — peek ahead to confirm "X DIVISION"
-            if upper in _DIVISION_KEYWORDS:
-                next_tok = stream.peek()
-                if (
-                    next_tok.type is TokenType.KEYWORD
-                    and next_tok.lexeme.upper() == "DIVISION"
-                ):
-                    return SynchronisationPoint.DIVISION, skipped
-
-            # Section boundary
-            if upper in _SECTION_KEYWORDS:
-                return SynchronisationPoint.SECTION, skipped
+        # ---- Section boundary (do NOT consume) ----------------------
+        # Section names are NOT all reserved words: only WORKING-STORAGE
+        # is in the lexer keyword set, so FILE, LINKAGE, LOCAL-STORAGE,
+        # SCREEN, REPORT and COMMUNICATION arrive as IDENTIFIER.  Gating
+        # this on TokenType.KEYWORD made six of the seven anchors
+        # unreachable, so recovery ran past unsupported sections and
+        # discarded the valid content behind them (task #104, F-06).
+        #
+        # The following word must be SECTION.  That keeps the check
+        # strict: a data item merely *named* FILE is not a boundary.
+        if matches_grammar_word(tok, _SECTION_KEYWORDS) and matches_grammar_word(
+            stream.peek(), _SECTION_WORD
+        ):
+            return SynchronisationPoint.SECTION, skipped
 
         # ---- Paragraph label heuristic --------------------------------
         # A paragraph label is an IDENTIFIER or KEYWORD whose *next*

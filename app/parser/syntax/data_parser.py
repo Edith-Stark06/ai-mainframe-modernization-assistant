@@ -85,6 +85,7 @@ from app.parser.ast.data_items import (
 )
 from app.parser.ast.working_storage import WorkingStorageSectionNode
 from app.parser.diagnostics.recovery import RecoveryContext
+from app.parser.grammar_words import WORD_TOKEN_TYPES, matches_grammar_word
 from app.parser.lexer.position import Position
 from app.parser.lexer.token import Token
 from app.parser.lexer.token_types import TokenType
@@ -164,8 +165,10 @@ _NEXT_DIVISION_KEYWORDS: frozenset[str] = frozenset(
     }
 )
 
-# Keywords that signal an unsupported DATA DIVISION section — skip gracefully
-# (we stop and return what we have so far).
+# Section names this parser recognises but cannot model.  Their contents
+# are skipped explicitly (with a diagnostic) so that a supported section
+# following them is still parsed.  None of these is a reserved lexer word,
+# so they must be matched by lexeme, not by TokenType.KEYWORD.
 _UNSUPPORTED_SECTION_KEYWORDS: frozenset[str] = frozenset(
     {
         "FILE",
@@ -176,6 +179,86 @@ _UNSUPPORTED_SECTION_KEYWORDS: frozenset[str] = frozenset(
         "COMMUNICATION",
     }
 )
+
+# The word that must follow a section name to confirm a section header.
+# Not a reserved lexer word either.
+_SECTION_WORD: frozenset[str] = frozenset({"SECTION"})
+
+# The one DATA DIVISION section this parser models in full.
+_WORKING_STORAGE_WORD: frozenset[str] = frozenset({"WORKING-STORAGE"})
+
+# PICTURE clause introducers.  Only PIC is a reserved lexer word; the
+# ISO long form PICTURE arrives as IDENTIFIER.
+_PICTURE_WORDS: frozenset[str] = frozenset({"PIC", "PICTURE"})
+
+# The optional noise word permitted after PIC/PICTURE and after VALUE.
+# Not a reserved lexer word, so it was previously absorbed into the
+# picture string ("PIC IS X(10)" -> "ISX(10)").
+_IS_WORD: frozenset[str] = frozenset({"IS"})
+
+# The VALUE clause introducer (a reserved lexer word).
+_VALUE_WORD: frozenset[str] = frozenset({"VALUE"})
+
+# Data-item clauses this parser recognises but cannot represent, because
+# ElementaryItemNode carries only `picture` and `value`.  They are
+# consumed with an explicit diagnostic rather than being swallowed into
+# the picture string.  Representing them properly needs new AST fields —
+# see the module docstring's Non-responsibilities.
+#: Usage representations, which may follow USAGE [IS] as its operand.
+_USAGE_WORDS: frozenset[str] = frozenset(
+    {
+        "COMP",
+        "COMP-1",
+        "COMP-2",
+        "COMP-3",
+        "COMP-4",
+        "COMP-5",
+        "COMPUTATIONAL",
+        "COMPUTATIONAL-1",
+        "COMPUTATIONAL-2",
+        "COMPUTATIONAL-3",
+        "COMPUTATIONAL-4",
+        "COMPUTATIONAL-5",
+        "BINARY",
+        "PACKED-DECIMAL",
+        "DISPLAY",
+        "INDEX",
+        "POINTER",
+    }
+)
+
+_UNMODELLED_CLAUSE_WORDS: frozenset[str] = frozenset(
+    {
+        "REDEFINES",
+        "RENAMES",
+        "OCCURS",
+        "USAGE",
+        "COMP",
+        "COMP-1",
+        "COMP-2",
+        "COMP-3",
+        "COMP-4",
+        "COMP-5",
+        "COMPUTATIONAL",
+        "COMPUTATIONAL-1",
+        "COMPUTATIONAL-2",
+        "COMPUTATIONAL-3",
+        "COMPUTATIONAL-4",
+        "COMPUTATIONAL-5",
+        "BINARY",
+        "PACKED-DECIMAL",
+        "JUSTIFIED",
+        "JUST",
+        "SYNCHRONIZED",
+        "SYNC",
+        "BLANK",
+        "SIGN",
+    }
+)
+
+# Words that terminate a picture string: the VALUE clause, or any clause
+# the parser recognises but cannot model.
+_PICTURE_TERMINATOR_WORDS: frozenset[str] = _VALUE_WORD | _UNMODELLED_CLAUSE_WORDS
 
 
 class DataDivisionParser:
@@ -272,22 +355,28 @@ class DataDivisionParser:
         while not stream.eof():
             tok = stream.current()
 
-            # Stop at next major division
-            if tok.type is TokenType.KEYWORD:
-                upper = tok.lexeme.upper()
-                if upper in _NEXT_DIVISION_KEYWORDS:
-                    break
-                if upper == "WORKING-STORAGE":
+            if tok.type is TokenType.EOF:
+                break
+
+            # Stop at next major division.  Division names are all
+            # reserved words, so this KEYWORD test is correct.
+            if (
+                tok.type is TokenType.KEYWORD
+                and tok.lexeme.upper() in _NEXT_DIVISION_KEYWORDS
+            ):
+                break
+
+            # Section header.  Only WORKING-STORAGE is a reserved word;
+            # FILE, LINKAGE, LOCAL-STORAGE, SCREEN, REPORT and
+            # COMMUNICATION reach us as IDENTIFIER, so a TokenType.KEYWORD
+            # gate made every unsupported-section branch unreachable
+            # (task #104, F-01).
+            if self._at_section_header(state):
+                if matches_grammar_word(tok, _WORKING_STORAGE_WORD):
                     working_storage = self._parse_working_storage(state)
-                    continue
-                if upper in _UNSUPPORTED_SECTION_KEYWORDS:
-                    # Unsupported section — stop here; let ProgramParser handle
-                    logger.debug(
-                        "DataDivisionParser: encountered unsupported section "
-                        "{!r}; stopping DATA DIVISION parse.",
-                        upper,
-                    )
-                    break
+                else:
+                    self._skip_unsupported_section(state)
+                continue
 
             # A numeric token could be an orphaned level number appearing
             # before a WORKING-STORAGE SECTION header is seen.  This is
@@ -300,8 +389,11 @@ class DataDivisionParser:
                 )
                 break
 
-            if tok.type is TokenType.EOF:
-                break
+            # Silently consume stray PERIOD tokens left behind by
+            # panic-mode recovery synchronising to a paragraph boundary.
+            if tok.type is TokenType.PERIOD:
+                stream.advance()
+                continue
 
             # Any other token at the division level is unexpected —
             # record a diagnostic and synchronise.
@@ -310,11 +402,17 @@ class DataDivisionParser:
                 "recovering.",
                 tok.lexeme,
             )
+            before = stream.position
             state.record_and_synchronise(
                 message=(f"unexpected token {tok.lexeme!r} at DATA DIVISION level"),
                 error_token=tok,
                 context=RecoveryContext.DATA_DIVISION,
             )
+            # Guarantee forward progress: synchronise() anchors on a
+            # section header without consuming it, so without this the
+            # loop could re-inspect the same token forever.
+            if stream.position == before:
+                stream.advance()
 
         end: Position = stream.current().position
 
@@ -403,19 +501,18 @@ class DataDivisionParser:
         while not stream.eof():
             tok = stream.current()
 
-            # Stop when we see a keyword that starts the next section/division
-            if tok.type is TokenType.KEYWORD:
-                upper = tok.lexeme.upper()
-                if (
-                    upper in _NEXT_DIVISION_KEYWORDS
-                    or upper in _UNSUPPORTED_SECTION_KEYWORDS
-                    or upper == "WORKING-STORAGE"
-                ):
-                    break
-                # Any other keyword at item level is unexpected — stop
+            if tok.type is TokenType.EOF:
                 break
 
-            if tok.type is TokenType.EOF:
+            # Stop at the next section header.  These are mostly
+            # IDENTIFIER-typed, so they must be checked before (and
+            # independently of) the KEYWORD test below (task #104, F-02).
+            if self._at_section_header(state):
+                break
+
+            # Any keyword at item level ends the item list: either it
+            # starts the next division or it is simply not valid here.
+            if tok.type is TokenType.KEYWORD:
                 break
 
             # Silently consume stray PERIOD tokens that result from
@@ -446,6 +543,89 @@ class DataDivisionParser:
             break
 
         return items
+
+    # ------------------------------------------------------------------
+    # Section boundary helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _at_section_header(state: ParserState) -> bool:
+        """
+        Return ``True`` if the cursor is on a ``<name> SECTION`` header.
+
+        Matches *any* section name, not only the supported ones, so an
+        unsupported section still terminates whatever preceded it rather
+        than being absorbed into it.  Requiring the following ``SECTION``
+        word keeps this strict: a data item merely *named* ``FILE`` is
+        not a section header.
+
+        Args:
+            state: The active parser state.
+
+        Returns:
+            ``True`` if the next two tokens are ``<name> SECTION``.
+        """
+        stream = state.stream
+        if stream.current().type not in WORD_TOKEN_TYPES:
+            return False
+        return matches_grammar_word(stream.peek(), _SECTION_WORD)
+
+    def _skip_unsupported_section(self, state: ParserState) -> None:
+        """
+        Record and skip a DATA DIVISION section this parser cannot model.
+
+        The cursor must be on the section-name token.  The section header
+        and its entire body are consumed, stopping at the next section
+        header, the next division header, or EOF — so any *supported*
+        section that follows (typically WORKING-STORAGE) is still parsed
+        normally.
+
+        This replaces the previous behaviour of breaking out of the DATA
+        DIVISION entirely, which stranded the cursor mid-section and
+        silently lost both the following WORKING-STORAGE SECTION and the
+        PROCEDURE DIVISION (task #104, F-01).
+
+        Args:
+            state: The active parser state, positioned on the section name.
+        """
+        stream = state.stream
+        name_token = stream.advance()  # section name
+        stream.advance()  # SECTION
+        name = name_token.lexeme.upper()
+
+        if name in _UNSUPPORTED_SECTION_KEYWORDS:
+            message = (
+                f"unsupported DATA DIVISION section {name_token.lexeme!r}; "
+                "its contents are skipped"
+            )
+        else:
+            message = (
+                f"unknown DATA DIVISION section {name_token.lexeme!r}; "
+                "its contents are skipped"
+            )
+
+        logger.debug("DataDivisionParser: skipping section {!r}.", name)
+        state.recovery_manager.record_error(
+            message=message,
+            error_token=name_token,
+            context=RecoveryContext.DATA_DIVISION,
+        )
+
+        if stream.current().type is TokenType.PERIOD:
+            stream.advance()
+
+        while not stream.eof():
+            tok = stream.current()
+            if tok.type is TokenType.EOF:
+                break
+            if (
+                tok.type is TokenType.KEYWORD
+                and tok.lexeme.upper() in _NEXT_DIVISION_KEYWORDS
+            ):
+                break
+            if self._at_section_header(state):
+                break
+            stream.advance()
 
     # ------------------------------------------------------------------
     # Single data-item parser
@@ -633,15 +813,16 @@ class DataDivisionParser:
         picture: str | None = None
         value: str | None = None
 
-        # Check for PIC / PICTURE keyword
-        if tok.type is TokenType.KEYWORD and tok.lexeme.upper() in ("PIC", "PICTURE"):
+        # Check for PIC / PICTURE clause.  Only PIC is a reserved lexer
+        # word; the PICTURE long form and the optional IS both arrive as
+        # IDENTIFIER, so a TokenType.KEYWORD gate rejected PICTURE
+        # outright and let IS leak into the picture string
+        # (task #104, F-03 and F-04).
+        if matches_grammar_word(tok, _PICTURE_WORDS):
             stream.advance()  # consume PIC/PICTURE
 
-            # IS keyword is optional between PIC and picture string
-            if (
-                stream.current().type is TokenType.KEYWORD
-                and stream.current().lexeme.upper() == "IS"
-            ):
+            # IS is optional between PIC and the picture string
+            if matches_grammar_word(stream.current(), _IS_WORD):
                 stream.advance()  # consume IS
 
             pic_tok = stream.current()
@@ -667,18 +848,16 @@ class DataDivisionParser:
                 )
             picture = self._read_picture_string(state)
 
+        # Clauses this parser recognises but cannot represent (USAGE,
+        # REDEFINES, OCCURS, ...) may appear either side of VALUE.
+        self._skip_unmodelled_clauses(state, name)
+
         # Check for VALUE clause (only meaningful for elementary items)
-        if (
-            stream.current().type is TokenType.KEYWORD
-            and stream.current().lexeme.upper() == "VALUE"
-        ):
+        if matches_grammar_word(stream.current(), _VALUE_WORD):
             stream.advance()  # consume VALUE
 
-            # IS keyword is optional
-            if (
-                stream.current().type is TokenType.KEYWORD
-                and stream.current().lexeme.upper() == "IS"
-            ):
+            # IS is optional
+            if matches_grammar_word(stream.current(), _IS_WORD):
                 stream.advance()  # consume IS
 
             val_tok = stream.current()
@@ -691,6 +870,9 @@ class DataDivisionParser:
                 )
             value = val_tok.lexeme
             stream.advance()  # consume literal
+
+        # ...and again after VALUE (e.g. "PIC 9(4) VALUE 0 COMP-3.").
+        self._skip_unmodelled_clauses(state, name)
 
         # Consume terminating period
         end: Position = stream.current().position
@@ -715,6 +897,74 @@ class DataDivisionParser:
         )
 
     # ------------------------------------------------------------------
+    # Unmodelled data-item clauses
+    # ------------------------------------------------------------------
+
+    def _skip_unmodelled_clauses(self, state: ParserState, name: str) -> None:
+        """
+        Record and consume data-item clauses the AST cannot represent.
+
+        :class:`~app.parser.ast.data_items.ElementaryItemNode` carries
+        only ``picture`` and ``value``.  It has no field for USAGE,
+        REDEFINES, OCCURS, JUSTIFIED, SYNCHRONIZED, BLANK WHEN ZERO or
+        SIGN, so those clauses cannot be represented.
+
+        Before this method existed they were not skipped either — they
+        were absorbed into the picture string, producing values such as
+        ``'S9(4)COMP-3'`` and ``'X(5)REDEFINESWS-B'`` with no diagnostic
+        at all (task #104, F-05).  Consuming them here keeps the picture
+        string correct, and recording a diagnostic keeps the information
+        loss explicit rather than silent.
+
+        Each clause is consumed up to the next clause word, the
+        terminating period, or EOF.
+
+        Args:
+            state: Active parser state.
+            name:  The data-name being parsed, used in the message.
+        """
+        stream = state.stream
+
+        while matches_grammar_word(stream.current(), _UNMODELLED_CLAUSE_WORDS):
+            clause_token = stream.advance()
+            clause = clause_token.lexeme.upper()
+
+            logger.debug(
+                "DataDivisionParser: clause {!r} on {!r} is not represented "
+                "in the AST; skipping it.",
+                clause,
+                name,
+            )
+            state.recovery_manager.record_error(
+                message=(
+                    f"{clause_token.lexeme!r} clause on {name!r} is not "
+                    "represented in the AST and was skipped"
+                ),
+                error_token=clause_token,
+                context=RecoveryContext.WORKING_STORAGE_SECTION,
+            )
+
+            # "USAGE [IS] COMP-3" is a single clause whose operand is
+            # itself a usage word, so consume that operand here rather
+            # than letting the loop report it as a second clause.
+            if clause == "USAGE":
+                if matches_grammar_word(stream.current(), _IS_WORD):
+                    stream.advance()
+                if matches_grammar_word(stream.current(), _USAGE_WORDS):
+                    stream.advance()
+
+            # Consume this clause's remaining operands.
+            while not stream.eof():
+                tok = stream.current()
+                if tok.type in (TokenType.EOF, TokenType.PERIOD):
+                    break
+                if matches_grammar_word(tok, _UNMODELLED_CLAUSE_WORDS):
+                    break
+                if matches_grammar_word(tok, _VALUE_WORD):
+                    break
+                stream.advance()
+
+    # ------------------------------------------------------------------
     # Picture-string accumulator
     # ------------------------------------------------------------------
 
@@ -737,17 +987,19 @@ class DataDivisionParser:
         stream = state.stream
         parts: list[str] = []
 
-        _STOP_KEYWORDS: frozenset[str] = frozenset(
-            {"VALUE", "OCCURS", "REDEFINES", "JUSTIFIED", "SYNCHRONIZED"}
-        )
-
         depth: int = 0  # parenthesis nesting depth
 
         while not stream.eof():
             tok = stream.current()
             if tok.type is TokenType.PERIOD:
                 break
-            if tok.type is TokenType.KEYWORD and tok.lexeme.upper() in _STOP_KEYWORDS:
+            # Stop at the clause that follows the picture string.  Of the
+            # words that can appear here only VALUE is a reserved lexer
+            # word, so the previous TokenType.KEYWORD gate let OCCURS,
+            # REDEFINES, JUSTIFIED and SYNCHRONIZED be swallowed into the
+            # picture (task #104, F-05).  A picture string never contains
+            # these words, so matching them by lexeme is unambiguous.
+            if matches_grammar_word(tok, _PICTURE_TERMINATOR_WORDS):
                 break
             # A NUMBER token at nesting depth 0 signals the start of the
             # next data item's level number — stop the picture string here.
