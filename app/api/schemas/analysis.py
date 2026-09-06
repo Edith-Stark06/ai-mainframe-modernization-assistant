@@ -284,6 +284,19 @@ class AnalysisResponse(BaseModel):
             "enough to measure it."
         ),
     )
+    coverage_report: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Phase 5 (#115) multi-dimensional analysis coverage: how much "
+            "of the source was actually understood at each stage "
+            "(lexical, parser, statement, ast, ir, control_flow, "
+            "dependency, business_rule), an unsupported-syntax summary, "
+            "and an 'overall' weakest-link roll-up. Distinguishes 'the "
+            "program is simple' from 'the program was not analysed'. Null "
+            "if it could not be computed. The parser-only 'coverage' "
+            "field above is unchanged."
+        ),
+    )
     dependencies: list[DependencyResponse] = Field(
         default_factory=list,
         description="Serialized COBOL dependencies.",
