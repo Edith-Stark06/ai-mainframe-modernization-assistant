@@ -169,6 +169,13 @@ class AnalysisResponse(BaseModel):
             not complete.
         diagnostics:
             Serialized semantic and backend diagnostics.
+        syntax_diagnostics:
+            Serialized syntax diagnostics from the parser (task #108).
+        syntax_diagnostics_summary:
+            'syntax_diagnostics' grouped by code, without discarding any
+            occurrence.
+        coverage:
+            How much of the source file the parser actually analysed.
         dependencies:
             Serialized COBOL dependencies extracted from the source.
         dependency_summary:
@@ -225,6 +232,38 @@ class AnalysisResponse(BaseModel):
     diagnostics: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Serialized semantic and backend diagnostics.",
+    )
+    syntax_diagnostics: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Serialized syntax diagnostics from the parser: syntax errors, "
+            "unsupported constructs, unmodelled constructs, and abandoned "
+            "regions (task #108). Each entry carries a structured "
+            "'severity' and 'code'; classify on those fields, not on "
+            "'message'. Every occurrence is included -- this list is "
+            "never deduplicated."
+        ),
+    )
+    syntax_diagnostics_summary: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "'syntax_diagnostics' grouped by code for readability (e.g. "
+            "sixteen repeated 'COMP-3 not represented' warnings collapse "
+            "into one group with count=16). Every occurrence from "
+            "'syntax_diagnostics' still appears, in that group's "
+            "'occurrences' list with its own location -- grouping never "
+            "discards a source occurrence."
+        ),
+    )
+    coverage: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "How much of the source file the parser actually analysed "
+            "(tokens consumed vs. total, paragraphs/statements parsed, "
+            "unsupported and abandoned construct counts, and the derived "
+            "'is_complete' flag), or null if parsing did not complete far "
+            "enough to measure it."
+        ),
     )
     dependencies: list[DependencyResponse] = Field(
         default_factory=list,

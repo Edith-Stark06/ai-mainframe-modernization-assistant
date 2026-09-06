@@ -66,6 +66,8 @@ Project:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from loguru import logger
 
 from app.parser.ast.data import DataDivisionNode
@@ -73,6 +75,7 @@ from app.parser.ast.division import DivisionNode
 from app.parser.ast.identification import IdentificationDivisionNode
 from app.parser.ast.procedure import ProcedureDivisionNode
 from app.parser.ast.program import ProgramNode
+from app.parser.diagnostics.recovery import SyntaxDiagnostic
 from app.parser.lexer.token import Token
 from app.parser.lexer.token_types import TokenType
 from app.parser.syntax.data_parser import DataDivisionParser
@@ -82,7 +85,33 @@ from app.parser.syntax.parser_state import ParserState
 from app.parser.syntax.procedure_parser import ProcedureDivisionParser
 from app.parser.syntax.token_stream import TokenStream
 
-__all__ = ["ProgramParser"]
+__all__ = ["ParseResult", "ProgramParser"]
+
+
+@dataclass(frozen=True, slots=True)
+class ParseResult:
+    """
+    The result of :meth:`ProgramParser.parse_with_diagnostics`.
+
+    Attributes:
+        program:
+            The parsed :class:`~app.parser.ast.program.ProgramNode`.
+        diagnostics:
+            Every :class:`~app.parser.diagnostics.recovery.SyntaxDiagnostic`
+            recorded while parsing *program*, in the order they were
+            recorded.  Empty if parsing encountered no recoverable
+            problems.
+        tokens_total:
+            Total tokens in the input, including the trailing EOF.
+        tokens_consumed:
+            How many tokens the parser's cursor advanced past.  Less
+            than ``tokens_total`` when parsing stopped before EOF.
+    """
+
+    program: ProgramNode
+    diagnostics: list[SyntaxDiagnostic]
+    tokens_total: int
+    tokens_consumed: int
 
 
 class ProgramParser:
@@ -142,6 +171,73 @@ class ProgramParser:
             ParserError:
                 If the token stream contains a syntactic error.
         """
+        program, _state = self._parse_tokens(tokens)
+        return program
+
+    def parse_with_diagnostics(self, tokens: list[Token]) -> ParseResult:
+        """
+        Parse a token stream and return the AST together with diagnostics.
+
+        This is the entry point callers should use when the syntax
+        diagnostics recorded during parsing need to be surfaced (e.g.
+        :class:`~app.analysis.service.AnalysisService`, which threads
+        them into :class:`~app.analysis.models.AnalysisResult`).
+
+        :meth:`parse` discards this information — its
+        :class:`~app.parser.syntax.parser_state.ParserState` is created
+        and dropped internally, which meant every diagnostic recorded by
+        every division sub-parser (unsupported statements, unmodelled
+        clauses, abandoned regions, ...) was unreachable outside a single
+        debug log line.  This method exposes the same information
+        :meth:`parse` always collected but never returned.
+
+        Args:
+            tokens:
+                Ordered list of :class:`~app.parser.lexer.token.Token`
+                objects produced by the COBOL lexer.  Must end with
+                ``TokenType.EOF``.
+
+        Returns:
+            A :class:`ParseResult` carrying the parsed
+            :class:`~app.parser.ast.program.ProgramNode` and every
+            :class:`~app.parser.diagnostics.recovery.SyntaxDiagnostic`
+            recorded while parsing it.
+
+        Raises:
+            ValueError:
+                If *tokens* is empty (propagated from
+                :class:`~app.parser.syntax.token_stream.TokenStream`).
+            ParserError:
+                If the token stream contains a fatal syntactic error.
+        """
+        program, state = self._parse_tokens(tokens)
+        stream = state.stream
+        # The cursor never advances past the trailing EOF sentinel --
+        # TokenStream.advance() intentionally clamps at the last token --
+        # so a clean parse that reaches EOF leaves `position ==
+        # len(tokens) - 1`, one short of the true token count.  Treat
+        # "cursor sitting on EOF" as fully consumed; otherwise report the
+        # exact position, which is what makes abandonment visible.
+        tokens_consumed = len(tokens) if stream.eof() else stream.position
+        return ParseResult(
+            program=program,
+            diagnostics=state.diagnostics,
+            tokens_total=len(tokens),
+            tokens_consumed=tokens_consumed,
+        )
+
+    def _parse_tokens(self, tokens: list[Token]) -> tuple[ProgramNode, ParserState]:
+        """
+        Shared implementation behind :meth:`parse` and
+        :meth:`parse_with_diagnostics`.
+
+        Args:
+            tokens: Ordered list of tokens ending with ``TokenType.EOF``.
+
+        Returns:
+            The parsed ``ProgramNode`` and the ``ParserState`` used to
+            parse it (still holding its accumulated diagnostics).
+        """
         logger.debug("ProgramParser.parse() called with {} token(s).", len(tokens))
 
         stream = TokenStream(tokens)
@@ -149,7 +245,7 @@ class ProgramParser:
         program = self._parse_program(state)
 
         logger.debug("ProgramParser.parse() completed. errors={}.", state.error_count)
-        return program
+        return program, state
 
     # ------------------------------------------------------------------
     # Top-level grammar rule

@@ -13,6 +13,7 @@ public class CombinedProgram {
         } else {
             counter = 0;
         }
+        System.out.println(counter);
 
     }
 

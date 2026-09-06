@@ -9,6 +9,7 @@ public class PerformTest {
     public void run() {
 
         subPara();
+        System.out.println(cnt);
 
     }
 
