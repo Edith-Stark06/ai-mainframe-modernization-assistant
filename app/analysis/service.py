@@ -401,7 +401,7 @@ class AnalysisService:
         # and reported a gap while continuing -- whether the AST is a
         # *complete* representation of the file is a separate #109
         # (AST/IR completeness) question success does not answer.
-        return AnalysisResult(
+        result = AnalysisResult(
             java_source=gen_result.source,
             backend_diagnostics=gen_result.diagnostics + diags,
             semantic_diagnostics=semantic_ctx.diagnostics,
@@ -413,3 +413,15 @@ class AnalysisService:
             syntax_diagnostics=syntax_diagnostics,
             coverage=coverage,
         )
+        # Phase 5 (#115): attach the multi-dimensional coverage report.
+        # Computed without a CFG here (AnalysisService does not build one);
+        # the modernization pipeline recomputes it with a CFG for the
+        # control_flow dimension. Best-effort — a failure here must not
+        # break analysis.
+        try:
+            from app.analysis.coverage import compute_coverage
+
+            result.coverage_report = compute_coverage(result)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("AnalysisService: coverage report failed: {}.", exc)
+        return result

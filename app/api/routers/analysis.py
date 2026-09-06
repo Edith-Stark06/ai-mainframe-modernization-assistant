@@ -297,8 +297,13 @@ async def analyze_source(
     serialized_coverage = serialize_coverage(result.coverage)
 
     # Phase 5 (#115): multi-dimensional analysis coverage. Additive — the
-    # parser-only ``coverage`` field above is untouched.
-    coverage_report = _compute_coverage_report(result)
+    # parser-only ``coverage`` field above is untouched. Prefer the report
+    # AnalysisService attached; recompute (best-effort) only if absent.
+    _attached_report = getattr(result, "coverage_report", None)
+    if _attached_report is not None:
+        coverage_report = _attached_report.to_dict()
+    else:
+        coverage_report = _compute_coverage_report(result)
 
     serialized_dependencies = [
         DependencyResponse.model_validate(dep)

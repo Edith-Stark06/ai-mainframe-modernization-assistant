@@ -260,3 +260,14 @@ class AnalysisResult:
     ir: IRProgram | None = None
     syntax_diagnostics: list[Any] = field(default_factory=list)
     coverage: AnalysisCoverage | None = None
+    coverage_report: Any | None = None
+    """
+    Phase 5 (#115) :class:`~app.analysis.coverage.models.CoverageReport` —
+    the multi-dimensional "how much of this program was actually
+    understood" view, computed by :class:`~app.analysis.service.AnalysisService`
+    without a CFG (so its ``control_flow`` dimension is ``NOT_MEASURABLE``;
+    the modernization pipeline recomputes it with a CFG). ``None`` when
+    analysis failed before it could be computed. Typed ``Any`` here only
+    to keep :mod:`app.analysis.models` free of a
+    :mod:`app.modernization` import.
+    """
