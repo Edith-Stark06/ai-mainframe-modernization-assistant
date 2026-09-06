@@ -161,6 +161,14 @@ class AnalysisCoverage:
     statements_parsed: int
     unsupported_construct_count: int
     abandoned_construct_count: int
+    unknown_token_count: int = 0
+    """
+    Tokens the lexer emitted with type ``UNKNOWN`` — source text it could
+    not classify. Added for Phase 5 lexical coverage (#115); defaults to
+    ``0`` so existing constructions and the ``parse_complete`` contract
+    are unaffected. Does **not** feed ``parse_complete`` (which is a
+    parser-cursor signal, not a lexical one).
+    """
 
     @property
     def parse_complete(self) -> bool:
@@ -252,3 +260,14 @@ class AnalysisResult:
     ir: IRProgram | None = None
     syntax_diagnostics: list[Any] = field(default_factory=list)
     coverage: AnalysisCoverage | None = None
+    coverage_report: Any | None = None
+    """
+    Phase 5 (#115) :class:`~app.analysis.coverage.models.CoverageReport` —
+    the multi-dimensional "how much of this program was actually
+    understood" view, computed by :class:`~app.analysis.service.AnalysisService`
+    without a CFG (so its ``control_flow`` dimension is ``NOT_MEASURABLE``;
+    the modernization pipeline recomputes it with a CFG). ``None`` when
+    analysis failed before it could be computed. Typed ``Any`` here only
+    to keep :mod:`app.analysis.models` free of a
+    :mod:`app.modernization` import.
+    """

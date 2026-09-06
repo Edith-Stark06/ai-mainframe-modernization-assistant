@@ -1,0 +1,6 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. TRIVIAL.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           DISPLAY 'HELLO'.
+           STOP RUN.
