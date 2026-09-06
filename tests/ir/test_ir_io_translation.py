@@ -11,7 +11,7 @@ Purpose:
 import pytest
 
 from app.ir.builder import IRBuilder
-from app.ir.instructions import IRAccept, IRDisplay, IRMove
+from app.ir.instructions import IRAccept, IRDisplay, IRMove, IRReturn
 from app.parser.ast.paragraphs import ParagraphNode
 from app.parser.ast.procedure import ProcedureDivisionNode
 from app.parser.ast.program import ProgramNode
@@ -20,6 +20,7 @@ from app.parser.ast.statements import (
     DisplayStatementNode,
     MoveStatementNode,
     StopRunStatementNode,
+    StatementNode,
 )
 from app.parser.lexer.position import Position
 from app.parser.semantic.context import SemanticContext, SymbolTable
@@ -122,15 +123,27 @@ class TestIRBuilderIOTranslation:
 
         disp = DisplayStatementNode(start_position=pos, end_position=pos, operand='"A"')
         acc = AcceptStatementNode(start_position=pos, end_position=pos, target="VAR")
-        unsupported = StopRunStatementNode(start_position=pos, end_position=pos)
+        # task #109: StopRunStatementNode used to be the "known unsupported"
+        # example here -- it silently produced no IR instruction at all
+        # despite IRReturn existing specifically for it (a confirmed
+        # AST-node-loss bug). It is now mapped, so it moved to its own
+        # positive assertion below; a bare StatementNode (a real,
+        # instantiable base class -- see its own accept() implementation)
+        # stands in as a statement type genuinely unknown to the
+        # dispatcher, to keep this test's original purpose intact.
+        stop_run = StopRunStatementNode(start_position=pos, end_position=pos)
+        unsupported = StatementNode(start_position=pos, end_position=pos)
 
         # pylint: disable=protected-access
         res_disp = builder._translate_statement(disp)
         res_acc = builder._translate_statement(acc)
+        res_stop = builder._translate_statement(stop_run)
         res_uns = builder._translate_statement(unsupported)
 
         assert isinstance(res_disp, IRDisplay)
         assert isinstance(res_acc, IRAccept)
+        assert isinstance(res_stop, IRReturn)
+        assert res_stop.comment == "STOP RUN"
         assert res_uns is None
 
     # -- Mixed Order and Block Integration -------------------------------------
@@ -159,7 +172,7 @@ class TestIRBuilderIOTranslation:
         )
         stmt5 = StopRunStatementNode(
             start_position=pos, end_position=pos
-        )  # Unsupported, will be skipped
+        )  # task #109: now mapped to IRReturn, no longer skipped
 
         para = ParagraphNode(
             start_position=pos,
@@ -177,12 +190,13 @@ class TestIRBuilderIOTranslation:
         ir_program = builder.build(program)
         block = ir_program.modules[0].functions[0].blocks[0]
 
-        assert len(block.instructions) == 4
+        assert len(block.instructions) == 5
 
         i0 = block.instructions[0]
         i1 = block.instructions[1]
         i2 = block.instructions[2]
         i3 = block.instructions[3]
+        i4 = block.instructions[4]
 
         assert isinstance(i0, IRAccept)
         assert i0.result == "WS-INPUT"
@@ -196,6 +210,13 @@ class TestIRBuilderIOTranslation:
         assert isinstance(i3, IRMove)
         assert i3.source == "WS-INPUT"
         assert i3.result == "WS-OUTPUT"
+
+        assert isinstance(i4, IRReturn)
+        assert i4.comment == "STOP RUN"
+
+        # task #109: every instruction is stamped with its paragraph.
+        for instr in block.instructions:
+            assert instr.paragraph == "MAIN-PROC"
 
     def test_deterministic_ir_generation(
         self, empty_context: SemanticContext, pos: Position
