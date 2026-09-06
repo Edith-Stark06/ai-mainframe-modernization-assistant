@@ -24,7 +24,16 @@ from app.backend.java.generator import (
     generate_with_diagnostics,
 )
 from app.ir.blocks import IRBasicBlock
-from app.ir.instructions import IRCall, IRDisplay, IRMove, IRReturn
+from app.ir.instructions import (
+    IRCall,
+    IRDisplay,
+    IREndIf,
+    IRElse,
+    IRIf,
+    IRJump,
+    IRMove,
+    IRReturn,
+)
 from app.ir.program import IRFunction, IRModule, IRProgram
 
 # ---------------------------------------------------------------------------
@@ -172,14 +181,28 @@ class TestGenerate:
         src = generate(prog)
         assert "wsB = wsA;" in src
 
-    def test_unsupported_return_todo_comment(self) -> None:
-        # Unsupported IRReturn produces a // TODO: comment
+    def test_unsupported_jump_todo_comment(self) -> None:
+        # A genuinely unsupported instruction (IRJump) still produces a
+        # // TODO: comment. (IRReturn is supported -- see below.)
+        prog = _make_program("PROG", instructions=(IRJump(target="PROC"),))
+        src = generate(prog)
+        assert "// TODO: translate IRJump" in src
+
+    def test_return_produces_java_return_statement(self) -> None:
+        # STOP RUN/GOBACK (IRReturn) is supported: it lowers to `return;`,
+        # not a // TODO: stub -- the post-#111 review-fix regression check.
         prog = _make_program("PROG", instructions=(IRReturn(),))
         src = generate(prog)
-        assert "// TODO: translate IRReturn" in src
+        assert "return;" in src
+        assert "// TODO: translate IRReturn" not in src
+
+    def test_return_produces_no_be005(self) -> None:
+        prog = _make_program("PROG", instructions=(IRReturn(),))
+        result = generate_with_diagnostics(prog)
+        assert not any(d.code == "BE005" for d in result.diagnostics)
 
     def test_multiple_statements_ordered(self) -> None:
-        # DISPLAY → println, MOVE → assignment, IRReturn → TODO
+        # DISPLAY → println, MOVE → assignment, IRReturn → return;
         instrs = (
             IRDisplay(operand='"A"'),
             IRMove(result="X", source="Y"),
@@ -189,8 +212,8 @@ class TestGenerate:
         src = generate(prog)
         idx_display = src.index('System.out.println("A")')
         idx_move = src.index("x = y;")
-        idx_todo = src.index("// TODO:")
-        assert idx_display < idx_move < idx_todo
+        idx_return = src.index("return;")
+        assert idx_display < idx_move < idx_return
 
     def test_main_method_body_indented(self) -> None:
         prog = _make_program("HELLO")
@@ -315,3 +338,135 @@ class TestGenerateWithDiagnostics:
         be009 = [d for d in result.diagnostics if d.code == "BE009"]
         assert len(be009) == 1
         assert result.source.count("private void subprog()") == 1
+
+
+# ===========================================================================
+# Unreachable-code suppression after IRReturn (post-#111 review fix)
+# ===========================================================================
+#
+# The entry block concatenates every paragraph's instructions flat (see
+# app/ir/builder.py's architectural note): a paragraph ending in STOP RUN/
+# GOBACK is immediately followed, in the same instruction list, by the next
+# paragraph's instructions. Once IRReturn lowers to a real `return;`,
+# anything emitted right after it at the same depth would be unreachable
+# Java -- a hard javac error, not just dead code -- so _collect_statements
+# must stop translating (not merely stop caring about) same-depth
+# instructions once a return has been emitted.
+
+
+class TestUnreachableAfterReturn:
+    def test_statement_after_top_level_return_is_dropped(self) -> None:
+        prog = _make_program(
+            "PROG",
+            instructions=(
+                IRReturn(operand="", comment="STOP RUN"),
+                IRDisplay(operand="WS-CNT"),
+            ),
+        )
+        src = generate(prog)
+        assert "return;" in src
+        assert "System.out.println" not in src
+
+    def test_statement_after_return_produces_be011(self) -> None:
+        prog = _make_program(
+            "PROG",
+            instructions=(
+                IRReturn(),
+                IRDisplay(operand="WS-CNT"),
+            ),
+        )
+        result = generate_with_diagnostics(prog)
+        assert any(d.code == "BE011" for d in result.diagnostics)
+        assert all(d.severity is BackendSeverity.WARNING for d in result.diagnostics)
+
+    def test_statement_before_return_is_unaffected(self) -> None:
+        prog = _make_program(
+            "PROG",
+            instructions=(
+                IRDisplay(operand='"BEFORE"'),
+                IRReturn(),
+            ),
+        )
+        src = generate(prog)
+        assert 'System.out.println("BEFORE");' in src
+        assert src.index('System.out.println("BEFORE");') < src.index("return;")
+
+    def test_second_return_after_first_is_also_dropped(self) -> None:
+        prog = _make_program(
+            "PROG",
+            instructions=(IRReturn(), IRReturn()),
+        )
+        src = generate(prog)
+        assert src.count("return;") == 1
+
+    def test_generated_output_still_compiles_class_braces_balanced(self) -> None:
+        """Regression guard: dropping unreachable content must not unbalance braces."""
+        prog = _make_program(
+            "PROG",
+            instructions=(
+                IRDisplay(operand='"A"'),
+                IRReturn(),
+                IRDisplay(operand='"B"'),
+            ),
+        )
+        src = generate(prog)
+        assert src.count("{") == src.count("}")
+
+    def test_entire_if_after_return_is_skipped_wholesale(self) -> None:
+        """
+        An IF/END-IF construct that appears entirely after a top-level
+        return is itself unreachable: neither its header nor its footer
+        may be emitted, or the braces would be unbalanced.
+        """
+        prog = _make_program(
+            "PROG",
+            instructions=(
+                IRReturn(),
+                IRIf(left="WS-X", operator=">", right="0"),
+                IRDisplay(operand='"UNREACHABLE"'),
+                IREndIf(),
+            ),
+        )
+        src = generate(prog)
+        assert "if (" not in src
+        assert "UNREACHABLE" not in src
+        assert src.count("{") == src.count("}")
+
+    def test_else_branch_remains_reachable_when_then_branch_returns(self) -> None:
+        """
+        A return inside the `then` branch must not suppress the `else`
+        branch -- entering `else` means the condition was false, which is
+        independent of what the `then` branch did.
+        """
+        prog = _make_program(
+            "PROG",
+            instructions=(
+                IRIf(left="WS-X", operator=">", right="0"),
+                IRReturn(),
+                IRElse(),
+                IRDisplay(operand='"ELSE-BRANCH"'),
+                IREndIf(),
+            ),
+        )
+        src = generate(prog)
+        assert "ELSE-BRANCH" in src
+        assert src.count("{") == src.count("}")
+
+    def test_statement_after_if_else_remains_reachable(self) -> None:
+        """
+        Code following a complete if/else (neither branch alone makes the
+        statement after it unreachable, in this backend's deliberately
+        simple reachability model) must still be emitted.
+        """
+        prog = _make_program(
+            "PROG",
+            instructions=(
+                IRIf(left="WS-X", operator=">", right="0"),
+                IRDisplay(operand='"THEN"'),
+                IREndIf(),
+                IRDisplay(operand='"AFTER"'),
+            ),
+        )
+        src = generate(prog)
+        assert "THEN" in src
+        assert "AFTER" in src
