@@ -35,6 +35,21 @@ _UNSUPPORTED = """\
            DISPLAY WS-A.
 """
 
+# Malformed PROCEDURE DIVISION: the parser recovers, produces no
+# statements, and the legacy scorer still reports a high readiness from
+# the near-empty flow. Phase 5 must expose that as insufficient data.
+_PARSER_FAILURE = """\
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. P5FAIL.
+       PROCEDURE DIVISION.
+       MAIN-PARA
+           MOVE MOVE TO TO
+           IF IF THEN
+           PERFORM
+           DISPLAY
+           STOP RUN
+"""
+
 
 def _mock_ws(monkeypatch, tmp_path) -> None:
     def mock_get(self, ws_id):
@@ -66,6 +81,7 @@ def test_pipeline_exposes_readiness_confidence_coverage_separately(
     assert "analysis_confidence" in body
     assert "analysis_coverage" in body
     assert "interpretation" in body
+    assert "insufficient_data" in body
     assert 0.0 <= body["analysis_confidence"] <= 1.0
     assert 0.0 <= body["analysis_coverage"] <= 1.0
 
@@ -109,6 +125,61 @@ def test_pipeline_response_is_deterministic(monkeypatch, tmp_path) -> None:
     a = _pipeline(tmp_path, _UNSUPPORTED, "d.cbl")
     b = _pipeline(tmp_path, _UNSUPPORTED, "d.cbl")
     assert a == b
+
+
+def test_pipeline_parser_failure_is_explicitly_insufficient_data(
+    monkeypatch, tmp_path
+) -> None:
+    """
+    End-to-end contract (Phase 5 review fix #2): a parser-failure result
+    must expose readiness, analysis_confidence, analysis_coverage,
+    insufficient_data and interpretation, and the interpretation must
+    explicitly prevent the high legacy readiness from being read as a
+    trustworthy recommendation.
+    """
+    _mock_ws(monkeypatch, tmp_path)
+    body = _pipeline(tmp_path, _PARSER_FAILURE, "fail.cbl")
+
+    # all five fields are present in the serialized response
+    for key in (
+        "readiness",
+        "analysis_confidence",
+        "analysis_coverage",
+        "insufficient_data",
+        "interpretation",
+    ):
+        assert key in body, f"missing '{key}' in pipeline response"
+
+    # the legacy scorer still produces a high readiness from the near-empty flow
+    assert body["readiness"] == body["score"]["overall_readiness"]
+    assert body["readiness"] >= 0.7
+
+    # ...but confidence and coverage are near zero and it is flagged
+    assert body["analysis_confidence"] <= 0.15
+    assert body["analysis_coverage"] <= 0.15
+    assert body["insufficient_data"] is True
+
+    # ...and the interpretation makes the high readiness un-actionable
+    interp = body["interpretation"].lower()
+    assert "insufficient data" in interp
+    assert "must not" in interp
+    # it explicitly names the readiness number and says it is not a recommendation
+    assert "recommendation" in interp
+
+    # high readiness + near-zero confidence/coverage is represented as
+    # insufficient data, not as a strong modernization recommendation
+    assert not (
+        body["readiness"] >= 0.7
+        and body["analysis_confidence"] >= 0.5
+        and body["insufficient_data"] is False
+    )
+
+
+def test_pipeline_clean_program_is_not_insufficient_data(monkeypatch, tmp_path) -> None:
+    _mock_ws(monkeypatch, tmp_path)
+    body = _pipeline(tmp_path, _SIMPLE, "ok.cbl")
+    assert body["insufficient_data"] is False
+    assert "insufficient data" not in body["interpretation"].lower()
 
 
 def test_analyze_endpoint_exposes_coverage_report(monkeypatch, tmp_path) -> None:

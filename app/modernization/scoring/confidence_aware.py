@@ -102,9 +102,12 @@ def _interpret(
 ) -> str:
     if analysis_failed:
         return (
-            "Analysis failed or barely completed. Readiness, confidence and "
-            "coverage are all near zero; there is no basis for a modernization "
-            "conclusion."
+            "INSUFFICIENT DATA: analysis failed or barely completed "
+            f"(confidence {confidence:.0%}, coverage {coverage:.0%}). The "
+            f"readiness figure ({readiness:.0%}) is computed from an almost "
+            "empty analysed representation and MUST NOT be treated as a "
+            "modernization recommendation — it reflects the absence of "
+            "analysable content, not a simple program."
         )
     if no_procedure_body:
         return (

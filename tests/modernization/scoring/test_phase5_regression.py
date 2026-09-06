@@ -136,7 +136,13 @@ def test_parser_failure_no_falsely_strong_conclusion(scores) -> None:
     assert sc.analysis_coverage <= 0.15
     assert sc.analysis_confidence <= 0.15
     assert sc.insufficient_data is True
-    assert "not" in sc.interpretation.lower() or "fail" in sc.interpretation.lower()
+    # the legacy scorer still reports a high readiness from the near-empty flow
+    assert sc.readiness >= 0.7
+    # ...and the interpretation makes that explicitly un-actionable
+    interp = sc.interpretation.lower()
+    assert "insufficient data" in interp
+    assert "must not" in interp
+    assert "recommendation" in interp
     # readiness can be whatever the legacy scorer says, but it must not be
     # presentable as trustworthy — confidence is the guard.
     assert sc.analysis_confidence < 0.2
@@ -381,6 +387,30 @@ def test_no_business_rules_not_poor_coverage_when_no_conditionals(scores) -> Non
     br = sc.coverage_report.business_rule
     assert br.status.value == "NOT_MEASURABLE"
     assert sc.analysis_coverage >= 0.95  # not dragged down by "0 rules"
+
+
+def test_business_rule_coverage_reflects_procedural_completeness(scores) -> None:
+    """
+    business_rule coverage is DERIVED from procedural-analysis
+    completeness (#112's input), not from if_nodes/(if_nodes + SYN005).
+    """
+    # complex_procedural: IFs present, fully analysed -> COMPLETE
+    complex_ = scores["complex_procedural"].coverage_report.business_rule
+    assert complex_.status.value == "COMPLETE"
+    assert complex_.ratio == 1.0
+
+    # file_processing: OPEN/READ/CLOSE unsupported -> procedural logic
+    # incomplete -> business_rule PARTIAL, "absence NOT confirmed"
+    fp = scores["file_processing"].coverage_report.business_rule
+    assert fp.status.value == "PARTIAL"
+    assert fp.ratio == scores["file_processing"].coverage_report.statement.ratio
+    assert "not confirmed" in fp.detail.lower()
+
+    # incomplete_parsing: the unconsumed tail is a misplaced DATA DIVISION,
+    # so procedural (rule-bearing) logic was fully analysed -> the
+    # business_rule dimension is NOT dragged down by the parser gap.
+    ip = scores["incomplete_parsing"].coverage_report.business_rule
+    assert ip.status.value == "NOT_MEASURABLE"
 
 
 def test_overall_coverage_is_weakest_link_not_average(scores) -> None:

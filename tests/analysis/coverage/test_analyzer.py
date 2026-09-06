@@ -112,6 +112,125 @@ def test_no_conditionals_business_rule_not_measurable(tmp_path) -> None:
     assert cr.overall >= 0.999
 
 
+# ---------------------------------------------------------------------------
+# business_rule coverage semantics (Phase 5 review fix #1)
+#
+# business_rule coverage measures the completeness of the PROCEDURAL analysis
+# #112 depends on. SYN005 is a generic malformed-construct code raised from
+# four contexts and is NOT a reliable "one lost conditional" signal, so it is
+# never used as an IF-specific denominator.
+# ---------------------------------------------------------------------------
+
+_WS_A = "       01 WS-A PIC 9(3) VALUE 0.\n"
+
+
+def test_conditionals_present_and_fully_analyzed_is_complete(tmp_path) -> None:
+    src = (
+        "       IDENTIFICATION DIVISION.\n       PROGRAM-ID. C.\n"
+        "       DATA DIVISION.\n       WORKING-STORAGE SECTION.\n"
+        + _WS_A
+        + "       PROCEDURE DIVISION.\n       MAIN.\n"
+        "           IF WS-A > 0\n               MOVE 1 TO WS-A\n           END-IF.\n"
+        "           STOP RUN.\n"
+    )
+    _, cr = _cov(src, tmp_path)
+    assert cr.business_rule.status is CoverageStatus.COMPLETE
+    assert cr.business_rule.ratio == 1.0
+
+
+def test_no_conditionals_but_other_statements_fully_analyzed_is_not_measurable(
+    tmp_path,
+) -> None:
+    src = (
+        "       IDENTIFICATION DIVISION.\n       PROGRAM-ID. N.\n"
+        "       DATA DIVISION.\n       WORKING-STORAGE SECTION.\n"
+        + _WS_A
+        + "       PROCEDURE DIVISION.\n       MAIN.\n"
+        "           MOVE 1 TO WS-A.\n           ADD 1 TO WS-A.\n           STOP RUN.\n"
+    )
+    _, cr = _cov(src, tmp_path)
+    # genuinely fully analysed, no conditionals -> NOT_MEASURABLE, ratio 1.0,
+    # not dragging overall down and not counting "0 rules" as poor coverage.
+    assert cr.business_rule.status is CoverageStatus.NOT_MEASURABLE
+    assert cr.business_rule.ratio == 1.0
+    assert cr.overall >= 0.999
+
+
+def test_data_division_syn005_does_not_affect_statement_or_business_rule(
+    tmp_path,
+) -> None:
+    # A malformed data item raises SYN005 with a WORKING_STORAGE_SECTION
+    # context — it must NOT count as a lost procedural statement / rule.
+    src = (
+        "       IDENTIFICATION DIVISION.\n       PROGRAM-ID. D.\n"
+        "       DATA DIVISION.\n       WORKING-STORAGE SECTION.\n"
+        + _WS_A
+        + "       77 GARBAGE THIS IS NOT A VALID CLAUSE.\n"
+        "       01 WS-B PIC X.\n"
+        "       PROCEDURE DIVISION.\n       MAIN.\n"
+        "           MOVE 1 TO WS-A.\n           STOP RUN.\n"
+    )
+    r, cr = _cov(src, tmp_path)
+    codes = {getattr(d, "code", "") for d in r.syntax_diagnostics}
+    assert "SYN005" in codes  # the malformed data item was diagnosed
+    # ...but procedural coverage is untouched
+    assert cr.statement.status is CoverageStatus.COMPLETE
+    assert cr.statement.ratio == 1.0
+    assert cr.business_rule.status is CoverageStatus.NOT_MEASURABLE
+
+
+def test_procedural_syn005_lowers_statement_and_business_rule_but_not_as_one_rule(
+    tmp_path,
+) -> None:
+    # A malformed IF (compound condition the parser can't represent) -> a
+    # procedural SYN005. It reduces statement + business_rule coverage, but
+    # business_rule.ratio is DERIVED from statement completeness, not from
+    # if_nodes / (if_nodes + syn005).
+    src = (
+        "       IDENTIFICATION DIVISION.\n       PROGRAM-ID. P.\n"
+        "       DATA DIVISION.\n       WORKING-STORAGE SECTION.\n"
+        + _WS_A
+        + "       PROCEDURE DIVISION.\n       MAIN.\n"
+        "           IF WS-A = 1 AND\n               MOVE 1 TO WS-A\n           END-IF.\n"
+        "           MOVE 2 TO WS-A.\n           MOVE 3 TO WS-A.\n           STOP RUN.\n"
+    )
+    r, cr = _cov(src, tmp_path)
+    assert any(getattr(d, "code", "") == "SYN005" for d in r.syntax_diagnostics)
+    assert cr.statement.status is CoverageStatus.PARTIAL
+    assert cr.business_rule.status is CoverageStatus.PARTIAL
+    # derived from procedural completeness -> equals the statement ratio,
+    # NOT 0/1 (which is what "if_nodes/(if_nodes+syn005)" would give here
+    # since the only IF failed).
+    assert cr.business_rule.ratio == cr.statement.ratio
+    assert cr.business_rule.ratio > 0.0
+    assert "not confirmed" in cr.business_rule.detail.lower()
+
+
+def test_business_rule_ignores_112_rule_count_when_analysis_complete(tmp_path) -> None:
+    # Two fully-analysed programs: one with rules, one without. Both must
+    # have business_rule coverage that does not penalise "0 rules".
+    with_rules = (
+        "       IDENTIFICATION DIVISION.\n       PROGRAM-ID. WR.\n"
+        "       DATA DIVISION.\n       WORKING-STORAGE SECTION.\n"
+        + _WS_A
+        + "       PROCEDURE DIVISION.\n       MAIN.\n"
+        "           IF WS-A > 0\n               MOVE 1 TO WS-A\n           END-IF.\n"
+        "           STOP RUN.\n"
+    )
+    without_rules = (
+        "       IDENTIFICATION DIVISION.\n       PROGRAM-ID. NR.\n"
+        "       DATA DIVISION.\n       WORKING-STORAGE SECTION.\n"
+        + _WS_A
+        + "       PROCEDURE DIVISION.\n       MAIN.\n"
+        "           MOVE 1 TO WS-A.\n           STOP RUN.\n"
+    )
+    _, a = _cov(with_rules, tmp_path, "wr.cbl")
+    _, b = _cov(without_rules, tmp_path, "nr.cbl")
+    assert a.business_rule.status is CoverageStatus.COMPLETE
+    assert b.business_rule.status is CoverageStatus.NOT_MEASURABLE
+    assert a.overall >= 0.999 and b.overall >= 0.999
+
+
 def test_overall_is_min_of_measurable(tmp_path) -> None:
     src = (
         "       IDENTIFICATION DIVISION.\n       PROGRAM-ID. M.\n"
