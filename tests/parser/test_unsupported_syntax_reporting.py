@@ -424,46 +424,52 @@ class TestDuplicateDiagnosticAggregation:
 
 # ===========================================================================
 # G — coverage / success semantics
+#
+# AnalysisCoverage.parse_complete (renamed from is_complete after review)
+# describes PARSER COVERAGE ONLY: whether the parser's cursor consumed
+# every token without abandoning a region.  It is not, and must never be
+# read as, a claim that the AST completely represents the source or that
+# semantic analysis is complete -- that distinction is the entire point
+# of this review round, so each test below asserts it explicitly rather
+# than only checking the boolean value.
 # ===========================================================================
 
 
 class TestCoverageAndSuccessSemantics:
     """
     A file that parses without raising is not automatically a complete
-    analysis: success must also require complete coverage.
+    analysis: success must also require that the parser did not abandon
+    any region of the source.
     """
 
-    def test_clean_program_is_complete_and_successful(self) -> None:
+    # -- 1. Clean parse ----------------------------------------------------
+
+    def test_clean_parse_reports_complete_coverage(self) -> None:
+        """All tokens consumed, zero abandonment -> parse_complete True."""
         result = AnalysisService().analyze_file(
             _write_tmp_cobol(
                 _ID + "PROCEDURE DIVISION.\nMAIN.\n    STOP RUN.\n",
             )
         )
         assert result.coverage is not None
-        assert result.coverage.is_complete
-        assert result.success
+        assert result.coverage.tokens_consumed == result.coverage.tokens_total
+        assert result.coverage.abandoned_construct_count == 0
+        assert result.coverage.parse_complete is True
+        assert result.success is True
 
-    def test_complex_fixture_does_not_report_unqualified_success(self) -> None:
-        """
-        The original #108 symptom: a file with substantial unsupported/
-        malformed content must not be reported as a clean success.
-        """
-        if not _COMPLEX_FIXTURE.exists():
-            return
-        result = AnalysisService().analyze_file(str(_COMPLEX_FIXTURE))
+    # -- 2. Unsupported syntax ----------------------------------------------
 
-        assert len(result.syntax_diagnostics) > 0
-        assert result.coverage is not None
-        # Either coverage is visibly incomplete, or semantic errors were
-        # found in what could be parsed -- either way, `success` may not
-        # claim a clean analysis while this much is diagnosed.
-        assert not result.success
-
-    def test_unsupported_constructs_alone_do_not_break_completeness(self) -> None:
+    def test_unsupported_syntax_still_reports_complete_parser_coverage(self) -> None:
         """
-        A single explicitly-diagnosed unsupported statement, with no
-        other problems, should not by itself make coverage incomplete --
-        only genuine abandonment does.
+        The parser reaches EOF, an unsupported-statement diagnostic
+        exists, and coverage is still `parse_complete: True`.
+
+        This is the exact distinction under review: `parse_complete`
+        means "the parser's cursor traversed the whole file," NOT "the
+        AST fully represents it" -- the OPEN statement below is
+        explicitly *not* in the AST (there is no OpenStatementNode), yet
+        coverage still reports complete, because the parser reached and
+        diagnosed it rather than abandoning anything.
         """
         result = AnalysisService().analyze_file(
             _write_tmp_cobol(
@@ -475,6 +481,168 @@ class TestCoverageAndSuccessSemantics:
         assert result.coverage is not None
         assert result.coverage.tokens_consumed == result.coverage.tokens_total
         assert result.coverage.abandoned_construct_count == 0
+        assert result.coverage.unsupported_construct_count >= 1
+        assert result.coverage.parse_complete is True
+
+        # The AST does NOT represent the OPEN statement -- coverage being
+        # complete says nothing about that.
+        assert any(
+            d.category is SyntaxCategory.UNSUPPORTED for d in result.syntax_diagnostics
+        )
+        assert result.ast is not None
+        assert result.ast.procedure_division is not None
+        paragraph = result.ast.procedure_division.paragraphs[0]
+        assert not any(
+            "Open" in type(s).__name__ for s in paragraph.statements
+        ), "parse_complete=True does not imply every construct reached AST representation"
+
+    # -- 3. Unmodelled syntax -------------------------------------------
+
+    def test_unmodelled_syntax_still_reports_complete_parser_coverage(self) -> None:
+        """
+        The parser reaches EOF, an unmodelled-clause diagnostic exists
+        (COMP-3, dropped from the picture string rather than the AST),
+        and coverage remains `parse_complete: True` -- again, parser
+        coverage, not AST completeness.  ElementaryItemNode has no field
+        for USAGE/COMP-3 at all, so this is a case where the data item
+        IS represented, but incompletely -- exactly the #109 concern
+        `parse_complete` deliberately does not speak to.
+        """
+        result = AnalysisService().analyze_file(
+            _write_tmp_cobol(
+                _ID
+                + "DATA DIVISION.\nWORKING-STORAGE SECTION.\n"
+                + "01 WS-AMOUNT PIC S9(7)V99 COMP-3.\n"
+                + "PROCEDURE DIVISION.\nMAIN.\n    STOP RUN.\n"
+            )
+        )
+        assert result.coverage is not None
+        assert result.coverage.tokens_consumed == result.coverage.tokens_total
+        assert result.coverage.abandoned_construct_count == 0
+        assert result.coverage.unsupported_construct_count >= 1
+        assert result.coverage.parse_complete is True
+
+        assert any(
+            d.category is SyntaxCategory.UNMODELLED for d in result.syntax_diagnostics
+        )
+        assert result.ast is not None
+        assert result.ast.data_division is not None
+        assert result.ast.data_division.working_storage is not None
+        item = result.ast.data_division.working_storage.items[0]
+        assert not hasattr(
+            item, "usage"
+        ), "the AST has no field for COMP-3 even though parse_complete=True"
+
+    # -- 4. Abandoned / unconsumed input --------------------------------
+
+    def test_unconsumed_input_reports_incomplete_parser_coverage(self) -> None:
+        """
+        A pre-existing, out-of-scope gap (division headers recognised
+        only in a fixed IDENTIFICATION/ENVIRONMENT/DATA/PROCEDURE
+        sequence, so a DATA DIVISION appearing *after* PROCEDURE
+        DIVISION is never reached) is used here only as a source of
+        genuinely unconsumed input -- not something this task fixes --
+        to prove `parse_complete` correctly reports False when the
+        parser's cursor does not reach EOF.
+        """
+        result = AnalysisService().analyze_file(
+            _write_tmp_cobol(
+                _ID
+                + "PROCEDURE DIVISION.\nMAIN.\n    STOP RUN.\n"
+                + "DATA DIVISION.\nWORKING-STORAGE SECTION.\n01 A PIC X.\n"
+            )
+        )
+        assert result.coverage is not None
+        assert result.coverage.tokens_consumed < result.coverage.tokens_total
+        assert result.coverage.parse_complete is False
+        assert result.success is False
+
+    # -- 5. Regression: complex fixture ----------------------------------
+
+    def test_complex_fixture_reaches_full_token_coverage(self) -> None:
+        """Regression: 2103/2103 tokens, no reintroduced silent loss."""
+        if not _COMPLEX_FIXTURE.exists():
+            return
+        result = AnalysisService().analyze_file(str(_COMPLEX_FIXTURE))
+
+        assert result.coverage is not None
+        assert result.coverage.tokens_total == 2103
+        assert result.coverage.tokens_consumed == 2103
+        assert result.coverage.abandoned_construct_count == 0
+
+    def test_complex_fixture_all_paragraphs_parsed(self) -> None:
+        """Regression: all 21 paragraphs in the fixture are still parsed."""
+        if not _COMPLEX_FIXTURE.exists():
+            return
+        result = AnalysisService().analyze_file(str(_COMPLEX_FIXTURE))
+
+        assert result.coverage is not None
+        assert result.coverage.paragraphs_parsed == 21
+
+    def test_complex_fixture_surfaces_51_syntax_diagnostics(self) -> None:
+        """Regression: the 51 syntax diagnostics remain surfaced."""
+        if not _COMPLEX_FIXTURE.exists():
+            return
+        result = AnalysisService().analyze_file(str(_COMPLEX_FIXTURE))
+
+        assert len(result.syntax_diagnostics) == 51
+
+    def test_complex_fixture_does_not_report_unqualified_success(self) -> None:
+        """
+        The original #108 symptom: a file with substantial unsupported/
+        malformed content must not be reported as a clean success.
+
+        Coverage is `parse_complete: True` for this fixture (the parser
+        recovers through every genuine error rather than abandoning
+        after the first one) -- `success` is nonetheless False because
+        of genuine semantic diagnostics (undefined variables referenced
+        only inside constructs the parser still cannot fully parse).
+        This is the intended distinction under review: parser coverage
+        being complete does not make `success` True on its own.
+        """
+        if not _COMPLEX_FIXTURE.exists():
+            return
+        result = AnalysisService().analyze_file(str(_COMPLEX_FIXTURE))
+
+        assert result.coverage is not None
+        assert result.coverage.parse_complete is True
+        assert len(result.semantic_diagnostics) > 0
+        assert result.success is False
+
+
+class TestCoverageSerialization:
+    """
+    F (partial) -- 6. API serialization: the renamed field is serialized
+    correctly and no description calls parser coverage "complete
+    analysis".
+    """
+
+    def test_serialized_coverage_uses_renamed_field(self) -> None:
+        from app.analysis.serializers.diagnostics import serialize_coverage
+
+        result = AnalysisService().analyze_file(
+            _write_tmp_cobol(_ID + "PROCEDURE DIVISION.\nMAIN.\n    STOP RUN.\n")
+        )
+        data = serialize_coverage(result.coverage)
+
+        assert data is not None
+        assert "parse_complete" in data
+        assert "is_complete" not in data
+        assert data["parse_complete"] is True
+
+    def test_api_field_descriptions_do_not_overclaim_completeness(self) -> None:
+        from app.api.schemas.analysis import AnalysisResponse
+
+        coverage_desc = AnalysisResponse.model_fields["coverage"].description or ""
+        success_desc = AnalysisResponse.model_fields["success"].description or ""
+
+        for desc in (coverage_desc, success_desc):
+            assert "complete analysis" not in desc.lower()
+        assert (
+            "parser coverage" in coverage_desc.lower()
+            or "parse_complete" in coverage_desc
+        )
+        assert "is_complete" not in coverage_desc
 
 
 def _write_tmp_cobol(source: str) -> str:

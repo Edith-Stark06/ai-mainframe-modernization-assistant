@@ -92,14 +92,18 @@ def serialize_coverage(coverage: Any | None) -> dict[str, Any] | None:
             did not complete far enough to measure it.
 
     Returns:
-        A JSON-safe dict including the derived ``is_complete`` flag
+        A JSON-safe dict including the derived ``parse_complete`` flag
         (a property, so it is not picked up by the generic dataclass
         field serialization used elsewhere in this module), or ``None``.
+        ``parse_complete`` describes parser coverage -- whether the
+        parser's cursor reached every token without abandoning a region
+        -- and must not be read as AST or semantic completeness; see
+        :class:`~app.analysis.models.AnalysisCoverage`'s scope warning.
     """
     if coverage is None:
         return None
     data = serialize_value(coverage)
-    data["is_complete"] = coverage.is_complete
+    data["parse_complete"] = coverage.parse_complete
     return data
 
 

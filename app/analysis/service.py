@@ -226,9 +226,9 @@ class AnalysisService:
         coverage = _build_coverage(ast, parse_result)
         logger.debug(
             "AnalysisService: parsing complete. {} syntax diagnostic(s), "
-            "coverage complete={}.",
+            "parse_complete={} (parser coverage, not AST completeness).",
             len(syntax_diagnostics),
-            coverage.is_complete,
+            coverage.parse_complete,
         )
 
         # ------------------------------------------------------------------
@@ -370,18 +370,26 @@ class AnalysisService:
             len(gen_result.diagnostics),
         )
 
-        # `success` requires both a clean semantic pass and complete
-        # coverage.  A file that parses and type-checks the portion it
-        # managed to reach is not a complete analysis if the parser
-        # abandoned a substantial region of PROCEDURE DIVISION source
-        # along the way (task #108) -- the original "Insufficient
-        # data... Overall Readiness: 0.99" symptom was exactly this: a
-        # clean-looking result built from a mostly-unparsed file.
+        # `success` requires both a clean semantic pass and that the
+        # parser did not abandon any region of the source
+        # (coverage.parse_complete -- parser coverage, not AST
+        # completeness; see AnalysisCoverage's docstring).  A file whose
+        # parser gave up on a substantial region of PROCEDURE DIVISION
+        # source is not reported as a clean result just because the
+        # portion it did reach type-checked (task #108) -- the original
+        # "Insufficient data... Overall Readiness: 0.99" symptom was
+        # exactly this: a clean-looking result built from a
+        # mostly-unparsed file.  Explicitly diagnosed unsupported or
+        # unmodelled constructs do NOT flip this flag on their own: the
+        # parser did not abandon anything to produce them, it recognised
+        # and reported a gap while continuing -- whether the AST is a
+        # *complete* representation of the file is a separate #109
+        # (AST/IR completeness) question success does not answer.
         return AnalysisResult(
             java_source=gen_result.source,
             backend_diagnostics=gen_result.diagnostics + diags,
             semantic_diagnostics=semantic_ctx.diagnostics,
-            success=not semantic_ctx.has_errors and coverage.is_complete,
+            success=not semantic_ctx.has_errors and coverage.parse_complete,
             error=None,
             dependencies=extracted_dependencies,
             ast=ast,

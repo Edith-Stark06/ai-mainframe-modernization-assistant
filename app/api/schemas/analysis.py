@@ -149,7 +149,12 @@ class AnalysisResponse(BaseModel):
     Attributes:
         success:
             ``True`` if the analysis pipeline completed without semantic
-            errors or unexpected exceptions.
+            errors or unexpected exceptions, and the parser did not
+            abandon any region of the source (see ``coverage``). Does
+            NOT mean the AST completely represents the COBOL source --
+            explicitly diagnosed unsupported/unmodelled constructs (see
+            ``syntax_diagnostics``) do not by themselves make this
+            ``False``.
         analysis_id:
             Server-generated unique identifier for this analysis request.
         workspace_id:
@@ -175,7 +180,10 @@ class AnalysisResponse(BaseModel):
             'syntax_diagnostics' grouped by code, without discarding any
             occurrence.
         coverage:
-            How much of the source file the parser actually analysed.
+            How much of the source file the *parser* traversed --
+            parser coverage (token consumption, abandonment), not
+            semantic or AST completeness. See the field's own
+            description for the precise distinction.
         dependencies:
             Serialized COBOL dependencies extracted from the source.
         dependency_summary:
@@ -195,7 +203,12 @@ class AnalysisResponse(BaseModel):
 
     success: bool = Field(
         ...,
-        description="Whether the analysis completed successfully.",
+        description=(
+            "Whether the analysis completed without semantic errors and "
+            "without the parser abandoning any region of the source. "
+            "Does not mean the AST completely represents the source -- "
+            "see 'coverage' and 'syntax_diagnostics'."
+        ),
     )
     status: AnalysisStatus = Field(
         ...,
@@ -258,10 +271,16 @@ class AnalysisResponse(BaseModel):
     coverage: dict[str, Any] | None = Field(
         default=None,
         description=(
-            "How much of the source file the parser actually analysed "
-            "(tokens consumed vs. total, paragraphs/statements parsed, "
+            "How much of the source file the PARSER traversed: tokens "
+            "consumed vs. total, paragraphs/statements parsed, "
             "unsupported and abandoned construct counts, and the derived "
-            "'is_complete' flag), or null if parsing did not complete far "
+            "'parse_complete' flag. This is parser coverage only -- "
+            "'parse_complete: true' means the parser did not abandon any "
+            "region of the file, NOT that the AST completely represents "
+            "the source or that analysis is semantically complete. "
+            "Explicitly diagnosed unsupported/unmodelled constructs "
+            "(see 'syntax_diagnostics') do not count against "
+            "'parse_complete'. Null if parsing did not proceed far "
             "enough to measure it."
         ),
     )
