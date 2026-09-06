@@ -871,11 +871,21 @@ class IRBuilder:
     def build_perform_statement(self, stmt: PerformStatementNode) -> None:
         """
         Lower a single ``PerformStatementNode`` into an ``IRCall``.
+
+        Tagged ``comment="PERFORM"`` (task #110) so that
+        control-flow-graph construction can tell a PERFORM apart from a
+        genuine :class:`~app.parser.ast.statements.CallStatementNode`
+        (see :meth:`build_call_instruction`) once both have lowered to
+        the identically-shaped ``IRCall`` -- without this, a PERFORM to
+        a paragraph name that does not resolve locally was
+        indistinguishable from, and mis-treated as, an external CALL.
         """
         if not stmt.target:
             logger.warning("Unsupported PERFORM form: missing target. Continuing.")
         else:
-            self._emit(IRCall(target=stmt.target), stmt.start_position)
+            self._emit(
+                IRCall(target=stmt.target, comment="PERFORM"), stmt.start_position
+            )
 
     def build_go_to_statement(self, stmt: GoToStatementNode) -> None:
         """
@@ -1156,9 +1166,12 @@ class IRBuilder:
         for arg in stmt.arguments:
             args.append(self.build_operand(arg))
 
+        # Tagged ``comment="CALL"`` (task #110) -- see the matching note
+        # on build_perform_statement.
         return IRCall(
             target=target,
             args=tuple(args),
+            comment="CALL",
         )
 
     def build_perform_until_statement(self, stmt: PerformUntilStatementNode) -> None:
