@@ -7,7 +7,6 @@ public class HelloWorld {
     public void run() {
 
         System.out.println("HELLO, WORLD!");
-        // TODO: translate IRReturn
 
     }
 

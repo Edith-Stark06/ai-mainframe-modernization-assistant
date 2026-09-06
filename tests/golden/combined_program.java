@@ -14,7 +14,6 @@ public class CombinedProgram {
             counter = 0;
         }
         System.out.println(counter);
-        // TODO: translate IRReturn
 
     }
 

@@ -101,11 +101,18 @@ class DependencyResponse(BaseModel):
     """
     Typed representation of a serialized COBOL dependency.
 
+    This is the *flat* dependency list -- every dependency extracted by
+    ``DependencyAnalyzer`` is represented here, regardless of type. It is
+    deliberately broader than :class:`DependencyGraphEdgeResponse`,
+    whose ``dependency_type`` is restricted to structural (workspace-
+    resolvable) kinds only -- see that class's docstring.
+
     Attributes:
         type:
-            Dependency kind as a string value (``CALL``, ``PERFORM``,
-            ``COPY``, ``VARIABLE_READ``, ``VARIABLE_WRITE``, or
-            ``CONDITION``).
+            Dependency kind as a string value: ``CALL``, ``PERFORM``, or
+            ``COPY`` (structural -- names another program, paragraph, or
+            copybook), or ``VARIABLE_READ``, ``VARIABLE_WRITE``, or
+            ``CONDITION`` (data-item references, task #111).
         target:
             Literal target name as extracted by the parser.
         source_location:
@@ -119,8 +126,9 @@ class DependencyResponse(BaseModel):
     type: str = Field(
         ...,
         description=(
-            "Dependency kind (CALL, PERFORM, COPY, VARIABLE_READ, "
-            "VARIABLE_WRITE, or CONDITION)."
+            "Dependency kind: CALL, PERFORM, or COPY (structural), or "
+            "VARIABLE_READ, VARIABLE_WRITE, or CONDITION (data-item "
+            "reference)."
         ),
     )
     target: str = Field(
@@ -204,7 +212,20 @@ class DependencyGraphNodeResponse(BaseModel):
 
 class DependencyGraphEdgeResponse(BaseModel):
     """
-    Typed representation of a serialized dependency graph edge.
+    Typed representation of an edge in the workspace-resolution
+    dependency graph.
+
+    This graph represents cross-unit control transfer/inclusion only
+    (this program CALLs/PERFORMs/COPYs X) -- its node identifiers are
+    resolved against workspace files by
+    :class:`~app.analysis.dependencies.resolver.WorkspaceDependencyResolver`.
+    ``dependency_type`` is therefore restricted to the structural subset
+    of ``DependencyType`` (see
+    :data:`~app.analysis.dependencies.models.STRUCTURAL_DEPENDENCY_TYPES`).
+    Data-item-referencing dependencies added by task #111
+    (``VARIABLE_READ``, ``VARIABLE_WRITE``, ``CONDITION``) never appear
+    here -- a variable name is not a workspace file to resolve -- but
+    remain fully available via the flat :class:`DependencyResponse` list.
 
     Attributes:
         source:
@@ -212,8 +233,8 @@ class DependencyGraphEdgeResponse(BaseModel):
         target:
             Identifier of the target program.
         dependency_type:
-            Dependency kind (CALL, PERFORM, COPY, VARIABLE_READ,
-            VARIABLE_WRITE, or CONDITION).
+            Structural dependency kind (``CALL``, ``PERFORM``, or
+            ``COPY``) -- never a variable/condition reference.
         source_location:
             Source location of the dependency, or null if unavailable.
     """
@@ -230,18 +251,12 @@ class DependencyGraphEdgeResponse(BaseModel):
         ...,
         description="Identifier of the target program.",
     )
-    dependency_type: Literal[
-        "CALL",
-        "PERFORM",
-        "COPY",
-        "VARIABLE_READ",
-        "VARIABLE_WRITE",
-        "CONDITION",
-    ] = Field(
+    dependency_type: Literal["CALL", "PERFORM", "COPY"] = Field(
         ...,
         description=(
-            "Dependency kind (CALL, PERFORM, COPY, VARIABLE_READ, "
-            "VARIABLE_WRITE, or CONDITION)."
+            "Structural dependency kind (CALL, PERFORM, or COPY) -- "
+            "the workspace-resolution graph never contains "
+            "VARIABLE_READ, VARIABLE_WRITE, or CONDITION edges."
         ),
     )
     source_location: PositionResponse | None = Field(

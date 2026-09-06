@@ -9,7 +9,6 @@ public class PerformTest {
     public void run() {
 
         subPara();
-        // TODO: translate IRReturn
         System.out.println(cnt);
 
     }

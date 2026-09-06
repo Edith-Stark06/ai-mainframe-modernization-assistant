@@ -13,7 +13,6 @@ public class ArithmeticTest {
         numB -= 2;
         numB *= numA;
         numB /= 3;
-        // TODO: translate IRReturn
 
     }
 
