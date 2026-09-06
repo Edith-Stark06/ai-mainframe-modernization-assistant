@@ -81,6 +81,16 @@ class ModernizationPipelineResponse(BaseModel):
             "See `coverage` for the per-dimension breakdown."
         ),
     )
+    insufficient_data: bool | None = Field(
+        default=None,
+        description=(
+            "True when there is not enough analysed content for a "
+            "trustworthy modernization conclusion -- an empty flow, no "
+            "PROCEDURE DIVISION body, or a failed analysis. When true, a "
+            "high `readiness` MUST NOT be read as a recommendation; see "
+            "`interpretation`."
+        ),
+    )
     interpretation: str | None = Field(
         default=None,
         description="Plain-English reading of the readiness/confidence/coverage combination.",

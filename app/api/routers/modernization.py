@@ -106,6 +106,7 @@ def execute_modernization_pipeline(
         analysis_confidence=aware.analysis_confidence,
         analysis_coverage=aware.analysis_coverage,
         readiness=aware.readiness,
+        insufficient_data=aware.insufficient_data,
         interpretation=aware.interpretation,
         coverage=aware.coverage_report.to_dict(),
         confidence=aware.confidence.to_dict(),

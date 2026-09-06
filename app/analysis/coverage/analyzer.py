@@ -36,7 +36,9 @@ _COMPLETE = 0.999
 # Statement-level unsupported / error codes: each one is a procedural
 # statement (or statement region) the parser recognised but did not put
 # in the AST, so it never reaches IR / CFG / dependency / rule analysis.
-_STATEMENT_LOSS_CODES: frozenset[str] = frozenset({"SYN005", "SYN100", "SYN301"})
+# Codes that unconditionally represent a lost PROCEDURE DIVISION statement
+# (SYN005 is handled separately by context — see _procedural_syn005_count).
+_STATEMENT_LOSS_CODES: frozenset[str] = frozenset({"SYN100", "SYN301"})
 
 # Which dimensions each unsupported code degrades.
 _CODE_AFFECTS: dict[str, tuple[str, ...]] = {
@@ -124,6 +126,35 @@ def _diag_code_counts(analysis_result: AnalysisResult) -> dict[str, int]:
         code = getattr(d, "code", "SYN?")
         counts[code] = counts.get(code, 0) + 1
     return counts
+
+
+# RecoveryContext values (see app.parser.diagnostics.recovery) that place a
+# SYN005 ("malformed construct") inside PROCEDURE DIVISION statement/paragraph
+# parsing. SYN005 is a *generic* recovery code also emitted from the
+# IDENTIFICATION and DATA divisions, so it can only be read as a lost
+# procedural statement when its context is one of these.
+_PROCEDURAL_SYN005_CONTEXTS: frozenset[str] = frozenset(
+    {"statement", "procedure_division", "paragraph"}
+)
+
+
+def _procedural_syn005_count(analysis_result: AnalysisResult) -> int:
+    """
+    Number of SYN005 diagnostics that represent a *lost procedural statement
+    or paragraph* (context ``statement``/``procedure_division``/``paragraph``).
+
+    A SYN005 raised while parsing a DATA or IDENTIFICATION division construct
+    is deliberately excluded — it has nothing to do with procedural logic or
+    business rules.
+    """
+    n = 0
+    for d in analysis_result.syntax_diagnostics:
+        if getattr(d, "code", "") != "SYN005":
+            continue
+        ctx = getattr(getattr(d, "context", None), "value", "")
+        if ctx in _PROCEDURAL_SYN005_CONTEXTS:
+            n += 1
+    return n
 
 
 def _ratio(covered: int, total: int) -> float:
@@ -245,7 +276,8 @@ def compute_coverage(
     # 3. statement
     # =====================================================================
     stmts_parsed = cov.statements_parsed if cov is not None else 0
-    stmt_loss = sum(codes.get(c, 0) for c in _STATEMENT_LOSS_CODES)
+    proc_syn005 = _procedural_syn005_count(analysis_result)
+    stmt_loss = sum(codes.get(c, 0) for c in _STATEMENT_LOSS_CODES) + proc_syn005
     has_proc = bool(
         ast is not None
         and ast.procedure_division is not None
@@ -271,9 +303,12 @@ def compute_coverage(
             status=_status_for(s_ratio, had_input=s_total > 0),
             detail=(
                 f"{stmts_parsed} statement(s) parsed; {stmt_loss} statement-level "
-                "failure(s) (SYN005/SYN100/SYN301). Denominator is parsed + "
-                "failed statements — statements inside an abandoned region are "
-                "counted by the 'parser' dimension, not here."
+                f"failure(s) ({proc_syn005} procedural SYN005 + "
+                f"{codes.get('SYN100', 0)} SYN100 + {codes.get('SYN301', 0)} "
+                "SYN301). Denominator is parsed + failed statements; DATA/"
+                "IDENTIFICATION-division SYN005 is excluded, and statements "
+                "inside an abandoned region are counted by the 'parser' "
+                "dimension."
             ),
         )
 
@@ -562,9 +597,44 @@ def compute_coverage(
     # =====================================================================
     # 8. business_rule
     # =====================================================================
+    # "How much business-rule-bearing logic was actually analyzed?"
+    #
+    # Task #112 extracts business rules only from IfStatementNode regions in
+    # the parsed PROCEDURE DIVISION. Its input is therefore exactly the
+    # procedural representation measured by the 'statement' (and 'ast')
+    # dimensions -- so this dimension is DERIVED from procedural completeness,
+    # not from a fabricated IF-specific denominator. SYN005 is NOT a reliable
+    # "one lost conditional" signal (it is a generic malformed-construct code
+    # raised from four contexts, and a procedural SYN005 can be a failed MOVE
+    # / ADD / PERFORM just as easily as a failed IF), so it is not counted
+    # here as lost rules -- it lowers this ratio only through its effect on
+    # 'statement'.
     if_nodes = _count_if_nodes(analysis_result)
-    syn005 = codes.get("SYN005", 0)
     rule_count = len(business_rules) if business_rules is not None else None
+    _rule_suffix = (
+        f" #112 extracted {rule_count} rule(s)." if rule_count is not None else ""
+    )
+
+    # The procedural analysis is whole iff every parsed statement is
+    # represented, no procedural region was abandoned (SYN300/SYN301), and no
+    # procedural statement was dropped as unsupported (SYN100). Deliberately
+    # NOT gated on cov.parse_complete: unconsumed tokens caused by a
+    # *misplaced non-procedural division* (e.g. a DATA DIVISION after
+    # PROCEDURE DIVISION) do not lose any rule-bearing logic -- that is a
+    # 'parser'/'ast' concern, tracked there.
+    procedural_abandoned = codes.get("SYN300", 0) + codes.get("SYN301", 0) > 0 or (
+        cov is not None and cov.abandoned_construct_count > 0
+    )
+    procedural_complete = (
+        cov is not None
+        and statement.status is CoverageStatus.COMPLETE
+        and not procedural_abandoned
+        and codes.get("SYN100", 0) == 0
+    )
+    _br_incomplete_status = (
+        CoverageStatus.FAILED if statement.ratio <= 0.0 else CoverageStatus.PARTIAL
+    )
+
     if cov is None:
         br_dim = CoverageDimension(
             name="business_rule",
@@ -574,7 +644,7 @@ def compute_coverage(
             status=CoverageStatus.FAILED,
             detail="Business-rule analysis had no AST to inspect.",
         )
-    elif if_nodes == 0 and syn005 == 0:
+    elif statement.status is CoverageStatus.NOT_MEASURABLE and if_nodes == 0:
         br_dim = CoverageDimension(
             name="business_rule",
             ratio=1.0,
@@ -582,37 +652,66 @@ def compute_coverage(
             total=0,
             status=CoverageStatus.NOT_MEASURABLE,
             detail=(
-                "No conditional logic in the analyzed source — nothing for "
-                "business-rule extraction to inspect."
-                + (
-                    f" ({rule_count} rule(s) extracted.)"
-                    if rule_count is not None
-                    else ""
-                )
+                "No PROCEDURE DIVISION statements were analyzed -- there is no "
+                "rule-bearing logic to inspect." + _rule_suffix
+            ),
+        )
+    elif if_nodes == 0 and procedural_complete:
+        br_dim = CoverageDimension(
+            name="business_rule",
+            ratio=1.0,
+            covered=0,
+            total=0,
+            status=CoverageStatus.NOT_MEASURABLE,
+            detail=(
+                "The full procedural logic was analyzed and contains no "
+                "conditional (IF) regions -- there is no rule-bearing logic to "
+                "inspect." + _rule_suffix
+            ),
+        )
+    elif if_nodes == 0:
+        # No conditionals were found, but procedural analysis is incomplete,
+        # so rule-bearing logic may exist in the parts that were not analyzed.
+        br_dim = CoverageDimension(
+            name="business_rule",
+            ratio=statement.ratio,
+            covered=statement.covered,
+            total=statement.total,
+            status=_br_incomplete_status,
+            detail=(
+                "No conditional regions in the analyzed fragment, but "
+                f"{stmt_loss} procedural statement region(s) were not analyzed "
+                "-- absence of business rules is NOT confirmed. Coverage tracks "
+                "the completeness of the procedural analysis #112 depends on."
+                + _rule_suffix
+            ),
+        )
+    elif procedural_complete:
+        br_dim = CoverageDimension(
+            name="business_rule",
+            ratio=1.0,
+            covered=if_nodes,
+            total=if_nodes,
+            status=CoverageStatus.COMPLETE,
+            detail=(
+                f"{if_nodes} conditional (IF) region(s) reached the AST and the "
+                "procedural analysis is complete, so all rule-bearing logic was "
+                "available to #112." + _rule_suffix
             ),
         )
     else:
-        br_total = if_nodes + syn005
-        br_ratio = _ratio(if_nodes, br_total)
-        status = _status_for(br_ratio, had_input=True)
-        if not cov.parse_complete and status is CoverageStatus.COMPLETE:
-            status = CoverageStatus.PARTIAL
         br_dim = CoverageDimension(
             name="business_rule",
-            ratio=br_ratio,
-            covered=if_nodes,
-            total=br_total,
-            status=status,
+            ratio=statement.ratio,
+            covered=statement.covered,
+            total=statement.total,
+            status=_br_incomplete_status,
             detail=(
-                f"{if_nodes} IF region(s) reached AST; {syn005} malformed-"
-                "statement error(s) (SYN005) — each is a conditional whose "
-                "body or compound condition was dropped, so a rule may be "
-                "missing."
-                + (
-                    f" {rule_count} rule(s) extracted."
-                    if rule_count is not None
-                    else ""
-                )
+                f"{if_nodes} conditional (IF) region(s) reached the AST, but the "
+                f"procedural analysis is incomplete ({stmt_loss} lost statement "
+                "region(s), each of which could contain a conditional) -- more "
+                "rule-bearing logic may exist. Coverage tracks procedural "
+                "completeness." + _rule_suffix
             ),
         )
 
