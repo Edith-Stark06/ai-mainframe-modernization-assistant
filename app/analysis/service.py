@@ -67,7 +67,10 @@ from typing import Any
 
 from loguru import logger
 
-from app.analysis.models import AnalysisResult
+from app.analysis.models import AnalysisCoverage, AnalysisResult
+from app.parser.ast.program import ProgramNode
+from app.parser.diagnostics.recovery import SyntaxCategory
+from app.parser.syntax.program_parser import ParseResult
 from app.backend.java.generator import (
     build_fields_from_symbols,
     generate_with_diagnostics,
@@ -80,6 +83,44 @@ from app.parser.syntax.program_parser import ProgramParser
 from app.analysis.dependencies.models import Dependency
 
 __all__ = ["AnalysisService"]
+
+
+def _build_coverage(ast: ProgramNode, parse_result: ParseResult) -> AnalysisCoverage:
+    """
+    Compute an :class:`~app.analysis.models.AnalysisCoverage` snapshot.
+
+    Uses only signals the parser already produces (token positions and
+    diagnostic categories) rather than re-scanning the source with a
+    second, independently-maintained heuristic — see the "Note" in
+    :class:`~app.analysis.models.AnalysisCoverage` for why that trade-off
+    was made deliberately.
+
+    Args:
+        ast: The parsed :class:`~app.parser.ast.program.ProgramNode`.
+        parse_result: The result of ``ProgramParser.parse_with_diagnostics``.
+
+    Returns:
+        A populated :class:`~app.analysis.models.AnalysisCoverage`.
+    """
+    paragraphs = ast.procedure_division.paragraphs if ast.procedure_division else ()
+    statements_parsed = sum(len(p.statements) for p in paragraphs)
+
+    unsupported_count = 0
+    abandoned_count = 0
+    for diag in parse_result.diagnostics:
+        if diag.category in (SyntaxCategory.UNSUPPORTED, SyntaxCategory.UNMODELLED):
+            unsupported_count += 1
+        elif diag.category is SyntaxCategory.ABANDONED:
+            abandoned_count += 1
+
+    return AnalysisCoverage(
+        tokens_total=parse_result.tokens_total,
+        tokens_consumed=parse_result.tokens_consumed,
+        paragraphs_parsed=len(paragraphs),
+        statements_parsed=statements_parsed,
+        unsupported_construct_count=unsupported_count,
+        abandoned_construct_count=abandoned_count,
+    )
 
 
 class AnalysisService:
@@ -165,7 +206,7 @@ class AnalysisService:
         parser = ProgramParser()
 
         try:
-            ast = parser.parse(tokens)
+            parse_result = parser.parse_with_diagnostics(tokens)
         except Exception as exc:
             logger.error("AnalysisService: parse error in '{}': {}.", path, exc)
             return AnalysisResult(
@@ -177,8 +218,18 @@ class AnalysisService:
                 dependencies=[],
                 ast=None,
                 ir=None,
+                syntax_diagnostics=[],
+                coverage=None,
             )
-        logger.debug("AnalysisService: parsing complete.")
+        ast = parse_result.program
+        syntax_diagnostics: list[Any] = list(parse_result.diagnostics)
+        coverage = _build_coverage(ast, parse_result)
+        logger.debug(
+            "AnalysisService: parsing complete. {} syntax diagnostic(s), "
+            "parse_complete={} (parser coverage, not AST completeness).",
+            len(syntax_diagnostics),
+            coverage.parse_complete,
+        )
 
         # ------------------------------------------------------------------
         # Stage 2.5 — dependency extraction
@@ -203,6 +254,8 @@ class AnalysisService:
                 dependencies=extracted_dependencies,
                 ast=ast,
                 ir=None,
+                syntax_diagnostics=syntax_diagnostics,
+                coverage=coverage,
             )
         logger.debug(
             "AnalysisService: found {} dependencies.", len(extracted_dependencies)
@@ -227,6 +280,8 @@ class AnalysisService:
                 dependencies=extracted_dependencies,
                 ast=ast,
                 ir=None,
+                syntax_diagnostics=syntax_diagnostics,
+                coverage=coverage,
             )
         logger.debug(
             "AnalysisService: semantic analysis complete. errors={}.",
@@ -252,6 +307,8 @@ class AnalysisService:
                 dependencies=extracted_dependencies,
                 ast=ast,
                 ir=None,
+                syntax_diagnostics=syntax_diagnostics,
+                coverage=coverage,
             )
         logger.debug("AnalysisService: IR build complete.")
 
@@ -283,6 +340,8 @@ class AnalysisService:
                 dependencies=extracted_dependencies,
                 ast=ast,
                 ir=ir_program,
+                syntax_diagnostics=syntax_diagnostics,
+                coverage=coverage,
             )
         logger.debug("AnalysisService: built {} Java field(s).", len(fields))
 
@@ -303,19 +362,38 @@ class AnalysisService:
                 dependencies=extracted_dependencies,
                 ast=ast,
                 ir=ir_program,
+                syntax_diagnostics=syntax_diagnostics,
+                coverage=coverage,
             )
         logger.debug(
             "AnalysisService: Java generation complete ({} diagnostics).",
             len(gen_result.diagnostics),
         )
 
+        # `success` requires both a clean semantic pass and that the
+        # parser did not abandon any region of the source
+        # (coverage.parse_complete -- parser coverage, not AST
+        # completeness; see AnalysisCoverage's docstring).  A file whose
+        # parser gave up on a substantial region of PROCEDURE DIVISION
+        # source is not reported as a clean result just because the
+        # portion it did reach type-checked (task #108) -- the original
+        # "Insufficient data... Overall Readiness: 0.99" symptom was
+        # exactly this: a clean-looking result built from a
+        # mostly-unparsed file.  Explicitly diagnosed unsupported or
+        # unmodelled constructs do NOT flip this flag on their own: the
+        # parser did not abandon anything to produce them, it recognised
+        # and reported a gap while continuing -- whether the AST is a
+        # *complete* representation of the file is a separate #109
+        # (AST/IR completeness) question success does not answer.
         return AnalysisResult(
             java_source=gen_result.source,
             backend_diagnostics=gen_result.diagnostics + diags,
             semantic_diagnostics=semantic_ctx.diagnostics,
-            success=not semantic_ctx.has_errors,
+            success=not semantic_ctx.has_errors and coverage.parse_complete,
             error=None,
             dependencies=extracted_dependencies,
             ast=ast,
             ir=ir_program,
+            syntax_diagnostics=syntax_diagnostics,
+            coverage=coverage,
         )

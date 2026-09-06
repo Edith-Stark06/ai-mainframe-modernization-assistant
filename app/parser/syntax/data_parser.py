@@ -378,16 +378,36 @@ class DataDivisionParser:
                     self._skip_unsupported_section(state)
                 continue
 
-            # A numeric token could be an orphaned level number appearing
-            # before a WORKING-STORAGE SECTION header is seen.  This is
-            # technically a syntax error but we stop gracefully.
+            # A numeric token here is an orphaned level number appearing
+            # before any section header -- e.g. a data item declared
+            # directly under "DATA DIVISION." with no WORKING-STORAGE
+            # SECTION.  Previously this silently stopped the whole DATA
+            # DIVISION with only a DEBUG log (#108-09), which also left
+            # the cursor sitting on the stray token rather than at a
+            # division boundary, so the PROCEDURE DIVISION that followed
+            # could then fail to be recognised at all.  Diagnose it
+            # explicitly and recover to the next section or division
+            # instead, exactly like the general "unexpected token"
+            # handling below.
             if tok.type is TokenType.NUMBER:
                 logger.debug(
-                    "DataDivisionParser: numeric token {!r} before any section; "
-                    "stopping.",
+                    "DataDivisionParser: orphaned level number {!r} before "
+                    "any section; recovering.",
                     tok.lexeme,
                 )
-                break
+                before = stream.position
+                state.record_and_synchronise(
+                    message=(
+                        f"orphaned level number {tok.lexeme!r} before any "
+                        "DATA DIVISION section"
+                    ),
+                    error_token=tok,
+                    context=RecoveryContext.DATA_DIVISION,
+                    code="SYN004",
+                )
+                if stream.position == before:
+                    stream.advance()
+                continue
 
             # Silently consume stray PERIOD tokens left behind by
             # panic-mode recovery synchronising to a paragraph boundary.
@@ -407,6 +427,7 @@ class DataDivisionParser:
                 message=(f"unexpected token {tok.lexeme!r} at DATA DIVISION level"),
                 error_token=tok,
                 context=RecoveryContext.DATA_DIVISION,
+                code="SYN001",
             )
             # Guarantee forward progress: synchronise() anchors on a
             # section header without consuming it, so without this the
@@ -536,11 +557,28 @@ class DataDivisionParser:
                         message=exc.message,
                         error_token=stream.current(),
                         context=RecoveryContext.WORKING_STORAGE_SECTION,
+                        code="SYN005",
                     )
                 continue
 
-            # Anything else — unexpected; stop the section
-            break
+            # An unrecognised token inside the section.  Previously this
+            # silently stopped collecting data items with no diagnostic
+            # at all (#108-08) -- any WORKING-STORAGE item after the bad
+            # token was dropped without a trace.  Diagnose it explicitly
+            # and try to recover to the next data item, section, or
+            # division instead of abandoning outright.
+            before = stream.position
+            state.record_and_synchronise(
+                message=(
+                    f"unexpected token {tok.lexeme!r} in WORKING-STORAGE "
+                    "SECTION; attempting to resume at the next data item"
+                ),
+                error_token=tok,
+                context=RecoveryContext.WORKING_STORAGE_SECTION,
+                code="SYN001",
+            )
+            if stream.position == before:
+                stream.advance()
 
         return items
 
@@ -609,6 +647,7 @@ class DataDivisionParser:
             message=message,
             error_token=name_token,
             context=RecoveryContext.DATA_DIVISION,
+            code="SYN101",
         )
 
         if stream.current().type is TokenType.PERIOD:
@@ -942,6 +981,7 @@ class DataDivisionParser:
                 ),
                 error_token=clause_token,
                 context=RecoveryContext.WORKING_STORAGE_SECTION,
+                code="SYN200",
             )
 
             # "USAGE [IS] COMP-3" is a single clause whose operand is
