@@ -7,6 +7,7 @@ public class CallTest {
     public void run() {
 
         subprog();
+        return;
 
     }
 

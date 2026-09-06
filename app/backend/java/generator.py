@@ -482,6 +482,32 @@ def _collect_statements(
     * :class:`~app.ir.instructions.IRElse` encountered at depth 0 also
       produces a ``BE007`` WARNING and is skipped.
 
+    Reachability (post-#111 review fix, added alongside
+    :class:`~app.ir.instructions.IRReturn` support): the entry block
+    concatenates every paragraph's instructions flat, one after another
+    (see :mod:`app.ir.builder`'s architectural note) — a paragraph that
+    ends in ``STOP RUN``/``GOBACK`` is immediately followed, in the same
+    straight-line instruction list, by the *next* paragraph's
+    instructions. Once an :class:`~app.ir.instructions.IRReturn` lowers
+    to a Java ``return;`` (see
+    :func:`~app.backend.java.statement_emitter.emit_return`), anything
+    emitted right after it *at the same nesting depth* would be
+    unreachable code — a hard ``javac`` compile error, not merely dead
+    code. A small ``dead`` stack (parallel to ``depth``) tracks this: once
+    a depth's straight-line position goes dead, every further instruction
+    encountered at that exact depth is skipped (no Java emitted) with a
+    ``BE011`` WARNING, until depth decreases below it. Entering a nested
+    IF/PERFORM-UNTIL body always starts a fresh, independently-reachable
+    sub-region (an ``IRElse`` branch is reachable regardless of whether
+    the preceding ``then`` branch returned, matching ``javac``'s own
+    rule) unless the enclosing depth was *already* dead, in which case
+    the entire nested construct is unreachable too and is skipped
+    wholesale, including its header/footer, so braces stay balanced.
+    This does not attempt full "both branches return" flow analysis
+    (not needed by any construct the current pipeline produces); it only
+    prevents the concrete, common case of trailing paragraph content
+    after a top-level terminator.
+
     Diagnostics produced during translation are appended to *diagnostics*.
 
     Returns:
@@ -505,6 +531,7 @@ def _collect_statements(
         IREndPerform,
         IRIf,
         IRPerformUntil,
+        IRReturn,
     )
 
     statements: list[str] = []
@@ -519,13 +546,37 @@ def _collect_statements(
     block = function.blocks[0]
 
     depth: int = 0  # current nesting level (0 = flat inside main)
+    # dead[d] -- True once an unconditional `return;` has been emitted at
+    # the straight-line position currently at depth d; everything further
+    # at that exact depth is unreachable until depth drops below d.
+    dead: list[bool] = [False]
+
+    def _skip_unreachable(type_name: str) -> None:
+        diagnostics.append(
+            BackendDiagnostic(
+                severity=BackendSeverity.WARNING,
+                message=(
+                    f"'{type_name}' is unreachable after an unconditional "
+                    "STOP RUN/GOBACK earlier in the same generated method "
+                    "(paragraphs are concatenated flat); skipping to avoid "
+                    "generating invalid Java."
+                ),
+                code="BE011",
+            )
+        )
 
     for instr in block.instructions:
         try:
             if isinstance(instr, IRIf):
+                if dead[depth]:
+                    _skip_unreachable(type(instr).__name__)
+                    depth += 1
+                    dead.append(True)
+                    continue
                 stmts = _emit_if(instr, depth, diagnostics)
                 statements.extend(stmts)
                 depth += 1
+                dead.append(False)
 
             elif isinstance(instr, IRElse):
                 if depth <= 0:
@@ -540,10 +591,17 @@ def _collect_statements(
                         )
                     )
                 else:
+                    dead.pop()  # the 'then' branch's reachability does not carry over
                     depth -= 1
+                    if dead[depth]:
+                        _skip_unreachable(type(instr).__name__)
+                        depth += 1
+                        dead.append(True)
+                        continue
                     stmts = _emit_else(depth, diagnostics)
                     statements.extend(stmts)
                     depth += 1
+                    dead.append(False)
 
             elif isinstance(instr, IREndIf):
                 if depth <= 0:
@@ -558,14 +616,31 @@ def _collect_statements(
                         )
                     )
                 else:
+                    # The branch's own dead-state is discarded here (by
+                    # design, not tracked): even when the branch just
+                    # closed ended in a return, the if/else statement was
+                    # entered from a reachable point, so its closing brace
+                    # -- and whatever follows the whole if/else -- is still
+                    # reachable Java. Only the *enclosing* depth's own
+                    # dead-state (checked below) matters for whether this
+                    # closing brace itself was ever opened.
+                    dead.pop()
                     depth -= 1
+                    if dead[depth]:
+                        continue  # header was skipped too; keep braces balanced
                     stmts = _emit_end_if(depth, diagnostics)
                     statements.extend(stmts)
 
             elif isinstance(instr, IRPerformUntil):
+                if dead[depth]:
+                    _skip_unreachable(type(instr).__name__)
+                    depth += 1
+                    dead.append(True)
+                    continue
                 stmts = _emit_perform_until(instr, depth, diagnostics)
                 statements.extend(stmts)
                 depth += 1
+                dead.append(False)
 
             elif isinstance(instr, IREndPerform):
                 if depth <= 0:
@@ -580,15 +655,25 @@ def _collect_statements(
                         )
                     )
                 else:
+                    dead.pop()
                     depth -= 1
+                    if dead[depth]:
+                        continue
                     stmts = _emit_end_perform(depth, diagnostics)
                     statements.extend(stmts)
 
             else:
+                if dead[depth]:
+                    _skip_unreachable(type(instr).__name__)
+                    continue
+
                 # Regular (non-control-flow) statement — apply depth prefix.
                 stmts = emit_statement(instr, diagnostics)
                 indent = "    " * depth
                 statements.extend(indent + s for s in stmts)
+
+                if isinstance(instr, IRReturn):
+                    dead[depth] = True
 
         except Exception as exc:  # noqa: BLE001
             type_name = type(instr).__name__
