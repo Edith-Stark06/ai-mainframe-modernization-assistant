@@ -50,3 +50,69 @@ class ModernizationPipelineResponse(BaseModel):
     flow: FlowResponse
     score: ModernizationScoreResponse
     recommendations: List[RecommendationResponse]
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Modernization Intelligence (#112 / #113 / #114)
+# ---------------------------------------------------------------------------
+
+
+class BusinessRuleActionResponse(BaseModel):
+    kind: str
+    target: str
+    sources: List[str]
+    literals: List[str]
+    raw: str
+    source_location: Dict[str, Any] | None = None
+
+
+class BusinessRuleVariablesResponse(BaseModel):
+    reads: List[str]
+    writes: List[str]
+    conditions: List[str]
+
+
+class Phase4BusinessRuleResponse(BaseModel):
+    rule_id: str
+    category: str
+    description: str
+    condition: str
+    actions: List[BusinessRuleActionResponse]
+    variables: BusinessRuleVariablesResponse
+    dependencies: List[str]
+    source_locations: List[Dict[str, Any]]
+    paragraph: str
+    section: str | None = None
+    confidence: float
+    evidence: List[str]
+
+
+class ModernizationRiskResponse(BaseModel):
+    risk_id: str
+    category: str
+    severity: str
+    title: str
+    explanation: str
+    evidence: List[str]
+    source_locations: List[Dict[str, Any]]
+    affected_components: List[str]
+    confidence: float
+    recommended_mitigation: str
+    occurrence_count: int
+
+
+class StrategyRecommendationResponse(BaseModel):
+    recommendation_id: str
+    strategy: str
+    is_primary: bool
+    rationale: str
+    evidence: List[str]
+    referenced_risk_ids: List[str]
+    prerequisites: List[str]
+    confidence: float
+
+
+class ModernizationIntelligenceResponse(BaseModel):
+    business_rules: List[Phase4BusinessRuleResponse]
+    risks: List[ModernizationRiskResponse]
+    strategies: List[StrategyRecommendationResponse]
