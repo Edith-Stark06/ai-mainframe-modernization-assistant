@@ -33,6 +33,25 @@ class EdgeType(Enum):
     DEPENDS_ON = auto()
     INVOKES = auto()
 
+    # Added by task #110 (Control Flow Graph) to represent real COBOL
+    # execution flow rather than only call relationships between whole
+    # functions. Kept as new members alongside the existing ones rather
+    # than repurposing FLOWS_TO/CALLS, since a consumer that only knows
+    # the pre-#110 edge types can keep treating any of these as "some
+    # kind of flow" without misreading e.g. a false branch as a call.
+    TRUE_BRANCH = auto()  # IF condition -> first statement of the THEN branch
+    FALSE_BRANCH = auto()  # IF condition -> first statement of the ELSE branch,
+    #                        or directly to the join point when there is no ELSE
+    LOOP_BODY = auto()  # PERFORM UNTIL condition -> first statement of the body
+    LOOP_BACK = auto()  # last statement of a loop body -> back to its condition
+    LOOP_EXIT = auto()  # loop condition -> the statement after the loop
+    PERFORMS = auto()  # PERFORM <paragraph> -> the target paragraph's entry
+    GOES_TO = auto()  # GO TO <paragraph> -> the target paragraph's entry
+    FALLTHROUGH = auto()  # a paragraph with no terminal statement -> the next
+    #                        paragraph in source order (COBOL's implicit fall-
+    #                        through when a paragraph is not exited via GOBACK/
+    #                        STOP RUN/GO TO)
+
 
 @dataclass(frozen=True)
 class FlowNode:
