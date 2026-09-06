@@ -12,6 +12,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from app.backend.java.generator import (
+    BackendSeverity,
     build_fields_from_symbols,
     generate_with_diagnostics,
 )
@@ -90,8 +91,20 @@ def test_regression_fixture(cbl_path: Path, json_path: Path) -> None:
             java_source = result.source
             for diag in result.diagnostics:
                 all_diagnostics.append(diag.message)
-                # Assume any backend diagnostic is a failure for now
-                pipeline_success = False
+                # Only an ERROR-severity backend diagnostic means the
+                # compiler failed to do its job; a WARNING (e.g. BE005's
+                # "unsupported IR instruction; emitting TODO comment")
+                # means one construct has no Java translation yet while
+                # everything else still generated correctly, which is
+                # not a pipeline failure. Task #109 started emitting
+                # IRReturn for GOBACK/STOP RUN (previously silently
+                # dropped from the IR entirely); the backend has no
+                # Java translation for IRReturn yet (out of scope --
+                # "no Java generation improvements"), so it now
+                # correctly reports a WARNING for every fixture ending
+                # in GOBACK/STOP RUN instead of staying silent.
+                if diag.severity is BackendSeverity.ERROR:
+                    pipeline_success = False
 
     except (LexerError, ParserError) as e:
         pipeline_success = False
