@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends
 
@@ -119,6 +120,31 @@ router = APIRouter(
 # ---------------------------------------------------------------------------
 
 _ALLOWED_ANALYSIS_EXTENSIONS: frozenset[str] = frozenset({".cbl", ".cob"})
+
+
+def _compute_coverage_report(result: Any) -> dict[str, Any] | None:
+    """
+    Phase 5 (#115) multi-dimensional coverage for the analysis response.
+
+    Best-effort: any failure here logs and returns ``None`` rather than
+    breaking the endpoint. Kept in its own function so its imports do not
+    shadow the module-level ``BusinessRuleExtractor`` (the older
+    ``app.analysis.rules`` one) used elsewhere in this router.
+    """
+    try:
+        from app.analysis.coverage import compute_coverage
+        from app.modernization.business_rules import (
+            BusinessRuleExtractor as _Phase4RuleExtractor,
+        )
+        from app.modernization.flow.generator import generate_flow
+
+        flow = generate_flow(result) if result.ir is not None else None
+        rules = _Phase4RuleExtractor().extract(result) if result.ast is not None else []
+        return compute_coverage(result, flow, rules).to_dict()
+    except Exception:  # noqa: BLE001 - coverage is best-effort, never fatal
+        logger.warning("Analysis endpoint: coverage report computation failed.")
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Endpoints
@@ -269,6 +295,15 @@ async def analyze_source(
         result.syntax_diagnostics
     )
     serialized_coverage = serialize_coverage(result.coverage)
+
+    # Phase 5 (#115): multi-dimensional analysis coverage. Additive — the
+    # parser-only ``coverage`` field above is untouched. Prefer the report
+    # AnalysisService attached; recompute (best-effort) only if absent.
+    _attached_report = getattr(result, "coverage_report", None)
+    if _attached_report is not None:
+        coverage_report = _attached_report.to_dict()
+    else:
+        coverage_report = _compute_coverage_report(result)
 
     serialized_dependencies = [
         DependencyResponse.model_validate(dep)
@@ -448,6 +483,7 @@ async def analyze_source(
         syntax_diagnostics=serialized_syntax_diagnostics,
         syntax_diagnostics_summary=serialized_syntax_diagnostics_summary,
         coverage=serialized_coverage,
+        coverage_report=coverage_report,
         dependencies=serialized_dependencies,
         dependency_summary=dependency_summary,
         dependency_graph=dependency_graph,
