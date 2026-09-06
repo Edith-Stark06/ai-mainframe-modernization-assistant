@@ -73,7 +73,7 @@ __all__ = ["AnalysisCoverage", "AnalysisResult"]
 @dataclass(frozen=True, slots=True)
 class AnalysisCoverage:
     """
-    How much of a COBOL source file the parser actually analysed.
+    How much of a COBOL source file the *parser* actually traversed.
 
     Task #108 exists because a file can produce ``success: True`` while
     the parser silently abandoned most of the PROCEDURE DIVISION — the
@@ -82,6 +82,23 @@ class AnalysisCoverage:
     This value type makes that distinction explicit and machine-readable
     instead of requiring a caller to notice a suspiciously small
     paragraph count.
+
+    Scope warning -- read before using :attr:`parse_complete`:
+        Every field here, including :attr:`parse_complete`, describes
+        **parser coverage**: how far the parser's cursor travelled
+        through the token stream, and whether it gave up on any region
+        along the way. None of it describes **semantic or AST
+        completeness**. A file can have ``parse_complete = True`` while
+        its AST is missing real information, because #108's own
+        unsupported/unmodelled diagnostics (``SYN1xx``/``SYN2xx``) exist
+        precisely for constructs the parser reaches, recognises, and
+        then explicitly declines to represent -- COMP-3 clauses, OPEN
+        statements, and the like. Whether the AST is a *complete*
+        representation of the source is a #109 (AST/IR completeness)
+        question this type does not answer. Do not read
+        ``parse_complete: True`` as "the AST fully represents this
+        file" -- read it as "the parser did not abandon any region of
+        this file."
 
     Attributes:
         tokens_total:
@@ -100,16 +117,21 @@ class AnalysisCoverage:
         unsupported_construct_count:
             Diagnostics whose
             :attr:`~app.parser.diagnostics.recovery.SyntaxDiagnostic.category`
-            is ``UNSUPPORTED`` or ``UNMODELLED`` — valid COBOL this
-            parser does not fully represent.
+            is ``UNSUPPORTED`` or ``UNMODELLED`` — valid COBOL the parser
+            reached and recognised but does not represent in the AST.
+            These do **not** count as abandonment: the parser kept going
+            and diagnosed the gap explicitly, so this number measures
+            known, reported limitations, not lost coverage.
         abandoned_construct_count:
             Diagnostics whose category is ``ABANDONED`` — regions of
-            source the parser stopped analysing entirely.
-        is_complete:
-            ``True`` only when every token was consumed and no
-            abandonment was recorded.  This is the single field a caller
-            should check before trusting that the AST represents the
-            whole file.
+            source the parser stopped analysing entirely, with no
+            diagnostic previously identifying what was in them.
+        parse_complete:
+            ``True`` only when the parser's cursor consumed every token
+            and no abandonment was recorded. This says the parser did
+            not give up on any region of the file -- it says nothing
+            about whether every construct the parser passed through is
+            represented in the AST. See the scope warning above.
 
     Note:
         There is no independent count of "paragraph labels present in
@@ -120,7 +142,7 @@ class AnalysisCoverage:
         drift out of sync with it.  ``tokens_consumed`` versus
         ``tokens_total``, together with ``abandoned_construct_count``,
         already gives a precise, duplication-free signal for "how much
-        of the file was never reached" without that risk.
+        of the file the parser's cursor never reached" without that risk.
 
     Examples:
         >>> coverage = AnalysisCoverage(
@@ -129,7 +151,7 @@ class AnalysisCoverage:
         ...     statements_parsed=12, unsupported_construct_count=0,
         ...     abandoned_construct_count=0,
         ... )
-        >>> coverage.is_complete
+        >>> coverage.parse_complete
         True
     """
 
@@ -141,15 +163,18 @@ class AnalysisCoverage:
     abandoned_construct_count: int
 
     @property
-    def is_complete(self) -> bool:
+    def parse_complete(self) -> bool:
         """
-        ``True`` if the parser consumed the whole file and abandoned nothing.
+        ``True`` if the parser's cursor consumed the whole file and
+        abandoned no region of it.
 
+        This is a **parser-coverage** signal, not a semantic- or
+        AST-completeness one -- see the scope warning on this class.
         Unsupported/unmodelled constructs (``SYN1xx``/``SYN2xx``) do not
         affect this flag: those are explicitly diagnosed and safely
-        skipped, so the rest of the file is still trustworthy.
-        Abandonment (``SYN3xx``) does affect it, because it means a
-        region of source was never even inspected.
+        skipped, so the parser's cursor still reaches everything after
+        them. Abandonment (``SYN3xx``) does affect it, because it means
+        a region of source was never even inspected by the parser.
 
         Returns:
             ``True`` when ``tokens_consumed == tokens_total`` and
@@ -176,12 +201,25 @@ class AnalysisResult:
             Diagnostics emitted by the semantic analyser.
         success:
             ``True`` if the analysis pipeline completed without semantic
-            errors or unexpected exceptions, **and** coverage was
-            complete (see :attr:`AnalysisCoverage.is_complete`).  A file
-            that parses without exceptions but leaves a substantial
-            region of PROCEDURE DIVISION source unanalysed is reported
-            as ``success: False`` rather than silently claiming a
-            complete analysis (task #108).
+            errors or unexpected exceptions, **and** the parser did not
+            abandon any region of the source (see
+            :attr:`AnalysisCoverage.parse_complete`).  A file that parses
+            without exceptions but leaves a substantial region of
+            PROCEDURE DIVISION source unanalysed is reported as
+            ``success: False`` rather than silently claiming a clean
+            result (task #108).
+
+            ``success: True`` does **not** mean the AST completely
+            represents the COBOL source.  Explicitly diagnosed
+            unsupported/unmodelled constructs (see
+            :attr:`syntax_diagnostics`) do not by themselves make
+            ``success`` ``False`` — they are known, reported gaps in AST
+            representation, not abandonment, and whether the AST is a
+            *complete* representation of the file is a #109 (AST/IR
+            completeness) question this flag does not answer.  Check
+            :attr:`coverage` and :attr:`syntax_diagnostics` for that
+            picture; do not infer AST completeness from ``success``
+            alone.
         error:
             The unexpected exception that caused failure, or ``None`` if the
             pipeline completed normally.
@@ -197,7 +235,9 @@ class AnalysisResult:
             abandoned regions.  Empty for results produced before parsing
             reached the parser stage.
         coverage:
-            How much of the source file was actually analysed, or
+            How much of the source file the *parser* actually traversed
+            (see :class:`AnalysisCoverage`'s scope warning: this is
+            parser coverage, not semantic or AST completeness), or
             ``None`` if parsing did not complete far enough to measure
             it (e.g. a lexer failure).
     """
