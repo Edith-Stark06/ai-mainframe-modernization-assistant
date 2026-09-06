@@ -66,6 +66,7 @@ from app.ai.orchestration.service import AIAnalysisOrchestrator
 from app.ai.providers.errors import LLMProviderUnavailableError
 
 from app.analysis.dependencies.graph import DependencyGraph
+from app.analysis.dependencies.models import DependencyType
 from app.analysis.dependencies.resolver import WorkspaceDependencyResolver
 from app.analysis.dependencies.summary import DependencyAnalysisSummary
 from app.analysis.serializers.ast import serialize_ast
@@ -288,7 +289,22 @@ async def analyze_source(
             if pid_node is not None:
                 program_name = pid_node.value.upper()
 
-        graph = DependencyGraph.from_dependencies(program_name, result.dependencies)
+        # The workspace-resolution graph represents cross-unit control
+        # transfer/inclusion (this program calls/performs/copies X) --
+        # its targets are resolved against workspace files by
+        # WorkspaceDependencyResolver below. Task #111's VARIABLE_READ/
+        # VARIABLE_WRITE/CONDITION dependencies name plain data items,
+        # not other programs/paragraphs/copybooks, so including them
+        # here would have the resolver try to match variable names
+        # against workspace files. They remain fully available,
+        # unfiltered, via the flat `dependencies` field above.
+        structural_dependencies = [
+            dep
+            for dep in result.dependencies
+            if dep.type
+            in (DependencyType.CALL, DependencyType.PERFORM, DependencyType.COPY)
+        ]
+        graph = DependencyGraph.from_dependencies(program_name, structural_dependencies)
         resolver = WorkspaceDependencyResolver()
         resolutions = resolver.resolve(graph, inventory)
         summary = DependencyAnalysisSummary.from_results(graph, resolutions)

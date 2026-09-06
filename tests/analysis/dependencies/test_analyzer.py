@@ -61,13 +61,20 @@ def test_perform_dependency():
     """
     deps = get_dependencies(source)
 
-    assert len(deps) == 2
+    # task #111: PERFORM UNTIL's condition operand (WS-DONE) is now also
+    # extracted as a CONDITION dependency; the literal 'Y' is correctly
+    # excluded.
+    assert len(deps) == 3
 
     assert deps[0].type == DependencyType.PERFORM
     assert deps[0].target == "CALCULATE-BONUS"
 
-    assert deps[1].type == DependencyType.PERFORM
-    assert deps[1].target == "DO-WORK"
+    condition_deps = [d for d in deps if d.type == DependencyType.CONDITION]
+    assert len(condition_deps) == 1
+    assert condition_deps[0].target == "WS-DONE"
+
+    perform_deps = [d for d in deps if d.type == DependencyType.PERFORM]
+    assert {d.target for d in perform_deps} == {"CALCULATE-BONUS", "DO-WORK"}
 
 
 def test_duplicate_dependency_handling():
@@ -165,13 +172,15 @@ def test_if_statement_nested():
     """
     deps = get_dependencies(source)
 
-    assert len(deps) == 2
+    # task #111: the IF condition's two identifier operands (X and Y)
+    # are now also extracted as CONDITION dependencies.
+    assert len(deps) == 4
 
-    assert deps[0].type == DependencyType.CALL
-    assert deps[0].target == "SUB1"
+    condition_deps = [d for d in deps if d.type == DependencyType.CONDITION]
+    assert {d.target for d in condition_deps} == {"X", "Y"}
 
-    assert deps[1].type == DependencyType.PERFORM
-    assert deps[1].target == "PARA1"
+    assert any(d.type == DependencyType.CALL and d.target == "SUB1" for d in deps)
+    assert any(d.type == DependencyType.PERFORM and d.target == "PARA1" for d in deps)
 
 
 def test_copy_dependency_not_extractable_from_current_ast():

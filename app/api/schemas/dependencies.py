@@ -103,7 +103,9 @@ class DependencyResponse(BaseModel):
 
     Attributes:
         type:
-            Dependency kind as a string value (``CALL`` or ``PERFORM``).
+            Dependency kind as a string value (``CALL``, ``PERFORM``,
+            ``COPY``, ``VARIABLE_READ``, ``VARIABLE_WRITE``, or
+            ``CONDITION``).
         target:
             Literal target name as extracted by the parser.
         source_location:
@@ -116,7 +118,10 @@ class DependencyResponse(BaseModel):
 
     type: str = Field(
         ...,
-        description="Dependency kind (CALL or PERFORM).",
+        description=(
+            "Dependency kind (CALL, PERFORM, COPY, VARIABLE_READ, "
+            "VARIABLE_WRITE, or CONDITION)."
+        ),
     )
     target: str = Field(
         ...,
@@ -207,7 +212,8 @@ class DependencyGraphEdgeResponse(BaseModel):
         target:
             Identifier of the target program.
         dependency_type:
-            Dependency kind (CALL or PERFORM).
+            Dependency kind (CALL, PERFORM, COPY, VARIABLE_READ,
+            VARIABLE_WRITE, or CONDITION).
         source_location:
             Source location of the dependency, or null if unavailable.
     """
@@ -224,9 +230,19 @@ class DependencyGraphEdgeResponse(BaseModel):
         ...,
         description="Identifier of the target program.",
     )
-    dependency_type: Literal["CALL", "PERFORM"] = Field(
+    dependency_type: Literal[
+        "CALL",
+        "PERFORM",
+        "COPY",
+        "VARIABLE_READ",
+        "VARIABLE_WRITE",
+        "CONDITION",
+    ] = Field(
         ...,
-        description="Dependency kind (CALL or PERFORM).",
+        description=(
+            "Dependency kind (CALL, PERFORM, COPY, VARIABLE_READ, "
+            "VARIABLE_WRITE, or CONDITION)."
+        ),
     )
     source_location: PositionResponse | None = Field(
         default=None,
