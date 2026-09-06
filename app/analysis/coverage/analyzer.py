@@ -397,14 +397,26 @@ def compute_coverage(
             status=CoverageStatus.NOT_MEASURABLE,
             detail="No IR, so no control-flow graph could be built.",
         )
-    elif flow is None or not flow.nodes:
+    elif flow is None:
+        # The caller did not supply a CFG (e.g. AnalysisService, which
+        # does not build one). Not measurable here — the modernization
+        # pipeline recomputes coverage with a flow.
+        cfg_dim = CoverageDimension(
+            name="control_flow",
+            ratio=1.0,
+            covered=0,
+            total=0,
+            status=CoverageStatus.NOT_MEASURABLE,
+            detail="No control-flow graph supplied to this coverage computation.",
+        )
+    elif not flow.nodes:
         cfg_dim = CoverageDimension(
             name="control_flow",
             ratio=0.0,
             covered=0,
             total=1,
             status=CoverageStatus.FAILED,
-            detail="IR exists but no control-flow graph was produced.",
+            detail="IR exists but the control-flow graph is empty.",
         )
     else:
         stmt_nodes = [
