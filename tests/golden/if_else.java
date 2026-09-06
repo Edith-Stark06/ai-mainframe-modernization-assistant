@@ -13,6 +13,7 @@ public class IfElseTest {
         } else {
             System.out.println("MINOR");
         }
+        // TODO: translate IRReturn
 
     }
 
