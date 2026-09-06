@@ -66,7 +66,7 @@ from app.ai.orchestration.service import AIAnalysisOrchestrator
 from app.ai.providers.errors import LLMProviderUnavailableError
 
 from app.analysis.dependencies.graph import DependencyGraph
-from app.analysis.dependencies.models import DependencyType
+from app.analysis.dependencies.models import STRUCTURAL_DEPENDENCY_TYPES
 from app.analysis.dependencies.resolver import WorkspaceDependencyResolver
 from app.analysis.dependencies.summary import DependencyAnalysisSummary
 from app.analysis.serializers.ast import serialize_ast
@@ -301,8 +301,7 @@ async def analyze_source(
         structural_dependencies = [
             dep
             for dep in result.dependencies
-            if dep.type
-            in (DependencyType.CALL, DependencyType.PERFORM, DependencyType.COPY)
+            if dep.type in STRUCTURAL_DEPENDENCY_TYPES
         ]
         graph = DependencyGraph.from_dependencies(program_name, structural_dependencies)
         resolver = WorkspaceDependencyResolver()

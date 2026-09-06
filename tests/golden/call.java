@@ -7,7 +7,6 @@ public class CallTest {
     public void run() {
 
         subprog();
-        // TODO: translate IRReturn
 
     }
 
