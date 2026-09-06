@@ -1,0 +1,13 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. LOWCOMPLEX.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 WS-A PIC 9(3) VALUE 0.
+       01 WS-B PIC 9(3) VALUE 0.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           MOVE 1 TO WS-A.
+           MOVE 2 TO WS-B.
+           ADD WS-A TO WS-B.
+           DISPLAY WS-B.
+           STOP RUN.
