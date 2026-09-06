@@ -161,6 +161,14 @@ class AnalysisCoverage:
     statements_parsed: int
     unsupported_construct_count: int
     abandoned_construct_count: int
+    unknown_token_count: int = 0
+    """
+    Tokens the lexer emitted with type ``UNKNOWN`` — source text it could
+    not classify. Added for Phase 5 lexical coverage (#115); defaults to
+    ``0`` so existing constructions and the ``parse_complete`` contract
+    are unaffected. Does **not** feed ``parse_complete`` (which is a
+    parser-cursor signal, not a lexical one).
+    """
 
     @property
     def parse_complete(self) -> bool:

@@ -85,7 +85,11 @@ from app.analysis.dependencies.models import Dependency
 __all__ = ["AnalysisService"]
 
 
-def _build_coverage(ast: ProgramNode, parse_result: ParseResult) -> AnalysisCoverage:
+def _build_coverage(
+    ast: ProgramNode,
+    parse_result: ParseResult,
+    tokens: list[Any] | None = None,
+) -> AnalysisCoverage:
     """
     Compute an :class:`~app.analysis.models.AnalysisCoverage` snapshot.
 
@@ -98,6 +102,9 @@ def _build_coverage(ast: ProgramNode, parse_result: ParseResult) -> AnalysisCove
     Args:
         ast: The parsed :class:`~app.parser.ast.program.ProgramNode`.
         parse_result: The result of ``ProgramParser.parse_with_diagnostics``.
+        tokens: The lexer's token list, used only to count ``UNKNOWN``
+            tokens for Phase 5 lexical coverage. ``None`` leaves the count
+            at ``0``.
 
     Returns:
         A populated :class:`~app.analysis.models.AnalysisCoverage`.
@@ -113,6 +120,14 @@ def _build_coverage(ast: ProgramNode, parse_result: ParseResult) -> AnalysisCove
         elif diag.category is SyntaxCategory.ABANDONED:
             abandoned_count += 1
 
+    unknown_token_count = 0
+    if tokens is not None:
+        unknown_token_count = sum(
+            1
+            for t in tokens
+            if getattr(getattr(t, "type", None), "name", "") == "UNKNOWN"
+        )
+
     return AnalysisCoverage(
         tokens_total=parse_result.tokens_total,
         tokens_consumed=parse_result.tokens_consumed,
@@ -120,6 +135,7 @@ def _build_coverage(ast: ProgramNode, parse_result: ParseResult) -> AnalysisCove
         statements_parsed=statements_parsed,
         unsupported_construct_count=unsupported_count,
         abandoned_construct_count=abandoned_count,
+        unknown_token_count=unknown_token_count,
     )
 
 
@@ -223,7 +239,7 @@ class AnalysisService:
             )
         ast = parse_result.program
         syntax_diagnostics: list[Any] = list(parse_result.diagnostics)
-        coverage = _build_coverage(ast, parse_result)
+        coverage = _build_coverage(ast, parse_result, tokens)
         logger.debug(
             "AnalysisService: parsing complete. {} syntax diagnostic(s), "
             "parse_complete={} (parser coverage, not AST completeness).",
