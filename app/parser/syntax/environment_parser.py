@@ -257,6 +257,7 @@ class EnvironmentDivisionParser:
                 ),
                 error_token=tok,
                 context=RecoveryContext.ENVIRONMENT_DIVISION,
+                code="SYN001",
             )
             # Guarantee forward progress.  ``synchronise()`` anchors on a
             # section keyword *without consuming it*, so a token such as
@@ -314,6 +315,7 @@ class EnvironmentDivisionParser:
                 ),
                 error_token=name_token,
                 context=RecoveryContext.ENVIRONMENT_DIVISION,
+                code="SYN102",
             )
         elif stream.current().type is TokenType.PERIOD:
             stream.advance()

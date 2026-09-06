@@ -69,7 +69,11 @@ from app.analysis.dependencies.graph import DependencyGraph
 from app.analysis.dependencies.resolver import WorkspaceDependencyResolver
 from app.analysis.dependencies.summary import DependencyAnalysisSummary
 from app.analysis.serializers.ast import serialize_ast
-from app.analysis.serializers.diagnostics import serialize_diagnostics
+from app.analysis.serializers.diagnostics import (
+    serialize_coverage,
+    serialize_diagnostic_groups,
+    serialize_diagnostics,
+)
 from app.analysis.serializers.ir import serialize_ir
 from app.analysis.serializers.dependencies import serialize_dependencies
 from app.analysis.service import AnalysisService
@@ -259,6 +263,11 @@ async def analyze_source(
     serialized_diagnostics = serialize_diagnostics(
         result.semantic_diagnostics + result.backend_diagnostics
     )
+    serialized_syntax_diagnostics = serialize_diagnostics(result.syntax_diagnostics)
+    serialized_syntax_diagnostics_summary = serialize_diagnostic_groups(
+        result.syntax_diagnostics
+    )
+    serialized_coverage = serialize_coverage(result.coverage)
 
     serialized_dependencies = [
         DependencyResponse.model_validate(dep)
@@ -421,6 +430,9 @@ async def analyze_source(
         ast=serialized_ast,
         ir=serialized_ir,
         diagnostics=serialized_diagnostics,
+        syntax_diagnostics=serialized_syntax_diagnostics,
+        syntax_diagnostics_summary=serialized_syntax_diagnostics_summary,
+        coverage=serialized_coverage,
         dependencies=serialized_dependencies,
         dependency_summary=dependency_summary,
         dependency_graph=dependency_graph,

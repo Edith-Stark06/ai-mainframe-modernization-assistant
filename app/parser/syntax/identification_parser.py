@@ -246,6 +246,7 @@ class IdentificationDivisionParser:
                     message=(f"expected a clause keyword, got {tok.lexeme!r}"),
                     error_token=tok,
                     context=RecoveryContext.IDENTIFICATION_DIVISION,
+                    code="SYN003",
                 )
                 continue
 
@@ -260,6 +261,7 @@ class IdentificationDivisionParser:
                     message=(f"unknown IDENTIFICATION DIVISION clause: {tok.lexeme!r}"),
                     error_token=tok,
                     context=RecoveryContext.IDENTIFICATION_DIVISION,
+                    code="SYN003",
                 )
                 continue
 
@@ -285,6 +287,7 @@ class IdentificationDivisionParser:
                     message=exc.message,
                     error_token=stream.current(),
                     context=RecoveryContext.IDENTIFICATION_DIVISION,
+                    code="SYN005",
                 )
 
         end = stream.current().position
@@ -402,6 +405,7 @@ class IdentificationDivisionParser:
                     message=f"missing period after {clause_name} value",
                     error_token=tok,
                     context=RecoveryContext.IDENTIFICATION_DIVISION,
+                    code="SYN002",
                 )
                 return " ".join(parts), start, tok.position
             parts.append(tok.lexeme)
