@@ -1601,6 +1601,41 @@ class TestPhase1IntelligenceIntegration:
         assert rules[1]["condition"] == "NOT ( A > B )"
         assert rules[1]["actions"] == ["MOVE 2 TO Y"]
 
+    def test_flat_dependencies_expose_variable_and_condition_types_graph_does_not(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """
+        Review finding #2: the flat `dependencies` list must expose the
+        task #111 data-item dependency types (VARIABLE_READ,
+        VARIABLE_WRITE, CONDITION) extracted from `_COBOL_COMBINED`'s
+        MOVE and IF statements, while `dependency_graph` -- restricted
+        to workspace-resolvable structural dependencies -- must contain
+        none of them, only the CALL/PERFORM edges.
+        """
+        ws_id = _create_workspace(
+            workspace_root,
+            {"combined.cbl": _COBOL_COMBINED},
+        )
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "combined.cbl"},
+        ).json()
+        assert body["success"] is True
+
+        flat_types = {dep["type"] for dep in body["dependencies"]}
+        assert "VARIABLE_READ" in flat_types or "VARIABLE_WRITE" in flat_types
+        assert "CONDITION" in flat_types
+        assert "CALL" in flat_types
+        assert "PERFORM" in flat_types
+
+        graph_edge_types = {
+            edge["dependency_type"] for edge in body["dependency_graph"]["edges"]
+        }
+        assert graph_edge_types <= {"CALL", "PERFORM", "COPY"}
+        assert "VARIABLE_READ" not in graph_edge_types
+        assert "VARIABLE_WRITE" not in graph_edge_types
+        assert "CONDITION" not in graph_edge_types
+
     def test_graph_summary_consistency(
         self, client: TestClient, workspace_root: Path
     ) -> None:

@@ -56,8 +56,19 @@ Operand translation::
 Responsibilities:
     - Validate the supplied :class:`~app.parser.semantic.context.SemanticContext`.
     - Accept an optional :class:`~app.parser.ast.program.ProgramNode`; when
-      provided, walk its PROCEDURE DIVISION to emit MOVE instructions.
-    - Translate each ``MoveStatementNode`` into one ``IRMove`` instruction.
+      provided, walk its PROCEDURE DIVISION and translate every currently
+      supported statement type: MOVE, DISPLAY, ACCEPT, ADD, SUBTRACT,
+      MULTIPLY, DIVIDE, IF (with nested statements and ELSE), PERFORM,
+      PERFORM UNTIL, GO TO, CALL, STOP RUN, and GOBACK (task #109 audit
+      and completeness pass; see ``_translate_statement`` for the exact
+      dispatch and ``tests/ir/test_ir_ast_node_coverage.py`` for the full
+      AST -> IR mapping matrix, including which of these are actually
+      reachable from real COBOL source today).
+    - Stamp every emitted instruction with the source position of the AST
+      statement it came from and the name of the enclosing paragraph
+      (task #109; see :meth:`_emit` and
+      :attr:`~app.ir.instructions.IRInstruction.source_position` /
+      :attr:`~app.ir.instructions.IRInstruction.paragraph`).
     - Emit a structured IR translation warning for unsupported statements while
       continuing translation.
     - Expose reusable operand helpers: :meth:`build_operand`,
@@ -66,19 +77,42 @@ Responsibilities:
     - Log lifecycle events via Loguru.
 
 Non-responsibilities:
-    - DISPLAY, ACCEPT, CALL, IF, PERFORM, GO TO, arithmetic (TASK-027+).
+    - EVALUATE, OPEN/CLOSE/READ/WRITE, COMPUTE, STRING/UNSTRING/INSPECT,
+      and every other verb the parser itself classifies as unsupported
+      (task #105/#108) -- these have no AST representation to translate,
+      so there is nothing for this module to lose; see task #108's audit
+      for the parser-side accounting of these.
     - Java code generation.
     - Re-parsing identifiers (uses resolved symbols from SymbolTable).
     - Optimisation passes.
 
-Extension points for future tasks:
-    - :meth:`build_entry_block` — iterate through ``ProcedureDivisionNode``
-      paragraphs; add new ``elif`` branches for DISPLAY, CALL, PERFORM, etc.
-    - :meth:`build_operand` — extend literal/variable detection for typed
-      operands (``IROperand`` value type) as types mature.
-    - :meth:`build_function` — add multi-block support (IF, PERFORM, GO TO).
-    - :meth:`build_module` — emit one ``IRFunction`` per paragraph for
-      section-level granularity.
+Architectural note -- why paragraphs and IF/PERFORM branches are NOT
+split into separate IRBasicBlock/IRFunction instances (task #109):
+    The IR model already supports it structurally --
+    :class:`~app.ir.program.IRFunction` holds a tuple of
+    :class:`~app.ir.blocks.IRBasicBlock` objects, and
+    :class:`~app.ir.instructions.IRConditionalBranch` /
+    :class:`~app.ir.instructions.IRJump` already exist for wiring blocks
+    together -- and one IRFunction per paragraph would be the more
+    natural mapping (see :class:`~app.ir.program.IRFunction`'s own
+    docstring). It was deliberately not done, because
+    :mod:`app.backend.java.generator` and
+    :func:`app.backend.java.generator._collect_statements` currently
+    read only ``module.functions[0]`` and ``function.blocks[0]`` --
+    splitting either would silently drop every paragraph/branch after
+    the first from generated Java output, and fixing that is a Java
+    generation change explicitly out of task #109/#110's scope.
+
+    Instead, paragraph identity and structured control flow (IF/ELSE,
+    PERFORM UNTIL) are preserved *within* the single flat block: every
+    instruction is stamped with its paragraph (see above), and IF/ELSE/
+    PERFORM UNTIL still lower to the existing ``IRIf``/``IRElse``/
+    ``IREndIf``/``IRPerformUntil``/``IREndPerform`` marker instructions
+    (unchanged from before task #109) that the Java backend already
+    consumes correctly. Task #110's control-flow graph is built by
+    interpreting this marker sequence as a downstream analysis pass,
+    rather than by restructuring the IR itself -- see
+    :mod:`app.modernization.flow.generator`.
 
 Dependencies:
     - :mod:`app.parser.semantic.context`     — ``SemanticContext``.
@@ -139,7 +173,8 @@ Project:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import dataclasses
+from typing import TYPE_CHECKING, TypeVar
 
 from loguru import logger
 
@@ -159,9 +194,11 @@ from app.ir.instructions import (
     IRJump,
     IRMove,
     IRMultiply,
+    IRReturn,
     IRSubtract,
 )
 from app.ir.program import IRFunction, IRModule, IRProgram
+from app.parser.lexer.position import Position
 from app.parser.semantic.context import SemanticContext
 from app.parser.semantic.symbols import ProgramSymbol, SymbolKind
 from app.parser.semantic.diagnostics import SemanticDiagnostic, SemanticSeverity
@@ -183,10 +220,14 @@ if TYPE_CHECKING:
         MultiplyStatementNode,
         PerformStatementNode,
         StatementNode,
+        StopRunStatementNode,
+        GobackStatementNode,
         SubtractStatementNode,
     )
 
 __all__ = ["IRBuilder"]
+
+_InstrT = TypeVar("_InstrT", bound=IRInstruction)
 
 # Name used for the top-level entry function in every generated module.
 _ENTRY_FUNCTION_NAME: str = "__entry__"
@@ -269,6 +310,7 @@ class IRBuilder:
         self._current_instructions: list[IRInstruction] = []
         self._current_label: str = _ENTRY_BLOCK_LABEL
         self._block_counter: int = 0
+        self._current_paragraph: str = ""
         logger.debug("IRBuilder: initialised with semantic context.")
 
         if context.has_errors:
@@ -445,21 +487,20 @@ class IRBuilder:
         Construct the entry :class:`~app.ir.blocks.IRBasicBlock`.
 
         When *proc_div* is supplied the builder iterates all paragraphs and
-        their statements in source order, emitting one
-        :class:`~app.ir.instructions.IRMove` per ``MOVE`` statement.
-        Unsupported statement types emit a ``DEBUG``-level log and are
-        skipped; translation continues.
+        their statements in source order, translating every currently
+        supported statement type (see
+        :meth:`_translate_statement` for the exact dispatch and
+        :mod:`app.ir.builder`'s module docstring for the AST-to-IR
+        coverage matrix).  Unsupported statement types emit a
+        ``DEBUG``-level log and are skipped; translation continues.
 
-        Extension guide for future tasks:
+        Every emitted instruction is stamped (task #109) with the source
+        position of the AST statement it came from and the name of the
+        paragraph it belongs to, via :meth:`_emit`.
 
-        * **DISPLAY** — add ``elif isinstance(stmt, DisplayStatementNode):``
-          and emit :class:`~app.ir.instructions.IRCall`.
-        * **STOP RUN / GOBACK** — emit :class:`~app.ir.instructions.IRReturn`.
-        * **IF / EVALUATE** — emit additional ``IRBasicBlock`` instances +
-          :class:`~app.ir.instructions.IRBranch`; wire them into the function
-          rather than this block alone.
-        * **PERFORM / CALL** — emit :class:`~app.ir.instructions.IRCall`.
-        * **Arithmetic** — emit :class:`~app.ir.instructions.IRAssignment`.
+        Remaining known gap (task #109; documented, not fixed here):
+        EVALUATE has no AST representation at all yet, so it cannot be
+        translated regardless of this block's structure.
 
         Args:
             proc_div:
@@ -475,6 +516,7 @@ class IRBuilder:
         self._current_instructions = []
         self._current_label = _ENTRY_BLOCK_LABEL
         self._block_counter = 0
+        self._current_paragraph = ""
 
         if proc_div is not None:
             for para in proc_div.paragraphs:
@@ -516,6 +558,43 @@ class IRBuilder:
         self._flush_block()
         self._current_label = label
 
+    def _emit(self, instr: _InstrT, position: Position | None = None) -> _InstrT:
+        """
+        Stamp *instr* with the current paragraph/source position and append it.
+
+        Centralising the stamp-and-append step here (task #109) means
+        every emission site records source mapping and paragraph
+        identity the same way, rather than each ``build_*_instruction``
+        method needing to remember to do it individually.  Since
+        :class:`~app.ir.instructions.IRInstruction` is frozen,
+        stamping is done via :func:`dataclasses.replace`, producing a
+        new instance rather than mutating *instr*.
+
+        Args:
+            instr:
+                The instruction to stamp and append.
+            position:
+                The AST position this instruction was lowered from, or
+                ``None`` for structural marker instructions
+                (:class:`~app.ir.instructions.IRElse`,
+                :class:`~app.ir.instructions.IREndIf`,
+                :class:`~app.ir.instructions.IREndPerform`) that have no
+                position of their own; callers should pass the enclosing
+                statement's position for those instead of leaving this
+                unset.
+
+        Returns:
+            The stamped instruction, already appended to
+            ``self._current_instructions``.
+        """
+        stamped = dataclasses.replace(
+            instr,
+            source_position=position,
+            paragraph=self._current_paragraph,
+        )
+        self._current_instructions.append(stamped)
+        return stamped
+
     # ------------------------------------------------------------------
     # Statement translation helpers
     # ------------------------------------------------------------------
@@ -526,13 +605,25 @@ class IRBuilder:
 
         Unsupported statements are logged at DEBUG level and skipped.
 
+        Sets :attr:`_current_paragraph` for the duration of the call so
+        that every instruction emitted for this paragraph's statements
+        is stamped with its paragraph identity (task #109), and restores
+        the previous value afterwards -- COBOL paragraphs do not nest,
+        but this keeps the method correct even if it is ever called
+        recursively.
+
         Args:
             para:
                 The :class:`~app.parser.ast.paragraphs.ParagraphNode` to
                 translate.
         """
-        for stmt in para.statements:
-            self._translate_statement(stmt)
+        previous_paragraph = self._current_paragraph
+        self._current_paragraph = para.name
+        try:
+            for stmt in para.statements:
+                self._translate_statement(stmt)
+        finally:
+            self._current_paragraph = previous_paragraph
 
     def _translate_statement(self, stmt: StatementNode) -> IRInstruction | None:
         """
@@ -557,49 +648,51 @@ class IRBuilder:
             CallStatementNode,
             DisplayStatementNode,
             DivideStatementNode,
+            GobackStatementNode,
             GoToStatementNode,
             IfStatementNode,
             MoveStatementNode,
             MultiplyStatementNode,
             PerformStatementNode,
             PerformUntilStatementNode,
+            StopRunStatementNode,
             SubtractStatementNode,
         )
 
         if isinstance(stmt, MoveStatementNode):
             instr_move = self.build_move_instruction(stmt)
             if instr_move:
-                self._current_instructions.append(instr_move)
+                instr_move = self._emit(instr_move, stmt.start_position)
             return instr_move
         if isinstance(stmt, DisplayStatementNode):
             instr_disp = self.build_display_instruction(stmt)
             if instr_disp:
-                self._current_instructions.append(instr_disp)
+                instr_disp = self._emit(instr_disp, stmt.start_position)
             return instr_disp
         if isinstance(stmt, AcceptStatementNode):
             instr_acc = self.build_accept_instruction(stmt)
             if instr_acc:
-                self._current_instructions.append(instr_acc)
+                instr_acc = self._emit(instr_acc, stmt.start_position)
             return instr_acc
         if isinstance(stmt, AddStatementNode):
             instr_add = self.build_add_instruction(stmt)
             if instr_add:
-                self._current_instructions.append(instr_add)
+                instr_add = self._emit(instr_add, stmt.start_position)
             return instr_add
         if isinstance(stmt, SubtractStatementNode):
             instr_sub = self.build_subtract_instruction(stmt)
             if instr_sub:
-                self._current_instructions.append(instr_sub)
+                instr_sub = self._emit(instr_sub, stmt.start_position)
             return instr_sub
         if isinstance(stmt, MultiplyStatementNode):
             instr_mul = self.build_multiply_instruction(stmt)
             if instr_mul:
-                self._current_instructions.append(instr_mul)
+                instr_mul = self._emit(instr_mul, stmt.start_position)
             return instr_mul
         if isinstance(stmt, DivideStatementNode):
             instr_div = self.build_divide_instruction(stmt)
             if instr_div:
-                self._current_instructions.append(instr_div)
+                instr_div = self._emit(instr_div, stmt.start_position)
             return instr_div
         if isinstance(stmt, IfStatementNode):
             self.build_if_statement(stmt)
@@ -616,8 +709,21 @@ class IRBuilder:
         if isinstance(stmt, CallStatementNode):
             instr_call = self.build_call_instruction(stmt)
             if instr_call:
-                self._current_instructions.append(instr_call)
+                instr_call = self._emit(instr_call, stmt.start_position)
             return instr_call
+        if isinstance(stmt, StopRunStatementNode):
+            # task #109, confirmed AST-node-loss fix: STOP RUN previously
+            # fell through to the generic "unsupported" log below and
+            # produced no IR instruction at all, despite IRReturn
+            # existing specifically for this purpose.
+            instr_stop = self.build_stop_run_instruction(stmt)
+            instr_stop = self._emit(instr_stop, stmt.start_position)
+            return instr_stop
+        if isinstance(stmt, GobackStatementNode):
+            # task #109, same fix as StopRunStatementNode above.
+            instr_goback = self.build_goback_instruction(stmt)
+            instr_goback = self._emit(instr_goback, stmt.start_position)
+            return instr_goback
 
         logger.debug(
             "IRBuilder._translate_statement(): skipping unsupported "
@@ -750,25 +856,36 @@ class IRBuilder:
     def build_if_statement(self, stmt: IfStatementNode) -> None:
         ir_left = self.build_operand(stmt.condition_left)
         ir_right = self.build_operand(stmt.condition_right)
-        self._current_instructions.append(
-            IRIf(left=ir_left, operator=stmt.condition_operator, right=ir_right)
+        self._emit(
+            IRIf(left=ir_left, operator=stmt.condition_operator, right=ir_right),
+            stmt.start_position,
         )
         for then_stmt in stmt.then_statements:
             self._translate_statement(then_stmt)
         if stmt.else_statements:
-            self._current_instructions.append(IRElse())
+            self._emit(IRElse(), stmt.start_position)
             for else_stmt in stmt.else_statements:
                 self._translate_statement(else_stmt)
-        self._current_instructions.append(IREndIf())
+        self._emit(IREndIf(), stmt.start_position)
 
     def build_perform_statement(self, stmt: PerformStatementNode) -> None:
         """
         Lower a single ``PerformStatementNode`` into an ``IRCall``.
+
+        Tagged ``comment="PERFORM"`` (task #110) so that
+        control-flow-graph construction can tell a PERFORM apart from a
+        genuine :class:`~app.parser.ast.statements.CallStatementNode`
+        (see :meth:`build_call_instruction`) once both have lowered to
+        the identically-shaped ``IRCall`` -- without this, a PERFORM to
+        a paragraph name that does not resolve locally was
+        indistinguishable from, and mis-treated as, an external CALL.
         """
         if not stmt.target:
             logger.warning("Unsupported PERFORM form: missing target. Continuing.")
         else:
-            self._current_instructions.append(IRCall(target=stmt.target))
+            self._emit(
+                IRCall(target=stmt.target, comment="PERFORM"), stmt.start_position
+            )
 
     def build_go_to_statement(self, stmt: GoToStatementNode) -> None:
         """
@@ -777,7 +894,54 @@ class IRBuilder:
         if not stmt.target:
             logger.warning("Unresolved target in GO TO statement. Continuing.")
         else:
-            self._current_instructions.append(IRJump(target=stmt.target))
+            self._emit(IRJump(target=stmt.target), stmt.start_position)
+
+    def build_stop_run_instruction(self, stmt: StopRunStatementNode) -> IRReturn:
+        """
+        Lower a single ``StopRunStatementNode`` into an ``IRReturn``.
+
+        ``STOP RUN`` terminates the whole program with no return value,
+        so the resulting instruction carries an empty ``operand``.
+
+        Args:
+            stmt:
+                The :class:`~app.parser.ast.statements.StopRunStatementNode`
+                to lower.
+
+        Returns:
+            An :class:`~app.ir.instructions.IRReturn` instruction, with
+            ``comment="STOP RUN"`` so #110's control-flow analysis can
+            distinguish this from :meth:`build_goback_instruction`'s
+            identically-shaped result.
+        """
+        return IRReturn(operand="", comment="STOP RUN")
+
+    def build_goback_instruction(self, stmt: GobackStatementNode) -> IRReturn:
+        """
+        Lower a single ``GobackStatementNode`` into an ``IRReturn``.
+
+        ``GOBACK`` returns control to the caller with no return value, so
+        the resulting instruction carries an empty ``operand`` -- the
+        same shape as :meth:`build_stop_run_instruction`.  The two are
+        kept as separate methods (rather than one shared helper) because
+        they lower distinct AST node types and #110's control-flow
+        analysis needs to be able to tell a program-terminating ``STOP
+        RUN`` apart from a caller-returning ``GOBACK`` by the *AST* node
+        that produced the instruction, even though today's IR shape is
+        identical.
+
+        Args:
+            stmt:
+                The :class:`~app.parser.ast.statements.GobackStatementNode`
+                to lower.
+
+        Returns:
+            An :class:`~app.ir.instructions.IRReturn` instruction, with
+            ``comment="GOBACK"`` so #110's control-flow analysis can
+            distinguish this from :meth:`build_stop_run_instruction`'s
+            identically-shaped result.
+        """
+        return IRReturn(operand="", comment="GOBACK")
 
     # ------------------------------------------------------------------
     # Operand translation helpers (reusable by future passes)
@@ -1002,19 +1166,23 @@ class IRBuilder:
         for arg in stmt.arguments:
             args.append(self.build_operand(arg))
 
+        # Tagged ``comment="CALL"`` (task #110) -- see the matching note
+        # on build_perform_statement.
         return IRCall(
             target=target,
             args=tuple(args),
+            comment="CALL",
         )
 
     def build_perform_until_statement(self, stmt: PerformUntilStatementNode) -> None:
         ir_left = self.build_operand(stmt.condition_left)
         ir_right = self.build_operand(stmt.condition_right)
-        self._current_instructions.append(
+        self._emit(
             IRPerformUntil(
                 left=ir_left, operator=stmt.condition_operator, right=ir_right
-            )
+            ),
+            stmt.start_position,
         )
         for body_stmt in stmt.statements:
             self._translate_statement(body_stmt)
-        self._current_instructions.append(IREndPerform())
+        self._emit(IREndPerform(), stmt.start_position)
