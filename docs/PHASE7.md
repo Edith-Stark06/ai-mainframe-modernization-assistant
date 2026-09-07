@@ -32,21 +32,26 @@ app/training/registry.py    models/registry.json   (TRAINED → VALIDATED/CANDID
 
 ## Strict data separation
 
-The #118 training dataset and the #119 benchmark are drawn from the
-**same source corpus** — 17 of 20 programs are byte-identical between
-`data/benchmark/benchmark-v1/examples.jsonl` and
-`data/dataset/phase6-v1/all.jsonl`.
+The **original** `phase6-v1` dataset and the `benchmark-v1` benchmark
+were drawn from the **same source corpus** — 17 of 20 programs are
+byte-identical between the two. `resolve_training_data` removes every
+source that also appears in the benchmark and refuses to proceed if
+fewer than `min_training_sources` (default 8) remain; on `phase6-v1`
+only 2 survive, so it raises `BenchmarkLeakageError`. That guard is
+still in force (`tests/training/test_dataset_resolution.py`).
 
-`resolve_training_data` therefore **removes every source that also
-appears in the benchmark** and refuses to proceed if fewer than
-`min_training_sources` (default 8) remain. On `phase6-v1` only
-`fx_combined` and `fx_simple_proc` survive, so the default path raises
-`BenchmarkLeakageError`. This is a **Phase 6 corpus issue to fix before
-#121 can produce real evidence** (hold sources out of the benchmark, or
-exclude benchmark sources from the dataset) — it is out of #121's scope.
+**`phase6-v2` fixes the source selection.** Its training corpus
+(`app/dataset/corpus.py::load_training_corpus`) is source-disjoint from
+the benchmark: the 3 original programs the benchmark never used plus 15
+dedicated synthetic training-only programs
+(`data/sources/phase6-v2/`, MIT). `resolve_training_data("phase6-v2",
+"train", …)` succeeds at the **normal threshold** with **0 exclusions**:
+12 training sources / 132 examples. `benchmark-v1` is unchanged
+(content hash `df0ff320…`). See `data/sources/phase6-v2/SOURCES.md` and
+`tests/dataset/test_benchmark_separation.py` (id + SHA-256 + normalized
+text, all asserted disjoint — a hard error, never a warning).
 
-`min_training_sources=1` is a documented *pipeline dry-run* lever used
-only by the mock backend and the test suite.
+The shipped configs (`configs/training/*.yaml`) point at `phase6-v2`.
 
 ## Training backend availability
 
@@ -68,9 +73,12 @@ registry path can be exercised end to end. It is never registered as
 # train (real backend; fails loudly if the stack/weights are absent)
 python -m scripts.training.train_model --config configs/training/finetune-v1.yaml --register
 
+# rebuild the benchmark-disjoint training dataset (byte-reproducible)
+python -m scripts.dataset.build_dataset --corpus training --created-at 2026-09-07T00:00:00Z
+
 # train — pipeline dry-run only, NOT a real model
 python -m scripts.training.train_model --config configs/training/finetune-v1.yaml \
-    --backend mock --min-training-sources 1
+    --backend mock
 
 # evaluate a checkpoint against the frozen benchmark (#119/#120 metrics)
 python -m scripts.training.evaluate_finetuned_model --run-dir reports/training-runs/<run_id> \
