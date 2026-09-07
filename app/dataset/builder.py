@@ -67,12 +67,18 @@ class DatasetBuilder:
         work_dir: str | Path,
         secret_config: SecretScanConfig | None = None,
         created_at: str | None = None,
+        dataset_version: str = DATASET_VERSION,
     ) -> None:
         self.work_dir = Path(work_dir)
         self.scanner = SecretScanner(secret_config)
         # A fixed timestamp keeps the build byte-reproducible; callers that
         # want a real wall-clock time pass it explicitly.
         self._created_at = created_at
+        # Which dataset version this build stamps onto every example and
+        # the manifest. ``phase6-v1`` is the original corpus; ``phase6-v2``
+        # is the rebuild whose training sources are held out from the
+        # evaluation set (see app/dataset/corpus.py).
+        self._dataset_version = dataset_version
 
     # ------------------------------------------------------------------
 
@@ -157,7 +163,7 @@ class DatasetBuilder:
     ) -> DatasetExample:
         return DatasetExample(
             example_id=derive_example_id(task, rec.source_id, variant),
-            dataset_version=DATASET_VERSION,
+            dataset_version=self._dataset_version,
             task_type=task,
             difficulty=rec.difficulty,
             input=ExampleInput(
@@ -460,7 +466,7 @@ class DatasetBuilder:
             )
             per_diff[e.difficulty.value] = per_diff.get(e.difficulty.value, 0) + 1
         return {
-            "dataset_version": DATASET_VERSION,
+            "dataset_version": self._dataset_version,
             "generator_version": GENERATOR_VERSION,
             "analysis_version": ANALYSIS_VERSION,
             "created_at": self._created_at,

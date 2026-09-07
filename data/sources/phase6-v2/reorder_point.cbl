@@ -1,0 +1,25 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. REORDERPT.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 WS-ON-HAND     PIC 9(5) VALUE 0.
+       01 WS-REORDER-LVL PIC 9(5) VALUE 40.
+       01 WS-ORDER-QTY   PIC 9(5) VALUE 0.
+       01 WS-ACTION      PIC X(8) VALUE SPACE.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           PERFORM CHECK-STOCK.
+           PERFORM SIZE-ORDER.
+           STOP RUN.
+       CHECK-STOCK.
+           IF WS-ON-HAND < WS-REORDER-LVL
+               MOVE 'ORDER' TO WS-ACTION
+           ELSE
+               MOVE 'HOLD' TO WS-ACTION
+           END-IF.
+       SIZE-ORDER.
+           IF WS-ACTION = 'ORDER'
+               MOVE WS-REORDER-LVL TO WS-ORDER-QTY
+               ADD 20 TO WS-ORDER-QTY
+           END-IF.
+           DISPLAY WS-ORDER-QTY.
