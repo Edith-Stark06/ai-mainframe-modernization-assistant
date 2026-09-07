@@ -6,20 +6,23 @@
 #   python -m scripts.training.train_model --config configs/training/finetune-v1.yaml
 #
 # `dataset_manifest_hash` pins the exact #118 dataset; the pipeline
-# refuses to run if data/dataset/phase6-v1/all.jsonl no longer hashes to
+# refuses to run if data/dataset/phase6-v2/all.jsonl no longer hashes to
 # this value.
+#
+# Uses phase6-v2: the benchmark-disjoint training corpus. phase6-v1's
+# training corpus overlapped benchmark-v1, so #121 rejected it.
 
 training_config_version: finetune-v1
 description: >-
-  LoRA fine-tune of a small instruct model on the Phase 6 phase6-v1
-  training split, benchmark-isolated against benchmark-v1.
+  LoRA fine-tune of a small instruct model on the phase6-v2 training
+  split (source-disjoint from benchmark-v1).
 
 base_model: Qwen/Qwen2.5-Coder-1.5B-Instruct
 tokenizer: Qwen/Qwen2.5-Coder-1.5B-Instruct
 method: lora
 
-dataset_version: phase6-v1
-dataset_manifest_hash: 284e5e5f6785f48000ca0433e6dffe244f68e2d2f44ab30633f93111c6fc30ff
+dataset_version: phase6-v2
+dataset_manifest_hash: 234d9db964883b7ad4da4009ab325a4b4667af48e5be5bf7d7e05e3754a2ebdd
 training_split: train
 max_training_examples: null
 

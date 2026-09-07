@@ -10,9 +10,7 @@ BV = "benchmark-v1"
 
 
 def test_run_spec_is_stable_for_same_config_and_data(config_v1) -> None:
-    data = resolve_training_data(
-        "phase6-v1", "train", benchmark_version=BV, min_training_sources=1
-    )
+    data = resolve_training_data("phase6-v2", "train", benchmark_version=BV)
     a = RunSpec.build(config_v1, data)
     b = RunSpec.build(config_v1, data)
     assert a.spec_hash == b.spec_hash
@@ -57,7 +55,6 @@ def test_two_mock_runs_same_inputs_same_checkpoint_hash(tmp_path, config_v1) -> 
     kw = dict(
         backend="mock",
         output_root=tmp_path,
-        min_training_sources=1,
         created_at="2026-01-01T00:00:00Z",
     )
     r1 = run_training(config_v1, run_id="x1", **kw)
