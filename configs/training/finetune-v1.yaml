@@ -1,0 +1,46 @@
+# Phase 7 / #121 — fine-tuning configuration (LoRA)
+#
+# This is a *reproducible specification*, not a claim that fine-tuning
+# helps. Run it with:
+#
+#   python -m scripts.training.train_model --config configs/training/finetune-v1.yaml
+#
+# `dataset_manifest_hash` pins the exact #118 dataset; the pipeline
+# refuses to run if data/dataset/phase6-v1/all.jsonl no longer hashes to
+# this value.
+
+training_config_version: finetune-v1
+description: >-
+  LoRA fine-tune of a small instruct model on the Phase 6 phase6-v1
+  training split, benchmark-isolated against benchmark-v1.
+
+base_model: Qwen/Qwen2.5-Coder-1.5B-Instruct
+tokenizer: Qwen/Qwen2.5-Coder-1.5B-Instruct
+method: lora
+
+dataset_version: phase6-v1
+dataset_manifest_hash: 284e5e5f6785f48000ca0433e6dffe244f68e2d2f44ab30633f93111c6fc30ff
+training_split: train
+max_training_examples: null
+
+random_seed: 42
+epochs: 3.0
+learning_rate: 0.0002
+batch_size: 8
+gradient_accumulation_steps: 2
+max_sequence_length: 2048
+warmup_ratio: 0.03
+weight_decay: 0.0
+lr_scheduler: cosine
+
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+
+evaluation_strategy: epoch
+checkpoint_strategy: epoch
