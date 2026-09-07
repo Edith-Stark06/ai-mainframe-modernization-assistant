@@ -1,0 +1,31 @@
+# Phase 7 / #121 — fine-tuning configuration (full fine-tune)
+#
+# A materially different configuration from finetune-v1.yaml (full-weight
+# update, lower LR, smaller batch, fewer epochs). It therefore has a
+# different `config_hash` and a different derived `model_version`.
+
+training_config_version: finetune-v1-full
+description: >-
+  Full-weight fine-tune variant for comparison against the LoRA config.
+  Same data and benchmark isolation; different optimisation.
+
+base_model: Qwen/Qwen2.5-Coder-1.5B-Instruct
+tokenizer: Qwen/Qwen2.5-Coder-1.5B-Instruct
+method: full
+
+dataset_version: phase6-v1
+dataset_manifest_hash: 284e5e5f6785f48000ca0433e6dffe244f68e2d2f44ab30633f93111c6fc30ff
+training_split: train
+
+random_seed: 42
+epochs: 2.0
+learning_rate: 0.00001
+batch_size: 4
+gradient_accumulation_steps: 4
+max_sequence_length: 2048
+warmup_ratio: 0.05
+weight_decay: 0.01
+lr_scheduler: linear
+
+evaluation_strategy: epoch
+checkpoint_strategy: epoch
