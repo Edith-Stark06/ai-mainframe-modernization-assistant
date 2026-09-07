@@ -1,0 +1,36 @@
+{
+  "counts": {
+    "test": 33,
+    "train": 143,
+    "validation": 44
+  },
+  "dataset_version": "phase6-v1",
+  "ratios": {
+    "test": 0.15,
+    "train": 0.7,
+    "validation": 0.15
+  },
+  "seed": 20260906,
+  "source_assignment": {
+    "fx_acctbatch": "train",
+    "fx_arithmetic": "train",
+    "fx_call": "train",
+    "fx_combined": "train",
+    "fx_complex_proc": "validation",
+    "fx_eligibility": "train",
+    "fx_file_processing": "train",
+    "fx_hello_world": "train",
+    "fx_highly_coupled": "validation",
+    "fx_if_else": "train",
+    "fx_incomplete": "test",
+    "fx_move_display": "train",
+    "fx_perform_until": "test",
+    "fx_simple_proc": "train",
+    "fx_unsupported": "validation",
+    "syn_ambiguous_question": "train",
+    "syn_limit_check": "train",
+    "syn_misleading_comments": "test",
+    "syn_misleading_names": "train",
+    "syn_status_machine": "validation"
+  }
+}
