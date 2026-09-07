@@ -1,0 +1,234 @@
+{
+  "analysis_version": "deterministic-analysis-phases-1-5",
+  "benchmark_content_hash": "df0ff3202f54bfaf1dabecb801bbb07506875d78b689d9c641a2dd461aa8a632",
+  "benchmark_version": "benchmark-v1",
+  "by_difficulty": {
+    "adversarial": {
+      "hallucination_total": 8,
+      "n": 6,
+      "parse_failure_rate": 0.0,
+      "pass_rate": 0.1667
+    },
+    "difficult": {
+      "hallucination_total": 2,
+      "n": 4,
+      "parse_failure_rate": 0.0,
+      "pass_rate": 0.5
+    },
+    "easy": {
+      "hallucination_total": 0,
+      "n": 4,
+      "parse_failure_rate": 0.0,
+      "pass_rate": 1.0
+    },
+    "medium": {
+      "hallucination_total": 12,
+      "n": 8,
+      "parse_failure_rate": 0.0,
+      "pass_rate": 0.25
+    }
+  },
+  "by_task": {
+    "business_rule_extraction": {
+      "hallucination_total": 12,
+      "headline_metric": 0.0,
+      "n": 5,
+      "parse_failure_rate": 0.0,
+      "pass_rate": 0.0
+    },
+    "cobol_explanation": {
+      "hallucination_total": 0,
+      "headline_metric": 1.0,
+      "n": 2,
+      "parse_failure_rate": 0.0,
+      "pass_rate": 1.0
+    },
+    "cobol_to_java": {
+      "hallucination_total": 0,
+      "headline_metric": 0.9444,
+      "n": 3,
+      "parse_failure_rate": 0.0,
+      "pass_rate": 1.0
+    },
+    "cobol_to_structured": {
+      "hallucination_total": 0,
+      "headline_metric": 1.0,
+      "n": 1,
+      "parse_failure_rate": 0.0,
+      "pass_rate": 1.0
+    },
+    "modernization_qa": {
+      "hallucination_total": 4,
+      "headline_metric": 0.5,
+      "n": 2,
+      "parse_failure_rate": 0.0,
+      "pass_rate": 0.0
+    },
+    "modernization_recommendation": {
+      "hallucination_total": 1,
+      "headline_metric": 0.5,
+      "n": 2,
+      "parse_failure_rate": 0.0,
+      "pass_rate": 0.5
+    },
+    "risk_identification": {
+      "hallucination_total": 2,
+      "headline_metric": 0.375,
+      "n": 4,
+      "parse_failure_rate": 0.0,
+      "pass_rate": 0.5
+    },
+    "source_grounded_qa": {
+      "hallucination_total": 3,
+      "headline_metric": 0.0,
+      "n": 3,
+      "parse_failure_rate": 0.0,
+      "pass_rate": 0.0
+    }
+  },
+  "dataset_version": "phase6-v1",
+  "failures": [
+    {
+      "difficulty": "medium",
+      "example_id": "business_rule_extraction-1c72b226df65",
+      "hallucination_total": 3,
+      "notes": [],
+      "passed": false,
+      "task_type": "business_rule_extraction"
+    },
+    {
+      "difficulty": "medium",
+      "example_id": "business_rule_extraction-291016d74081",
+      "hallucination_total": 2,
+      "notes": [],
+      "passed": false,
+      "task_type": "business_rule_extraction"
+    },
+    {
+      "difficulty": "medium",
+      "example_id": "business_rule_extraction-2b08747b07e9",
+      "hallucination_total": 3,
+      "notes": [],
+      "passed": false,
+      "task_type": "business_rule_extraction"
+    },
+    {
+      "difficulty": "adversarial",
+      "example_id": "business_rule_extraction-3d00c56cb600",
+      "hallucination_total": 2,
+      "notes": [],
+      "passed": false,
+      "task_type": "business_rule_extraction"
+    },
+    {
+      "difficulty": "medium",
+      "example_id": "business_rule_extraction-d3542f7335ff",
+      "hallucination_total": 2,
+      "notes": [],
+      "passed": false,
+      "task_type": "business_rule_extraction"
+    },
+    {
+      "difficulty": "medium",
+      "example_id": "modernization_qa-36f573950d82",
+      "hallucination_total": 1,
+      "notes": [],
+      "passed": false,
+      "task_type": "modernization_qa"
+    },
+    {
+      "difficulty": "adversarial",
+      "example_id": "modernization_qa-5aa9528205d8",
+      "hallucination_total": 3,
+      "notes": [],
+      "passed": false,
+      "task_type": "modernization_qa"
+    },
+    {
+      "difficulty": "difficult",
+      "example_id": "modernization_recommendation-d285d85e7d98",
+      "hallucination_total": 1,
+      "notes": [],
+      "passed": false,
+      "task_type": "modernization_recommendation"
+    },
+    {
+      "difficulty": "difficult",
+      "example_id": "risk_identification-187076740efe",
+      "hallucination_total": 1,
+      "notes": [],
+      "passed": false,
+      "task_type": "risk_identification"
+    },
+    {
+      "difficulty": "adversarial",
+      "example_id": "risk_identification-772231015e43",
+      "hallucination_total": 1,
+      "notes": [],
+      "passed": false,
+      "task_type": "risk_identification"
+    },
+    {
+      "difficulty": "medium",
+      "example_id": "source_grounded_qa-06930284c322",
+      "hallucination_total": 1,
+      "notes": [],
+      "passed": false,
+      "task_type": "source_grounded_qa"
+    },
+    {
+      "difficulty": "adversarial",
+      "example_id": "source_grounded_qa-a98c817daa3f",
+      "hallucination_total": 1,
+      "notes": [],
+      "passed": false,
+      "task_type": "source_grounded_qa"
+    },
+    {
+      "difficulty": "adversarial",
+      "example_id": "source_grounded_qa-ae907e8e0dbb",
+      "hallucination_total": 1,
+      "notes": [],
+      "passed": false,
+      "task_type": "source_grounded_qa"
+    }
+  ],
+  "overall": {
+    "attribution_precision": 0.0909,
+    "attribution_recall": 0.0909,
+    "hallucination_rate": 1.0,
+    "hallucination_totals": {
+      "contradicted_by_source": 2,
+      "incorrect": 11,
+      "invented_business_rule": 7,
+      "invented_dependency": 0,
+      "invented_risk": 0,
+      "invented_source_location": 0,
+      "unsupported_by_source": 2
+    },
+    "n": 22,
+    "parse_failure_rate": 0.0,
+    "pass_rate": 0.4091
+  },
+  "prompt_version": "p6-prompt-v1",
+  "run": {
+    "analysis_version": "deterministic-analysis-phases-1-5",
+    "benchmark_version": "benchmark-v1",
+    "completion_tokens": "unavailable",
+    "dataset_version": "phase6-v1",
+    "estimated_cost": "unavailable",
+    "example_count": 22,
+    "max_tokens": 2048,
+    "mean_latency_s": 0.0001,
+    "mode": "raw",
+    "model": "n/a",
+    "prompt_tokens": "unavailable",
+    "prompt_version": "p6-prompt-v1",
+    "provider": "HeuristicDemoProvider",
+    "provider_failures": 0,
+    "temperature": 0.0,
+    "timeout_s": 60,
+    "timestamp": "2026-09-06T00:00:00Z",
+    "total_tokens": "unavailable"
+  }
+}

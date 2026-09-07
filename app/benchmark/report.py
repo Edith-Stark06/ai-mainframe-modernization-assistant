@@ -132,7 +132,7 @@ class BenchmarkReport:
                 f"passed={f['passed']} hallucinations={f['hallucination_total']} "
                 f"{'; '.join(f['notes']) if f['notes'] else ''}"
             )
-        return "\n".join(lines) + "\n"
+        return "\n".join(line.rstrip() for line in lines) + "\n"
 
     def write(self, out_dir: str | Path) -> None:
         d = Path(out_dir)
