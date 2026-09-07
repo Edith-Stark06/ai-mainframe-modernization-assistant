@@ -1,0 +1,477 @@
+{
+  "error_count": 0,
+  "hits": [
+    {
+      "detail": "",
+      "example_ids": [
+        "modernization_recommendation-039efad13088",
+        "modernization_recommendation-4d42b40f2796",
+        "modernization_recommendation-c4ca768a097f",
+        "modernization_recommendation-d4af77a7ebad",
+        "modernization_recommendation-ffd611b0917e"
+      ],
+      "key": "4efb62212928",
+      "kind": "identical_expected_output",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "test"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "source_grounded_qa-14cc56e545eb",
+        "source_grounded_qa-168fc7e1fe7c",
+        "source_grounded_qa-2b014725fdb5",
+        "source_grounded_qa-5003623d6100",
+        "source_grounded_qa-8270fabf2edd",
+        "source_grounded_qa-84f203c3688e",
+        "source_grounded_qa-9edb858c29b0",
+        "source_grounded_qa-eceb45b4a020",
+        "source_grounded_qa-fa99da5428ab"
+      ],
+      "key": "872468c37cdc",
+      "kind": "identical_expected_output",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "test"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "modernization_qa-41a04210a572",
+        "modernization_qa-55eeb9f4e679",
+        "modernization_qa-72bcc6f2fbfd",
+        "modernization_qa-7d93299f4499",
+        "modernization_qa-8b4efcac5470"
+      ],
+      "key": "927ec4996ac3",
+      "kind": "identical_expected_output",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "test"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "modernization_qa-632ae7813cd7",
+        "modernization_qa-8a5083bf3393",
+        "modernization_qa-8c4edae90d05",
+        "modernization_qa-d3740d928efc",
+        "modernization_qa-fff9da82039d"
+      ],
+      "key": "d75cf30c2106",
+      "kind": "identical_expected_output",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "test"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "risk_identification-575a5e6d76eb",
+        "risk_identification-7cedde93b5ec",
+        "risk_identification-aa4f1e67eea5",
+        "risk_identification-b07a5a0c81ba",
+        "risk_identification-e15a0bca2503"
+      ],
+      "key": "f43829377a9e",
+      "kind": "identical_expected_output",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "test"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "modernization_qa-930cc06f7c75",
+        "modernization_qa-a3aa56103364",
+        "modernization_qa-c5bda4461dab",
+        "modernization_qa-d429d0939b2a"
+      ],
+      "key": "19c8fc169139",
+      "kind": "identical_expected_output",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "validation"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "modernization_qa-61bb6f842653",
+        "modernization_qa-8c4edae90d05",
+        "modernization_qa-d3740d928efc",
+        "modernization_qa-fff9da82039d"
+      ],
+      "key": "d75cf30c2106",
+      "kind": "identical_expected_output",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "validation"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "modernization_qa-61bb6f842653",
+        "modernization_qa-632ae7813cd7",
+        "modernization_qa-8a5083bf3393"
+      ],
+      "key": "d75cf30c2106",
+      "kind": "identical_expected_output",
+      "severity": "warning",
+      "split_a": "validation",
+      "split_b": "test"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "source_grounded_qa-11a46f524557",
+        "source_grounded_qa-44370f495494",
+        "source_grounded_qa-4ffbd523dcfe",
+        "source_grounded_qa-5e3d3763c84a",
+        "source_grounded_qa-7128e283610b",
+        "source_grounded_qa-7146c1dbd854",
+        "source_grounded_qa-7da1877d0a5b",
+        "source_grounded_qa-97daec903687",
+        "source_grounded_qa-9a1c1ddfb2a0",
+        "source_grounded_qa-9c872143aee4",
+        "source_grounded_qa-a205d56d924d",
+        "source_grounded_qa-aacb63501356",
+        "source_grounded_qa-d4884680b8ec",
+        "source_grounded_qa-e74a8728b3e3",
+        "source_grounded_qa-ef96adafe3e6",
+        "source_grounded_qa-fd613f36c4f8"
+      ],
+      "key": "does this program use any cobol construct the analyzer does ",
+      "kind": "identical_question",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "test"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "source_grounded_qa-14cc56e545eb",
+        "source_grounded_qa-14ffe2d7002c",
+        "source_grounded_qa-168fc7e1fe7c",
+        "source_grounded_qa-1bb9bf293d88",
+        "source_grounded_qa-22cdcfd53390",
+        "source_grounded_qa-2b014725fdb5",
+        "source_grounded_qa-5003623d6100",
+        "source_grounded_qa-8270fabf2edd",
+        "source_grounded_qa-84f203c3688e",
+        "source_grounded_qa-9025bde5d954",
+        "source_grounded_qa-93b587e7805f",
+        "source_grounded_qa-9a3909ad087b",
+        "source_grounded_qa-9edb858c29b0",
+        "source_grounded_qa-cf8da3f38b93",
+        "source_grounded_qa-eceb45b4a020",
+        "source_grounded_qa-fa99da5428ab"
+      ],
+      "key": "how many paragraphs does this program have, and what are the",
+      "kind": "identical_question",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "test"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "modernization_qa-020df9e4d71f",
+        "modernization_qa-0226bc0ac349",
+        "modernization_qa-02e014808025",
+        "modernization_qa-1857758f882a",
+        "modernization_qa-1dedd1041f83",
+        "modernization_qa-31365685d2ab",
+        "modernization_qa-343fa2a34c82",
+        "modernization_qa-42c6745b4d7a",
+        "modernization_qa-57a933a98cfe",
+        "modernization_qa-6151c40b56e5",
+        "modernization_qa-621bbaeaee44",
+        "modernization_qa-a701e44439ec",
+        "modernization_qa-a733ada60972",
+        "modernization_qa-c6feea880a2f",
+        "modernization_qa-e64e78cf1d77",
+        "modernization_qa-e8e5687cee96"
+      ],
+      "key": "what are the major business rules in this program?",
+      "kind": "identical_question",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "test"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "modernization_qa-0e41ffce4fa4",
+        "modernization_qa-1894bb644889",
+        "modernization_qa-30143b25fb39",
+        "modernization_qa-4e6e630794e8",
+        "modernization_qa-57d4ef6c7047",
+        "modernization_qa-63d4949662a5",
+        "modernization_qa-7de7a8612f1f",
+        "modernization_qa-80db8c49ca2d",
+        "modernization_qa-815f20aae183",
+        "modernization_qa-84eb06e29317",
+        "modernization_qa-8d1331ac49d6",
+        "modernization_qa-aba7327c2160",
+        "modernization_qa-cdc40f2793a6",
+        "modernization_qa-d124b4f90dd9",
+        "modernization_qa-ed728e4bc98e",
+        "modernization_qa-fb22a86dfb80"
+      ],
+      "key": "what external dependencies does this program have?",
+      "kind": "identical_question",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "test"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "modernization_qa-41a04210a572",
+        "modernization_qa-55eeb9f4e679",
+        "modernization_qa-632ae7813cd7",
+        "modernization_qa-72bcc6f2fbfd",
+        "modernization_qa-75e11c6010fe",
+        "modernization_qa-7d93299f4499",
+        "modernization_qa-88f605ca9780",
+        "modernization_qa-8a5083bf3393",
+        "modernization_qa-8b4efcac5470",
+        "modernization_qa-8c4edae90d05",
+        "modernization_qa-930cc06f7c75",
+        "modernization_qa-c5bda4461dab",
+        "modernization_qa-d3740d928efc",
+        "modernization_qa-d429d0939b2a",
+        "modernization_qa-f098eba7bb7e",
+        "modernization_qa-fff9da82039d"
+      ],
+      "key": "what modernization strategy is appropriate for this program,",
+      "kind": "identical_question",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "test"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "source_grounded_qa-06f5eca03145",
+        "source_grounded_qa-11a46f524557",
+        "source_grounded_qa-4ffbd523dcfe",
+        "source_grounded_qa-5e3d3763c84a",
+        "source_grounded_qa-7128e283610b",
+        "source_grounded_qa-7146c1dbd854",
+        "source_grounded_qa-7da1877d0a5b",
+        "source_grounded_qa-8979de0480b1",
+        "source_grounded_qa-97daec903687",
+        "source_grounded_qa-9a1c1ddfb2a0",
+        "source_grounded_qa-9c593e9ed277",
+        "source_grounded_qa-9c872143aee4",
+        "source_grounded_qa-a205d56d924d",
+        "source_grounded_qa-aacb63501356",
+        "source_grounded_qa-d1438df81f6d",
+        "source_grounded_qa-e74a8728b3e3",
+        "source_grounded_qa-ef96adafe3e6"
+      ],
+      "key": "does this program use any cobol construct the analyzer does ",
+      "kind": "identical_question",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "validation"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "source_grounded_qa-14cc56e545eb",
+        "source_grounded_qa-14ffe2d7002c",
+        "source_grounded_qa-168fc7e1fe7c",
+        "source_grounded_qa-1bb9bf293d88",
+        "source_grounded_qa-22cdcfd53390",
+        "source_grounded_qa-28ef5597b6bd",
+        "source_grounded_qa-5003623d6100",
+        "source_grounded_qa-8270fabf2edd",
+        "source_grounded_qa-84f203c3688e",
+        "source_grounded_qa-9025bde5d954",
+        "source_grounded_qa-9a3909ad087b",
+        "source_grounded_qa-c4f68882d65c",
+        "source_grounded_qa-cf8da3f38b93",
+        "source_grounded_qa-d22bef2fbc9e",
+        "source_grounded_qa-d8a704cc7aa4",
+        "source_grounded_qa-eceb45b4a020",
+        "source_grounded_qa-fa99da5428ab"
+      ],
+      "key": "how many paragraphs does this program have, and what are the",
+      "kind": "identical_question",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "validation"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "modernization_qa-020df9e4d71f",
+        "modernization_qa-0226bc0ac349",
+        "modernization_qa-1857758f882a",
+        "modernization_qa-1dedd1041f83",
+        "modernization_qa-31365685d2ab",
+        "modernization_qa-343fa2a34c82",
+        "modernization_qa-3b59839ff31b",
+        "modernization_qa-459a78be110b",
+        "modernization_qa-57a933a98cfe",
+        "modernization_qa-6151c40b56e5",
+        "modernization_qa-621bbaeaee44",
+        "modernization_qa-a701e44439ec",
+        "modernization_qa-a733ada60972",
+        "modernization_qa-e64e78cf1d77",
+        "modernization_qa-e8d4117d7865",
+        "modernization_qa-e8e5687cee96",
+        "modernization_qa-ee25af16e30c"
+      ],
+      "key": "what are the major business rules in this program?",
+      "kind": "identical_question",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "validation"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "modernization_qa-1894bb644889",
+        "modernization_qa-30143b25fb39",
+        "modernization_qa-57d4ef6c7047",
+        "modernization_qa-5803c2ecf1f4",
+        "modernization_qa-5d9c96f8d36e",
+        "modernization_qa-63d4949662a5",
+        "modernization_qa-7de7a8612f1f",
+        "modernization_qa-80db8c49ca2d",
+        "modernization_qa-84eb06e29317",
+        "modernization_qa-8d1331ac49d6",
+        "modernization_qa-aba7327c2160",
+        "modernization_qa-b7863322254a",
+        "modernization_qa-cdc40f2793a6",
+        "modernization_qa-d124b4f90dd9",
+        "modernization_qa-ed728e4bc98e",
+        "modernization_qa-edf8d74070ef",
+        "modernization_qa-fb22a86dfb80"
+      ],
+      "key": "what external dependencies does this program have?",
+      "kind": "identical_question",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "validation"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "modernization_qa-069b86a94d6f",
+        "modernization_qa-1132345f17d1",
+        "modernization_qa-41a04210a572",
+        "modernization_qa-55eeb9f4e679",
+        "modernization_qa-61bb6f842653",
+        "modernization_qa-72bcc6f2fbfd",
+        "modernization_qa-75e11c6010fe",
+        "modernization_qa-7d93299f4499",
+        "modernization_qa-88f605ca9780",
+        "modernization_qa-8c4edae90d05",
+        "modernization_qa-930cc06f7c75",
+        "modernization_qa-a3aa56103364",
+        "modernization_qa-c5bda4461dab",
+        "modernization_qa-d3740d928efc",
+        "modernization_qa-d429d0939b2a",
+        "modernization_qa-f098eba7bb7e",
+        "modernization_qa-fff9da82039d"
+      ],
+      "key": "what modernization strategy is appropriate for this program,",
+      "kind": "identical_question",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "validation"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "source_grounded_qa-06f5eca03145",
+        "source_grounded_qa-44370f495494",
+        "source_grounded_qa-8979de0480b1",
+        "source_grounded_qa-9c593e9ed277",
+        "source_grounded_qa-d1438df81f6d",
+        "source_grounded_qa-d4884680b8ec",
+        "source_grounded_qa-fd613f36c4f8"
+      ],
+      "key": "does this program use any cobol construct the analyzer does ",
+      "kind": "identical_question",
+      "severity": "warning",
+      "split_a": "validation",
+      "split_b": "test"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "source_grounded_qa-28ef5597b6bd",
+        "source_grounded_qa-2b014725fdb5",
+        "source_grounded_qa-93b587e7805f",
+        "source_grounded_qa-9edb858c29b0",
+        "source_grounded_qa-c4f68882d65c",
+        "source_grounded_qa-d22bef2fbc9e",
+        "source_grounded_qa-d8a704cc7aa4"
+      ],
+      "key": "how many paragraphs does this program have, and what are the",
+      "kind": "identical_question",
+      "severity": "warning",
+      "split_a": "validation",
+      "split_b": "test"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "modernization_qa-02e014808025",
+        "modernization_qa-3b59839ff31b",
+        "modernization_qa-42c6745b4d7a",
+        "modernization_qa-459a78be110b",
+        "modernization_qa-c6feea880a2f",
+        "modernization_qa-e8d4117d7865",
+        "modernization_qa-ee25af16e30c"
+      ],
+      "key": "what are the major business rules in this program?",
+      "kind": "identical_question",
+      "severity": "warning",
+      "split_a": "validation",
+      "split_b": "test"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "modernization_qa-0e41ffce4fa4",
+        "modernization_qa-4e6e630794e8",
+        "modernization_qa-5803c2ecf1f4",
+        "modernization_qa-5d9c96f8d36e",
+        "modernization_qa-815f20aae183",
+        "modernization_qa-b7863322254a",
+        "modernization_qa-edf8d74070ef"
+      ],
+      "key": "what external dependencies does this program have?",
+      "kind": "identical_question",
+      "severity": "warning",
+      "split_a": "validation",
+      "split_b": "test"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "modernization_qa-069b86a94d6f",
+        "modernization_qa-1132345f17d1",
+        "modernization_qa-61bb6f842653",
+        "modernization_qa-632ae7813cd7",
+        "modernization_qa-8a5083bf3393",
+        "modernization_qa-8b4efcac5470",
+        "modernization_qa-a3aa56103364"
+      ],
+      "key": "what modernization strategy is appropriate for this program,",
+      "kind": "identical_question",
+      "severity": "warning",
+      "split_a": "validation",
+      "split_b": "test"
+    }
+  ],
+  "ok": true,
+  "warning_count": 23
+}

@@ -1,0 +1,163 @@
+{
+  "analysis_version": "deterministic-analysis-phases-1-5",
+  "benchmark_content_hash": "df0ff3202f54bfaf1dabecb801bbb07506875d78b689d9c641a2dd461aa8a632",
+  "benchmark_version": "benchmark-v1",
+  "model": "n/a",
+  "modes": {
+    "analysis": {
+      "by_difficulty": {
+        "adversarial": {
+          "hallucination_total": 7,
+          "n": 6,
+          "parse_failure_rate": 0.0,
+          "pass_rate": 0.3333
+        },
+        "difficult": {
+          "hallucination_total": 0,
+          "n": 4,
+          "parse_failure_rate": 0.0,
+          "pass_rate": 1.0
+        },
+        "easy": {
+          "hallucination_total": 0,
+          "n": 4,
+          "parse_failure_rate": 0.0,
+          "pass_rate": 1.0
+        },
+        "medium": {
+          "hallucination_total": 1,
+          "n": 8,
+          "parse_failure_rate": 0.0,
+          "pass_rate": 0.875
+        }
+      },
+      "overall": {
+        "attribution_precision": 0.0909,
+        "attribution_recall": 0.0909,
+        "hallucination_rate": 0.3636,
+        "hallucination_totals": {
+          "contradicted_by_source": 2,
+          "incorrect": 3,
+          "invented_business_rule": 1,
+          "invented_dependency": 0,
+          "invented_risk": 0,
+          "invented_source_location": 0,
+          "unsupported_by_source": 2
+        },
+        "n": 22,
+        "parse_failure_rate": 0.0,
+        "pass_rate": 0.7727
+      },
+      "run": {
+        "estimated_cost": "unavailable",
+        "mean_latency_s": 0.0003,
+        "provider_failures": 0,
+        "total_tokens": "unavailable"
+      }
+    },
+    "raw": {
+      "by_difficulty": {
+        "adversarial": {
+          "hallucination_total": 8,
+          "n": 6,
+          "parse_failure_rate": 0.0,
+          "pass_rate": 0.1667
+        },
+        "difficult": {
+          "hallucination_total": 2,
+          "n": 4,
+          "parse_failure_rate": 0.0,
+          "pass_rate": 0.5
+        },
+        "easy": {
+          "hallucination_total": 0,
+          "n": 4,
+          "parse_failure_rate": 0.0,
+          "pass_rate": 1.0
+        },
+        "medium": {
+          "hallucination_total": 12,
+          "n": 8,
+          "parse_failure_rate": 0.0,
+          "pass_rate": 0.25
+        }
+      },
+      "overall": {
+        "attribution_precision": 0.0909,
+        "attribution_recall": 0.0909,
+        "hallucination_rate": 1.0,
+        "hallucination_totals": {
+          "contradicted_by_source": 2,
+          "incorrect": 11,
+          "invented_business_rule": 7,
+          "invented_dependency": 0,
+          "invented_risk": 0,
+          "invented_source_location": 0,
+          "unsupported_by_source": 2
+        },
+        "n": 22,
+        "parse_failure_rate": 0.0,
+        "pass_rate": 0.4091
+      },
+      "run": {
+        "estimated_cost": "unavailable",
+        "mean_latency_s": 0.0001,
+        "provider_failures": 0,
+        "total_tokens": "unavailable"
+      }
+    },
+    "retrieval": {
+      "by_difficulty": {
+        "adversarial": {
+          "hallucination_total": 7,
+          "n": 6,
+          "parse_failure_rate": 0.0,
+          "pass_rate": 0.3333
+        },
+        "difficult": {
+          "hallucination_total": 0,
+          "n": 4,
+          "parse_failure_rate": 0.0,
+          "pass_rate": 1.0
+        },
+        "easy": {
+          "hallucination_total": 0,
+          "n": 4,
+          "parse_failure_rate": 0.0,
+          "pass_rate": 1.0
+        },
+        "medium": {
+          "hallucination_total": 1,
+          "n": 8,
+          "parse_failure_rate": 0.0,
+          "pass_rate": 0.875
+        }
+      },
+      "overall": {
+        "attribution_precision": 0.0909,
+        "attribution_recall": 0.0909,
+        "hallucination_rate": 0.3636,
+        "hallucination_totals": {
+          "contradicted_by_source": 2,
+          "incorrect": 3,
+          "invented_business_rule": 1,
+          "invented_dependency": 0,
+          "invented_risk": 0,
+          "invented_source_location": 0,
+          "unsupported_by_source": 2
+        },
+        "n": 22,
+        "parse_failure_rate": 0.0,
+        "pass_rate": 0.7727
+      },
+      "run": {
+        "estimated_cost": "unavailable",
+        "mean_latency_s": 0.0002,
+        "provider_failures": 0,
+        "total_tokens": "unavailable"
+      }
+    }
+  },
+  "prompt_version": "p6-prompt-v1",
+  "provider": "heuristic-demo"
+}
