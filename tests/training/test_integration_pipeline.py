@@ -33,13 +33,15 @@ def test_full_pipeline_mock(tmp_path) -> None:
         output_root=tmp_path / "runs",
         run_id="integration-run",
         created_at="2026-01-01T00:00:00Z",
-        min_training_sources=1,  # documented dry-run lever
     )
 
     # 3. checkpoint metadata / manifest
     assert run.is_real_model is False
     assert (run.run_dir / "training_manifest.json").exists()
-    assert run.data.excluded_benchmark_sources  # isolation actually happened
+    # phase6-v2 is benchmark-disjoint by construction: nothing to exclude,
+    # and every training source is outside the benchmark.
+    assert run.data.excluded_benchmark_sources == ()
+    assert run.data.source_count >= 8
     manifest = run.manifest.to_dict()
     assert manifest["run_spec"]["benchmark_content_hash"] == hash_before
 
@@ -90,7 +92,6 @@ def test_full_pipeline_is_deterministic(tmp_path) -> None:
             output_root=tmp_path / where,
             run_id="r",
             created_at="2026-01-01T00:00:00Z",
-            min_training_sources=1,
         )
         cand = evaluate_model(
             MockCheckpointProvider(run.checkpoint_dir),
