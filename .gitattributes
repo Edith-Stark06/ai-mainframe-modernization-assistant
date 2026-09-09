@@ -1,0 +1,17 @@
+# Line-ending policy.
+#
+# Most of the repo follows the platform default (core.autocrlf). The
+# paths below are *committed data / source artifacts* whose bytes must be
+# identical on every checkout: the Phase 6 dataset and benchmark JSONL,
+# their manifests, the controlled COBOL source corpus, and the training
+# configs. `app/training/dataset.py::dataset_manifest_hash` hashes
+# `data/dataset/<v>/all.jsonl` byte-for-byte, so a CRLF checkout on
+# Windows must not change that hash. `eol=lf` forces LF in the working
+# tree regardless of core.autocrlf.
+
+data/**/*.jsonl        text eol=lf
+data/**/*.json         text eol=lf
+data/**/*.cbl          text eol=lf
+data/**/*.md           text eol=lf
+
+configs/training/*.yaml text eol=lf
