@@ -51,7 +51,12 @@ dedicated synthetic training-only programs
 `tests/dataset/test_benchmark_separation.py` (id + SHA-256 + normalized
 text, all asserted disjoint — a hard error, never a warning).
 
-The shipped configs (`configs/training/*.yaml`) point at `phase6-v2`.
+The shipped configs (`configs/training/*.yaml`) point at `phase6-v2` and
+pin its canonical `dataset_manifest_hash`
+(`234d9db9…`). That hash is over the **LF** bytes of
+`data/dataset/phase6-v2/all.jsonl`; `.gitattributes` forces LF for
+`data/**` on every checkout (Windows included) and `dataset_manifest_hash`
+folds `\r\n`→`\n` defensively, so the hash is platform-independent.
 
 ## Training backend availability
 

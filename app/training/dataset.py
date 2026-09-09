@@ -131,14 +131,30 @@ def dataset_dir(dataset_version: str) -> Path:
     return DATASET_ROOT / dataset_version
 
 
+def _canonical_bytes(path: Path) -> bytes:
+    """Read *path* as its canonical LF representation.
+
+    The committed dataset artifacts are LF (enforced by ``.gitattributes``
+    ``data/**/*.jsonl text eol=lf``), so on a correct checkout this is a
+    no-op. The ``\\r\\n`` -> ``\\n`` fold is defence-in-depth for a working
+    copy cloned before that policy existed (or with a global core.autocrlf
+    override): it makes ``dataset_manifest_hash`` return the *canonical*
+    hash — the one committed and pinned in the training configs — instead
+    of a platform-dependent one. It cannot hide a real content change:
+    canonical JSONL lines never contain ``\\r``, so any genuine byte
+    difference still changes the hash.
+    """
+    return path.read_bytes().replace(b"\r\n", b"\n")
+
+
 def dataset_manifest_hash(dataset_version: str) -> str:
-    """sha256 of the canonical ``all.jsonl`` for *dataset_version*."""
+    """sha256 of the canonical (LF) ``all.jsonl`` for *dataset_version*."""
     path = dataset_dir(dataset_version) / "all.jsonl"
     if not path.exists():
         raise DatasetResolutionError(
             f"dataset {dataset_version!r} not found — expected {path}"
         )
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return hashlib.sha256(_canonical_bytes(path)).hexdigest()
 
 
 def benchmark_source_fingerprint(benchmark_version: str) -> tuple[set[str], set[str]]:
@@ -248,7 +264,7 @@ def resolve_training_data(
             f"The pipeline does not fall back to another dataset."
         )
 
-    manifest_hash = hashlib.sha256(all_path.read_bytes()).hexdigest()
+    manifest_hash = hashlib.sha256(_canonical_bytes(all_path)).hexdigest()
     if expected_manifest_hash and expected_manifest_hash != manifest_hash:
         raise DatasetResolutionError(
             f"dataset hash mismatch for {dataset_version!r}: "
