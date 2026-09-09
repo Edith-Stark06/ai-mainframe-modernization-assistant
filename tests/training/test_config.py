@@ -25,7 +25,7 @@ def test_shipped_configs_load_and_validate() -> None:
         "configs/training/finetune-v1-full.yaml",
     ):
         cfg = load_config(path)
-        assert cfg.dataset_version == "phase6-v1"
+        assert cfg.dataset_version == "phase6-v2"
         assert len(cfg.dataset_manifest_hash) == 64
         assert cfg.random_seed is not None
 

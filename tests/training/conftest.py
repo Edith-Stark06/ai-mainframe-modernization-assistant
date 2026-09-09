@@ -1,10 +1,11 @@
 """Shared helpers for #121 fine-tuning-pipeline tests.
 
 No test here touches a live LLM, a real training backend, or the
-network. The real Phase 6 dataset (``phase6-v1``) and frozen benchmark
-(``benchmark-v1``) are used read-only; ``min_training_sources=1`` is the
-documented "pipeline dry-run" lever that lets the mock backend run
-against the (tiny) benchmark-safe slice of real data.
+network. The shipped config points at ``phase6-v2`` — the
+benchmark-disjoint training dataset — so the pipeline resolves cleanly
+at the normal ``min_training_sources`` threshold with zero exclusions.
+``phase6-v1`` (still benchmark-leaky) is exercised read-only in
+``test_dataset_resolution.py`` as a regression guard.
 """
 
 from __future__ import annotations
@@ -19,7 +20,6 @@ from app.training.evaluation import EvaluationArtifact
 from app.training.pipeline import TrainingRun, run_training
 
 CONFIG_V1 = "configs/training/finetune-v1.yaml"
-DRY_RUN_MIN_SOURCES = 1
 
 
 @pytest.fixture
@@ -35,7 +35,6 @@ def mock_run(tmp_path: Path, config_v1) -> TrainingRun:
         output_root=tmp_path / "runs",
         run_id="run-under-test",
         created_at="2026-01-01T00:00:00Z",
-        min_training_sources=DRY_RUN_MIN_SOURCES,
     )
 
 

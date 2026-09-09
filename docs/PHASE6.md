@@ -59,3 +59,19 @@ could not be verified from the build environment. See
 `dataset_version=phase6-v1`, `benchmark_version=benchmark-v1`,
 `prompt_version=p6-prompt-v1`, `generator_version=phase6-gen-v1`,
 `analysis_version=deterministic-analysis-phases-1-5`.
+
+## `phase6-v2` — benchmark-disjoint training dataset
+
+`phase6-v1` and `benchmark-v1` were built from the same corpus, so #121's
+leakage guard rejects `phase6-v1` for training. `phase6-v2`
+(`data/dataset/phase6-v2/`, built from `load_training_corpus()`) is a
+rebuild whose training sources are **source-disjoint from the
+benchmark** — the 3 original non-benchmark programs plus 15 synthetic
+training-only programs (`data/sources/phase6-v2/`, MIT). `benchmark-v1`
+and `phase6-v1` are unchanged. Build:
+
+```bash
+python -m scripts.dataset.build_dataset --corpus training --created-at 2026-09-07T00:00:00Z
+```
+
+See `docs/PHASE7.md` and `data/sources/phase6-v2/SOURCES.md`.

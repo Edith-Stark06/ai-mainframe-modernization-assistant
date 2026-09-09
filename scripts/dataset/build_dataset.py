@@ -30,20 +30,38 @@ import tempfile
 from pathlib import Path
 
 from app.dataset.builder import DatasetBuilder
-from app.dataset.corpus import REPO_ROOT, load_phase6_corpus
+from app.dataset.corpus import (
+    REPO_ROOT,
+    load_phase6_corpus,
+    load_training_corpus,
+)
 from app.dataset.io import write_jsonl
 from app.dataset.leakage import detect_leakage
 from app.dataset.splitting import split_dataset
 from app.dataset.validation import validate_dataset
-from app.dataset.version import DATASET_VERSION
+from app.dataset.version import DATASET_VERSION, DATASET_VERSION_V2
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--dataset-version",
+        default=DATASET_VERSION,
+        help=f"dataset version to stamp (default {DATASET_VERSION})",
+    )
+    parser.add_argument(
+        "--corpus",
+        choices=["full", "training"],
+        default="full",
+        help=(
+            "'full' = the original 20-source corpus (phase6-v1, overlaps the "
+            "benchmark); 'training' = the benchmark-disjoint corpus (phase6-v2)"
+        ),
+    )
+    parser.add_argument(
         "--out",
-        default=str(REPO_ROOT / "data" / "dataset" / DATASET_VERSION),
-        help="output directory",
+        default="",
+        help="output directory (default: data/dataset/<dataset-version>/)",
     )
     parser.add_argument("--seed", type=int, default=20260906)
     parser.add_argument(
@@ -58,14 +76,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    out = Path(args.out)
+    dataset_version = args.dataset_version
+    if args.corpus == "training" and dataset_version == DATASET_VERSION:
+        dataset_version = DATASET_VERSION_V2
+
+    out = Path(args.out or (REPO_ROOT / "data" / "dataset" / dataset_version))
     out.mkdir(parents=True, exist_ok=True)
     work = args.work or tempfile.mkdtemp(prefix="phase6-build-")
 
-    corpus = load_phase6_corpus()
-    print(f"corpus: {len(corpus)} source program(s)")
+    if args.corpus == "training":
+        corpus = load_training_corpus()
+    else:
+        corpus = load_phase6_corpus()
+    print(
+        f"corpus: {len(corpus)} source program(s) "
+        f"({args.corpus}) -> dataset_version={dataset_version}"
+    )
 
-    builder = DatasetBuilder(work_dir=work, created_at=(args.created_at or None))
+    builder = DatasetBuilder(
+        work_dir=work,
+        created_at=(args.created_at or None),
+        dataset_version=dataset_version,
+    )
     result = builder.build(corpus)
     print(f"built {len(result.examples)} example(s), " f"skipped {len(result.skipped)}")
 
@@ -75,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         encoding="utf-8",
     )
 
-    report = validate_dataset(out / "all.jsonl", expected_version=DATASET_VERSION)
+    report = validate_dataset(out / "all.jsonl", expected_version=dataset_version)
     (out / "validation_report.json").write_text(
         json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",

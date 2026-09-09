@@ -1,0 +1,17 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. INTACCR.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 WS-PRINCIPAL  PIC 9(7) VALUE 10000.
+       01 WS-INTEREST   PIC 9(7) VALUE 0.
+       01 WS-DAY        PIC 9(3) VALUE 0.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           PERFORM ACCRUE-DAILY.
+           DISPLAY WS-INTEREST.
+           STOP RUN.
+       ACCRUE-DAILY.
+           PERFORM UNTIL WS-DAY >= 30
+               ADD 3 TO WS-INTEREST
+               ADD 1 TO WS-DAY
+           END-PERFORM.

@@ -9,8 +9,24 @@ Assembles :class:`SourceRecord` objects from:
   ``cobol_to_java`` labels.
 
 Provenance and licensing for every entry are documented in
-``data/sources/phase6/SOURCES.md``. No external / unverified material is
-included.
+``data/sources/phase6/SOURCES.md`` and ``data/sources/phase6-v2/SOURCES.md``.
+No external / unverified material is included.
+
+**Training vs evaluation corpus.** ``load_phase6_corpus`` is the full
+corpus that produced both ``phase6-v1`` *and* ``benchmark-v1`` — they
+overlap, which is why #121's leakage guard rejects ``phase6-v1``.
+``load_training_corpus`` returns a corpus that is **source-disjoint from
+the benchmark**: the three original programs the benchmark never used,
+plus dedicated synthetic training-only programs. ``load_evaluation_corpus``
+returns exactly the held-out programs the benchmark is built from. The
+partition is::
+
+    load_phase6_corpus()  ==  load_training_corpus()  ⊍  load_evaluation_corpus()  \\
+                              (minus the v2-only synthetic additions)
+
+and by construction::
+
+    {r.source_id for r in load_training_corpus()} ∩ BENCHMARK_SOURCE_IDS == ∅
 """
 
 from __future__ import annotations
@@ -20,12 +36,46 @@ from pathlib import Path
 from app.dataset.builder import SourceRecord
 from app.dataset.schema import Difficulty, Provenance
 
-__all__ = ["REPO_ROOT", "load_phase6_corpus"]
+__all__ = [
+    "REPO_ROOT",
+    "BENCHMARK_SOURCE_IDS",
+    "load_phase6_corpus",
+    "load_training_corpus",
+    "load_evaluation_corpus",
+]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 _SYN_DIR = REPO_ROOT / "data" / "sources" / "phase6"
+_V2_SYN_DIR = REPO_ROOT / "data" / "sources" / "phase6-v2"
 
 _MIT = "MIT"
+
+#: The source programs the frozen ``benchmark-v1`` (#119) is built from —
+#: see ``app/benchmark/curated.py::_SPEC``. These are **held out
+#: permanently**: no training dataset may contain them.
+#: ``tests/dataset/test_benchmark_separation.py`` asserts this set equals
+#: the source ids actually present in ``data/benchmark/benchmark-v1/``.
+BENCHMARK_SOURCE_IDS: frozenset[str] = frozenset(
+    {
+        "fx_hello_world",
+        "fx_move_display",
+        "fx_arithmetic",
+        "fx_if_else",
+        "fx_call",
+        "fx_eligibility",
+        "fx_complex_proc",
+        "fx_highly_coupled",
+        "fx_acctbatch",
+        "fx_unsupported",
+        "fx_file_processing",
+        "fx_incomplete",
+        "syn_status_machine",
+        "syn_limit_check",
+        "syn_misleading_names",
+        "syn_misleading_comments",
+        "syn_ambiguous_question",
+    }
+)
 
 # (source_id, repo-relative path, difficulty, golden-java repo-relative path or None)
 _FIXTURES: tuple[tuple[str, str, Difficulty, str | None], ...] = (
@@ -150,6 +200,48 @@ _SYNTHETIC: tuple[tuple[str, str, Difficulty, str], ...] = (
     ),
 )
 
+#: Training-only synthetic programs for ``phase6-v2`` (#118 rebuild).
+#: Hand-written for this repository, MIT-licensed, documented in
+#: ``data/sources/phase6-v2/SOURCES.md``. Each is a distinct small
+#: business program (payroll, inventory, lending, grading, shipping,
+#: fees, …) within the analyzer's supported COBOL subset. They exist so a
+#: benchmark-disjoint training split has real source diversity — never to
+#: pad a source count. source_id is ``t_<filename stem>``.
+# (filename under data/sources/phase6-v2/, difficulty, note)
+_TRAINING_SYNTHETIC: tuple[tuple[str, Difficulty, str], ...] = (
+    (
+        "payroll_net_pay.cbl",
+        Difficulty.MEDIUM,
+        "gross-to-net payroll with a tax bracket",
+    ),
+    ("reorder_point.cbl", Difficulty.MEDIUM, "inventory reorder-point decision"),
+    (
+        "loan_balance.cbl",
+        Difficulty.DIFFICULT,
+        "loan amortisation loop (PERFORM UNTIL)",
+    ),
+    ("grade_letter.cbl", Difficulty.MEDIUM, "score-to-letter-grade nested IF"),
+    ("shipping_zone.cbl", Difficulty.MEDIUM, "weight/zone shipping cost"),
+    (
+        "account_validate.cbl",
+        Difficulty.DIFFICULT,
+        "two external CALLs then a nested accept/hold/reject decision",
+    ),
+    ("discount_tier.cbl", Difficulty.MEDIUM, "customer-tier discount schedule"),
+    (
+        "overdraft_fee.cbl",
+        Difficulty.MEDIUM,
+        "overdraft fee with an extra-days surcharge",
+    ),
+    ("temp_convert.cbl", Difficulty.EASY, "Celsius-to-Fahrenheit arithmetic"),
+    ("late_fee.cbl", Difficulty.MEDIUM, "days-overdue late-fee schedule"),
+    ("interest_accrue.cbl", Difficulty.DIFFICULT, "daily interest accrual loop"),
+    ("bonus_calc.cbl", Difficulty.MEDIUM, "sales-tier bonus with a rating flag"),
+    ("credit_limit.cbl", Difficulty.MEDIUM, "income/score credit-limit decision"),
+    ("vacation_accrual.cbl", Difficulty.MEDIUM, "years-of-service vacation accrual"),
+    ("stock_alert.cbl", Difficulty.MEDIUM, "price-change alert flag"),
+)
+
 #: Golden Java files verified to compile with javac (tests/golden/ + the
 #: Phase 3 review report).
 _JAVA_COMPILES = frozenset(
@@ -208,3 +300,47 @@ def load_phase6_corpus() -> list[SourceRecord]:
         )
 
     return sorted(records, key=lambda r: r.source_id)
+
+
+def _training_synthetic_records() -> list[SourceRecord]:
+    records: list[SourceRecord] = []
+    for fname, difficulty, note in _TRAINING_SYNTHETIC:
+        path = _V2_SYN_DIR / fname
+        if not path.exists():
+            continue
+        records.append(
+            SourceRecord(
+                source_id=f"t_{Path(fname).stem}",
+                source=path.read_text(encoding="utf-8"),
+                provenance=Provenance.SYNTHETIC,
+                license=_MIT,
+                difficulty=difficulty,
+                notes=f"synthetic training-only (phase6-v2): {note}",
+            )
+        )
+    return records
+
+
+def load_training_corpus() -> list[SourceRecord]:
+    """The benchmark-disjoint training corpus for ``phase6-v2``.
+
+    = the original programs the benchmark never used
+      (``BENCHMARK_SOURCE_IDS`` removed from :func:`load_phase6_corpus`)
+      + the dedicated synthetic training-only programs.
+
+    Guarantees ``{r.source_id} ∩ BENCHMARK_SOURCE_IDS == ∅``.
+    """
+    kept = [r for r in load_phase6_corpus() if r.source_id not in BENCHMARK_SOURCE_IDS]
+    records = kept + _training_synthetic_records()
+    overlap = {r.source_id for r in records} & BENCHMARK_SOURCE_IDS
+    if overlap:  # pragma: no cover - defensive; construction prevents this
+        raise AssertionError(f"training corpus overlaps benchmark: {sorted(overlap)}")
+    return sorted(records, key=lambda r: r.source_id)
+
+
+def load_evaluation_corpus() -> list[SourceRecord]:
+    """The held-out programs ``benchmark-v1`` is built from (read-only)."""
+    return sorted(
+        (r for r in load_phase6_corpus() if r.source_id in BENCHMARK_SOURCE_IDS),
+        key=lambda r: r.source_id,
+    )
