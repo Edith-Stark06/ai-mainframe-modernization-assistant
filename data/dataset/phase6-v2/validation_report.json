@@ -1,0 +1,11 @@
+{
+  "dataset_version": "phase6-v2",
+  "error_count": 0,
+  "issues": [],
+  "ok": true,
+  "path": "C:\\Users\\hp\\Documents\\Projects\\ai-mainframe-modernization-assistant\\data\\dataset\\phase6-v2\\all.jsonl",
+  "secret_findings": [],
+  "total": 198,
+  "valid": 198,
+  "warning_count": 0
+}
