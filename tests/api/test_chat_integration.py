@@ -167,3 +167,62 @@ def test_chat_end_to_end_real_components_no_mocked_orchestrator(
     assert data["answer"] != ""
     assert data["modernization_data"] is not None
     assert len(data["context"]) >= 1
+
+
+def test_chat_insufficient_context_real_components_nothing_indexed(
+    isolated_chat_index: Path, real_ai_orchestrator_override: None
+) -> None:
+    """Real ChromaIndex/RetrievalService/RAGOrchestrator, real
+    AIAnalysisOrchestrator -- but nothing was ever indexed into the
+    isolated 'chat' collection, so retrieval genuinely returns zero
+    results. Must classify as INSUFFICIENT_CONTEXT, not a generic
+    internal error -- proven against the real component chain, not a
+    hand-rolled mock."""
+    client = TestClient(app)
+    resp = client.post(
+        "/api/v1/chat/",
+        json={"query": "What does WS-FLAG control?", "workspace_id": str(uuid.uuid4())},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["answer"] == ""
+    assert data["error_code"] == "INSUFFICIENT_CONTEXT"
+    assert "not enough verified evidence" in data["error"]
+    assert len(data["context"]) == 0
+
+
+def test_chat_provider_unavailable_real_components_provider_raises(
+    isolated_chat_index: Path, tmp_path: Path
+) -> None:
+    """Real ChromaIndex/RetrievalService/RAGOrchestrator with a real
+    seeded chunk (so retrieval succeeds), but the configured provider
+    itself raises LLMProviderUnavailableError -- must classify as
+    LLM_PROVIDER_UNAVAILABLE, distinct from a generic generation
+    failure, proven against the real component chain."""
+    query = "What does WS-FLAG control in this program?"
+    workspace_id = str(uuid.uuid4())
+    _seed_chat_index(tmp_path, query, workspace_id=workspace_id, filename="")
+
+    def _override():
+        failing_provider = FakeLLMProvider(simulate_failure=True)
+        return AIAnalysisOrchestrator(
+            explanation_service=CodeExplanationService(failing_provider),
+            documentation_service=DocumentationGenerationService(FakeLLMProvider()),
+        )
+
+    app.dependency_overrides[get_ai_orchestrator] = _override
+    try:
+        client = TestClient(app)
+        resp = client.post(
+            "/api/v1/chat/", json={"query": query, "workspace_id": workspace_id}
+        )
+    finally:
+        app.dependency_overrides.pop(get_ai_orchestrator, None)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["answer"] == ""
+    assert data["error_code"] == "LLM_PROVIDER_UNAVAILABLE"
+    assert "temporarily unavailable" in data["error"]
+    assert "Simulated provider failure" not in data["error"]
