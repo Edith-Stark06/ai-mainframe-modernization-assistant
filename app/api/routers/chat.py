@@ -12,8 +12,8 @@ from app.api.schemas.modernization import (
 from app.core.logging import logger
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
-from app.api.schemas.chat import ChatRequest, ChatResponse
-from app.rag.orchestration.models import RAGRequest, AICapability
+from app.api.schemas.chat import ChatErrorCode, ChatRequest, ChatResponse
+from app.rag.orchestration.models import RAGRequest, RAGResult, AICapability
 from app.rag.orchestration.service import RAGOrchestrator
 from app.api.dependencies.ai import get_ai_orchestrator
 from app.ai.orchestration.service import AIAnalysisOrchestrator
@@ -48,6 +48,46 @@ def get_analysis_service() -> AnalysisService:
 
 def get_workspace_manager() -> WorkspaceManager:
     return WorkspaceManager()
+
+
+#: exact, stable string RAGOrchestrator.orchestrate() uses for its one
+#: "empty retrieval context" case (app/rag/orchestration/service.py) --
+#: matched verbatim, never modified, since RAG semantics are frozen.
+_EMPTY_CONTEXT_MESSAGE = "Cannot generate AI response with empty retrieval context"
+
+_SAFE_MESSAGES: dict[ChatErrorCode, str] = {
+    ChatErrorCode.LLM_PROVIDER_NOT_CONFIGURED: (
+        "AI provider is not configured in this environment."
+    ),
+    ChatErrorCode.LLM_PROVIDER_UNAVAILABLE: (
+        "The configured AI provider is temporarily unavailable."
+    ),
+    ChatErrorCode.LLM_GENERATION_FAILED: (
+        "The configured provider failed to generate a response."
+    ),
+    ChatErrorCode.INSUFFICIENT_CONTEXT: (
+        "There is not enough verified evidence to answer this question."
+    ),
+}
+
+
+def _classify_ai_error(rag_result: RAGResult) -> tuple[ChatErrorCode, str]:
+    """
+    Map a RAGResult carrying ai_error into exactly one ChatErrorCode +
+    safe message. Distinguishes "no provider configured" from "empty
+    retrieval context" from "the provider itself is down" from "some
+    other generation failure" -- never a single generic string for all
+    four, per the review's explicit error-contract requirement.
+    """
+    if rag_result.ai_unavailable:
+        code = ChatErrorCode.LLM_PROVIDER_NOT_CONFIGURED
+    elif rag_result.ai_error == _EMPTY_CONTEXT_MESSAGE:
+        code = ChatErrorCode.INSUFFICIENT_CONTEXT
+    elif rag_result.ai_error_type == "LLMProviderUnavailableError":
+        code = ChatErrorCode.LLM_PROVIDER_UNAVAILABLE
+    else:
+        code = ChatErrorCode.LLM_GENERATION_FAILED
+    return code, _SAFE_MESSAGES[code]
 
 
 @router.post("/", response_model=ChatResponse)
@@ -119,20 +159,25 @@ def chat_endpoint(
         rag_result = rag_orchestrator.orchestrate(rag_request)
     except Exception as e:
         logger.error(f"RAG Orchestration failed: {e}")
-        # Graceful degradation on complete failure
+        # Graceful degradation on complete failure. This is a genuinely
+        # unclassified failure -- see ChatErrorCode.GROUNDED_CONTEXT_UNAVAILABLE's
+        # docstring for why it cannot be distinguished from any other
+        # orchestration-level exception without modifying RAG semantics.
         return ChatResponse(
             query=request.query,
             answer="",
             context=[],
             error="RAG Orchestration failed due to an internal error.",
+            error_code=ChatErrorCode.INTERNAL_ERROR,
             modernization_data=modernization_data,
         )
 
     answer = ""
     error = None
+    error_code = None
     if rag_result.ai_error:
-        error = "AI generation failed due to an internal error."
-        logger.error(f"AI error: {rag_result.ai_error}")
+        error_code, error = _classify_ai_error(rag_result)
+        logger.error(f"AI error [{error_code.value}]: {rag_result.ai_error}")
     elif rag_result.ai_result:
         if (
             AICapability.EXPLANATION in capabilities
@@ -154,5 +199,6 @@ def chat_endpoint(
         answer=answer,
         context=context,
         error=error,
+        error_code=error_code,
         modernization_data=modernization_data,
     )
