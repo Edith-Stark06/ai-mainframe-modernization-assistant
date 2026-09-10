@@ -219,9 +219,19 @@ INSUFFICIENT_DATA_PIPELINE = {
 }
 
 
-def _make_app() -> AppTest:
+def _make_app(*, enter_workspace: bool = True) -> AppTest:
+    """Build and run the app. By default also navigates through the new
+    landing -> entry gate into the workspace stage (as "Guest"), since
+    every pre-existing test below exercises workspace/sidebar behavior,
+    not the landing/entry screens themselves (those have their own
+    dedicated tests). Pass enter_workspace=False to stop at landing.
+    """
     at = AppTest.from_file(APP_PATH)
     at.default_timeout = 20
+    at.run()
+    if enter_workspace:
+        at.button(key="landing_enter_platform").click().run()
+        at.button(key="entry_guest").click().run()
     return at
 
 
@@ -233,7 +243,6 @@ def _load_workspace(at: AppTest, workspace_id: str = "ws-1") -> AppTest:
 
 def test_initial_state_prompts_for_selection():
     at = _make_app()
-    at.run()
 
     assert not at.exception
     assert any("select a workspace and file" in info.value for info in at.info)
@@ -245,7 +254,6 @@ def test_load_workspace_lists_inventory_files(monkeypatch):
     )
 
     at = _make_app()
-    at.run()
     _load_workspace(at)
 
     assert not at.exception
@@ -261,7 +269,6 @@ def test_inventory_failure_shows_safe_error_not_stack_trace(monkeypatch):
     monkeypatch.setattr(BackendClient, "get_inventory", raise_error)
 
     at = _make_app()
-    at.run()
     _load_workspace(at, "missing-ws")
 
     assert not at.exception
@@ -280,7 +287,6 @@ def test_successful_analysis_renders_scores_flow_and_recommendations(monkeypatch
     )
 
     at = _make_app()
-    at.run()
     _load_workspace(at)
     at.button(key="analyze_button").click().run()
 
@@ -317,7 +323,6 @@ def test_insufficient_data_does_not_claim_success(monkeypatch):
     )
 
     at = _make_app()
-    at.run()
     _load_workspace(at)
     at.button(key="analyze_button").click().run()
 
@@ -340,7 +345,6 @@ def test_analysis_api_failure_shows_safe_error(monkeypatch):
     monkeypatch.setattr(BackendClient, "analyze_modernization", raise_error)
 
     at = _make_app()
-    at.run()
     _load_workspace(at)
     at.button(key="analyze_button").click().run()
 
@@ -360,7 +364,6 @@ def test_switching_file_clears_stale_results(monkeypatch):
     )
 
     at = _make_app()
-    at.run()
     _load_workspace(at)
     at.button(key="analyze_button").click().run()
     assert any("Analysis complete" in s.value for s in at.success)
@@ -398,7 +401,6 @@ def test_switching_file_clears_stale_chat_history(monkeypatch):
     )
 
     at = _make_app()
-    at.run()
     _load_workspace(at)
     at.button(key="analyze_button").click().run()
     at.chat_input(key="chat_input").set_value("What does this do?").run()
@@ -423,7 +425,6 @@ def test_recommendations_empty_state(monkeypatch):
     )
 
     at = _make_app()
-    at.run()
     _load_workspace(at)
     at.button(key="analyze_button").click().run()
 
@@ -462,7 +463,6 @@ def test_chat_with_modernization_context_renders_answer(monkeypatch):
     monkeypatch.setattr(BackendClient, "send_chat_message", fake_chat)
 
     at = _make_app()
-    at.run()
     _load_workspace(at)
     at.button(key="analyze_button").click().run()
 
@@ -503,7 +503,6 @@ def test_chat_api_failure_shows_safe_error(monkeypatch):
     monkeypatch.setattr(BackendClient, "send_chat_message", raise_error)
 
     at = _make_app()
-    at.run()
     _load_workspace(at)
     at.button(key="analyze_button").click().run()
     at.chat_input(key="chat_input").set_value("hello").run()
@@ -514,7 +513,6 @@ def test_chat_api_failure_shows_safe_error(monkeypatch):
 
 def test_empty_workspace_id_cannot_be_submitted():
     at = _make_app()
-    at.run()
 
     at.text_input(key="manual_ws_input").set_value("   ").run()
 

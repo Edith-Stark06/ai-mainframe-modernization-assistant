@@ -119,6 +119,66 @@ def test_analyze_modernization_success(monkeypatch):
     assert result["score"]["overall_readiness"] == 0.7
 
 
+def test_get_analysis_success(monkeypatch):
+    captured = {}
+
+    def fake_request(self, method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
+        captured["json"] = kwargs.get("json")
+        return _json_response(
+            200,
+            {
+                "success": True,
+                "status": "SUCCESS",
+                "analysis_id": "an-1",
+                "workspace_id": "ws-1",
+                "filename": "MAIN.cbl",
+                "source_metadata": {
+                    "extension": ".cbl",
+                    "size_bytes": 1,
+                    "sha256": "x",
+                },
+                "java_source": "",
+                "dependencies": [],
+                "dependency_graph": {"nodes": [], "edges": []},
+                "business_rules": [],
+            },
+        )
+
+    monkeypatch.setattr(httpx.Client, "request", fake_request)
+
+    client = BackendClient()
+    result = client.get_analysis("ws-1", "MAIN.cbl")
+
+    assert captured["method"] == "POST"
+    assert captured["url"] == "/workspaces/ws-1/analyze"
+    assert captured["json"] == {"filename": "MAIN.cbl"}
+    assert result["dependency_graph"] == {"nodes": [], "edges": []}
+
+
+def test_get_modernization_intelligence_success(monkeypatch):
+    captured = {}
+
+    def fake_request(self, method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
+        captured["json"] = kwargs.get("json")
+        return _json_response(
+            200, {"business_rules": [], "risks": [], "strategies": []}
+        )
+
+    monkeypatch.setattr(httpx.Client, "request", fake_request)
+
+    client = BackendClient()
+    result = client.get_modernization_intelligence("ws-1", "MAIN.cbl")
+
+    assert captured["method"] == "POST"
+    assert captured["url"] == "/workspaces/ws-1/modernization/intelligence"
+    assert captured["json"] == {"filename": "MAIN.cbl"}
+    assert result == {"business_rules": [], "risks": [], "strategies": []}
+
+
 def test_send_chat_message_uses_query_field(monkeypatch):
     captured = {}
 
