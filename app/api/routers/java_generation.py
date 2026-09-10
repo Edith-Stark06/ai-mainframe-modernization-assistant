@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends
 from app.api.schemas.java_generation import JavaGenerationResponse
 from app.api.schemas.modernization import ModernizationRequest
 from app.api.services.pipeline import run_pipeline_for_source
+from app.api.services.pipeline_cache import PipelineCache, get_pipeline_cache
 from app.ingestion.workspace import WorkspaceManager
 
 router = APIRouter(
@@ -35,6 +36,7 @@ def get_java_generation(
     workspace_id: uuid.UUID,
     request: ModernizationRequest,
     workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+    cache: PipelineCache = Depends(get_pipeline_cache),
 ) -> JavaGenerationResponse:
     """
     Return the real #126 generated Java project (with its COBOL source
@@ -42,7 +44,7 @@ def get_java_generation(
     ``available=False`` + reason if generation could not run.
     """
     bundle, mb = run_pipeline_for_source(
-        workspace_id, request.filename, workspace_manager
+        workspace_id, request.filename, workspace_manager, cache
     )
 
     reason = mb.architecture_error or mb.generation_error

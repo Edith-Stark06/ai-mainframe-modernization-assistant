@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends
 from app.api.schemas.modernization import ModernizationRequest
 from app.api.schemas.validation import ValidationResponse
 from app.api.services.pipeline import run_pipeline_for_source
+from app.api.services.pipeline_cache import PipelineCache, get_pipeline_cache
 from app.api.services.validation_stages import (
     compute_overall_status,
     compute_validation_stages,
@@ -40,6 +41,7 @@ def get_validation(
     workspace_id: uuid.UUID,
     request: ModernizationRequest,
     workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+    cache: PipelineCache = Depends(get_pipeline_cache),
 ) -> ValidationResponse:
     """
     Return the real per-stage validation status. A stage the pipeline
@@ -49,7 +51,7 @@ def get_validation(
     PASS) whenever it did not run.
     """
     bundle, mb = run_pipeline_for_source(
-        workspace_id, request.filename, workspace_manager
+        workspace_id, request.filename, workspace_manager, cache
     )
     stages = compute_validation_stages(bundle, mb)
 
