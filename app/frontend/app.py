@@ -33,8 +33,35 @@ from typing import Any, Dict, List, Optional  # noqa: E402
 import streamlit as st  # noqa: E402
 
 from app.frontend.client import BackendAPIError, BackendClient  # noqa: E402
+from app.frontend.dependencies_view import render_dependencies  # noqa: E402
+from app.frontend.entry import render_entry  # noqa: E402
+from app.frontend.landing import render_landing  # noqa: E402
+from app.frontend.mainframe import (  # noqa: E402
+    ChipState,
+    compute_chip_state,
+    render_ai_core_status,
+    render_mainframe_diagram,
+    render_subsystem_nav,
+)
+from app.frontend.rules_view import (  # noqa: E402
+    render_business_rules,
+    render_risks_and_strategy,
+)
+from app.frontend.stub_view import render_not_yet_available  # noqa: E402
+from app.frontend.theme import inject_base_theme  # noqa: E402
 
 PRIORITY_ICONS = {"HIGH": "\U0001f534", "MEDIUM": "\U0001f7e0", "LOW": "\U0001f7e2"}
+
+OUTER_VIEWS = [
+    "Overview",
+    "Business Rules",
+    "Dependencies",
+    "Architecture",
+    "COBOL ↔ Java",
+    "Java Workspace",
+    "Validation Center",
+    "Report",
+]
 
 
 @st.cache_resource
@@ -44,6 +71,12 @@ def get_client() -> BackendClient:
 
 def _init_session_state() -> None:
     defaults: Dict[str, Any] = {
+        # -- app-wide navigation stage ---------------------------------
+        "stage": "landing",  # "landing" | "entry" | "workspace"
+        "intro_seen": False,
+        "engineer_name": None,
+        "active_view": "Overview",
+        # -- existing workspace/analysis state (unchanged) -------------
         "workspace_id": None,
         "known_workspace_ids": [],
         "inventory_files": [],
@@ -54,6 +87,13 @@ def _init_session_state() -> None:
         "modernization_error": None,
         "loading": False,
         "messages": [],
+        # -- new, lazily-loaded views (#134 / #135) ---------------------
+        "analysis_result": None,
+        "analysis_result_filename": None,
+        "analysis_error": None,
+        "intelligence_result": None,
+        "intelligence_result_filename": None,
+        "intelligence_error": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -72,6 +112,12 @@ def _reset_workspace(workspace_id: str) -> None:
     st.session_state.modernization_result_filename = None
     st.session_state.modernization_error = None
     st.session_state.messages = []
+    st.session_state.analysis_result = None
+    st.session_state.analysis_result_filename = None
+    st.session_state.analysis_error = None
+    st.session_state.intelligence_result = None
+    st.session_state.intelligence_result_filename = None
+    st.session_state.intelligence_error = None
 
 
 def _load_inventory(client: BackendClient, workspace_id: str) -> None:
@@ -82,6 +128,43 @@ def _load_inventory(client: BackendClient, workspace_id: str) -> None:
     except BackendAPIError as e:
         st.session_state.inventory_files = []
         st.session_state.inventory_error = e.message
+
+
+def _ensure_analysis(client: BackendClient, workspace_id: str, filename: str) -> None:
+    """Lazily fetch (and cache by filename) the /analyze response -- only
+    when a view that needs it is actually opened, per the "do not reload
+    large analysis artifacts unnecessarily" performance rule."""
+    if st.session_state.analysis_result_filename == filename:
+        return
+    try:
+        with st.spinner("Loading dependency analysis..."):
+            st.session_state.analysis_result = client.get_analysis(
+                workspace_id, filename
+            )
+        st.session_state.analysis_result_filename = filename
+        st.session_state.analysis_error = None
+    except BackendAPIError as e:
+        st.session_state.analysis_result = None
+        st.session_state.analysis_result_filename = filename
+        st.session_state.analysis_error = e.message
+
+
+def _ensure_intelligence(
+    client: BackendClient, workspace_id: str, filename: str
+) -> None:
+    if st.session_state.intelligence_result_filename == filename:
+        return
+    try:
+        with st.spinner("Extracting business rules, risks, and strategy..."):
+            st.session_state.intelligence_result = (
+                client.get_modernization_intelligence(workspace_id, filename)
+            )
+        st.session_state.intelligence_result_filename = filename
+        st.session_state.intelligence_error = None
+    except BackendAPIError as e:
+        st.session_state.intelligence_result = None
+        st.session_state.intelligence_result_filename = filename
+        st.session_state.intelligence_error = e.message
 
 
 def _render_workspace_selection(client: BackendClient) -> None:
@@ -163,6 +246,35 @@ def _render_workspace_selection(client: BackendClient) -> None:
                 finally:
                     st.session_state.loading = False
 
+    st.markdown("---")
+    render_ai_core_status(_current_chip_state())
+
+
+def _current_chip_state() -> ChipState:
+    result = st.session_state.modernization_result
+    has_result = (
+        result is not None
+        and st.session_state.modernization_result_filename == st.session_state.filename
+    )
+    insufficient = False
+    risk_count = 0
+    if has_result:
+        insufficient = bool(
+            (result.get("score", {}) or {}).get("metadata", {}).get("insufficient_data")
+        ) or not (result.get("flow", {}) or {}).get("nodes")
+    intel = st.session_state.intelligence_result
+    if (
+        intel is not None
+        and st.session_state.intelligence_result_filename == st.session_state.filename
+    ):
+        risk_count = len(intel.get("risks", []))
+    return compute_chip_state(
+        has_analysis_result=has_result,
+        is_loading=st.session_state.loading,
+        insufficient_data=insufficient,
+        risk_count=risk_count,
+    )
+
 
 def _render_scores(score: Dict[str, Any]) -> None:
     st.subheader("Modernization Scores")
@@ -220,7 +332,7 @@ def _render_flow(flow: Dict[str, Any]) -> None:
                 }
                 for e in edges
             ],
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -281,7 +393,9 @@ def _render_chat(
                     st.error(e.message)
 
 
-def _render_results() -> None:
+def _render_overview() -> None:
+    """The original modernization-pipeline results: scores, flow,
+    recommendations, and chat -- unchanged in behavior, restyled in place."""
     if st.session_state.modernization_error:
         st.error(st.session_state.modernization_error)
         return
@@ -321,17 +435,129 @@ def _render_results() -> None:
             get_client(), st.session_state.workspace_id, st.session_state.filename
         )
 
-
-def main() -> None:
-    st.set_page_config(
-        page_title="Mainframe Modernization Assistant",
-        page_icon="\U0001f916",
-        layout="wide",
+    render_risks_and_strategy(
+        st.session_state.intelligence_result
+        if st.session_state.intelligence_result_filename == st.session_state.filename
+        else None
     )
-    _init_session_state()
-    client = get_client()
 
+
+def _render_workspace_body(client: BackendClient) -> None:
+    workspace_id = st.session_state.workspace_id
+    filename = st.session_state.filename
+
+    render_mainframe_diagram(_current_chip_state(), mode="live")
+
+    def _select_view(target: str) -> None:
+        st.session_state.active_view = target
+
+    render_subsystem_nav(_select_view)
+
+    view = st.radio(
+        "View",
+        options=OUTER_VIEWS,
+        horizontal=True,
+        key="active_view",
+        label_visibility="collapsed",
+    )
+
+    if view == "Overview":
+        _render_overview()
+    elif view == "Business Rules":
+        _ensure_intelligence(client, workspace_id, filename)
+        render_business_rules(
+            st.session_state.intelligence_result,
+            error=st.session_state.intelligence_error,
+        )
+    elif view == "Dependencies":
+        _ensure_analysis(client, workspace_id, filename)
+        render_dependencies(
+            st.session_state.analysis_result, error=st.session_state.analysis_error
+        )
+    elif view == "Architecture":
+        render_not_yet_available(
+            "Architecture",
+            "No API route exists yet for Java architecture generation "
+            "(app.java_modernization.architecture is fully built server-side "
+            "but not exposed over HTTP). This view will show real generated "
+            "components once that route is added.",
+            available_today="Business Rules, Dependencies, and Overview.",
+        )
+    elif view == "COBOL ↔ Java":
+        render_not_yet_available(
+            "COBOL ↔ Java",
+            "No API route exists yet for Java code generation, so there is no "
+            "generated Java to trace COBOL source lines against.",
+            available_today="Business Rules and Dependencies show COBOL source "
+            "locations directly.",
+        )
+    elif view == "Java Workspace":
+        render_not_yet_available(
+            "Java Workspace",
+            "No API route exists yet for Java generation, compilation, or the "
+            "Phase 11 quality loop's repair history, even though that backend "
+            "code is fully built and tested.",
+            available_today="Overview shows modernization readiness scores today.",
+        )
+    elif view == "Validation Center":
+        render_not_yet_available(
+            "Validation Center",
+            "No API route exists yet for compilation or behavioral validation "
+            "results, so a trustworthy PASS/FAIL/INCONCLUSIVE verdict cannot be "
+            "shown here yet.",
+            available_today="Overview and Business Rules reflect real analysis "
+            "coverage and risk today.",
+        )
+    elif view == "Report":
+        render_not_yet_available(
+            "Report",
+            "Report export requires the Architecture, Java, and Validation "
+            "data above, none of which is exposed via the API yet.",
+            available_today="Use Overview, Business Rules, and Dependencies for "
+            "now; each reflects real backend data.",
+        )
+
+
+def _render_landing_stage() -> None:
+    # Stage transitions mutate session_state mid-script; without an
+    # explicit rerun, Streamlit finishes rendering the CURRENT (landing)
+    # branch before the new stage takes effect, and the click would
+    # appear to do nothing until some later, unrelated interaction.
+    def _enter_platform() -> None:
+        st.session_state.intro_seen = True
+        st.session_state.stage = "entry"
+        st.rerun()
+
+    def _login() -> None:
+        st.session_state.intro_seen = True
+        st.session_state.stage = "entry"
+        st.rerun()
+
+    def _watch_intro() -> None:
+        st.session_state.intro_seen = True
+        st.rerun()
+
+    render_landing(
+        on_enter_platform=_enter_platform,
+        on_login=_login,
+        on_watch_intro=_watch_intro,
+        intro_seen=st.session_state.intro_seen,
+    )
+
+
+def _render_entry_stage() -> None:
+    def _continue(name: str) -> None:
+        st.session_state.engineer_name = name
+        st.session_state.stage = "workspace"
+        st.rerun()
+
+    render_entry(on_continue=_continue)
+
+
+def _render_workspace_stage(client: BackendClient) -> None:
+    greeting = st.session_state.engineer_name or "Engineer"
     st.title("\U0001f916 AI-Powered Mainframe Modernization Assistant")
+    st.caption(f"Welcome, {greeting}. Session is local to this browser tab.")
 
     with st.sidebar:
         _render_workspace_selection(client)
@@ -340,8 +566,28 @@ def main() -> None:
         st.info("Loading modernization analysis...")
     elif not st.session_state.workspace_id or not st.session_state.filename:
         st.info("Please select a workspace and file from the sidebar.")
+        render_mainframe_diagram(ChipState.IDLE, mode="live")
     else:
-        _render_results()
+        _render_workspace_body(client)
+
+
+def main() -> None:
+    st.set_page_config(
+        page_title="Mainframe Modernization Assistant",
+        page_icon="\U0001f916",
+        layout="wide",
+    )
+    _init_session_state()
+    inject_base_theme()
+    client = get_client()
+
+    stage = st.session_state.stage
+    if stage == "landing":
+        _render_landing_stage()
+    elif stage == "entry":
+        _render_entry_stage()
+    else:
+        _render_workspace_stage(client)
 
 
 main()
