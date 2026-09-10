@@ -1,5 +1,4 @@
 import uuid
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from app.api.schemas.modernization import (
@@ -10,6 +9,7 @@ from app.api.schemas.modernization import (
     ModernizationScoreResponse,
     RecommendationResponse,
 )
+from app.api.dependencies.workspace import resolve_workspace_source
 from app.analysis.service import AnalysisService
 from app.modernization.flow.generator import generate_flow
 from app.modernization.intelligence import analyze_modernization_intelligence
@@ -17,7 +17,6 @@ from app.modernization.scoring.confidence_aware import score_with_confidence
 from app.modernization.scoring.service import calculate_scores
 from app.modernization.recommendations.service import generate_recommendations
 from app.ingestion.workspace import WorkspaceManager
-from app.core.exceptions import ResourceNotFoundException
 
 router = APIRouter(
     prefix="/workspaces/{workspace_id}/modernization", tags=["modernization"]
@@ -42,24 +41,9 @@ def execute_modernization_pipeline(
     """
     Executes the full modernization pipeline (Flow -> Scoring -> Recommendations).
     """
-    try:
-        ws = workspace_manager.get(str(workspace_id))
-    except ResourceNotFoundException:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-
-    from pathlib import Path
-
-    try:
-        ws_root = Path(ws.path).resolve()
-        source_path = (ws_root / request.filename).resolve()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid filename format")
-
-    if not source_path.is_relative_to(ws_root):
-        raise HTTPException(status_code=403, detail="Forbidden path traversal detected")
-
-    if not source_path.exists():
-        raise HTTPException(status_code=404, detail="Source file not found")
+    source_path = resolve_workspace_source(
+        workspace_id, request.filename, workspace_manager
+    )
 
     from app.core.logging import logger
 
@@ -113,30 +97,6 @@ def execute_modernization_pipeline(
     )
 
 
-def _resolve_workspace_source(
-    workspace_id: uuid.UUID,
-    filename: str,
-    workspace_manager: WorkspaceManager,
-) -> Path:
-    """Shared workspace lookup + path-traversal guard for modernization routes."""
-    try:
-        ws = workspace_manager.get(str(workspace_id))
-    except ResourceNotFoundException:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-
-    try:
-        ws_root = Path(ws.path).resolve()
-        source_path = (ws_root / filename).resolve()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid filename format")
-
-    if not source_path.is_relative_to(ws_root):
-        raise HTTPException(status_code=403, detail="Forbidden path traversal detected")
-    if not source_path.exists():
-        raise HTTPException(status_code=404, detail="Source file not found")
-    return source_path
-
-
 @router.post("/intelligence", response_model=ModernizationIntelligenceResponse)
 def execute_modernization_intelligence(
     workspace_id: uuid.UUID,
@@ -154,7 +114,7 @@ def execute_modernization_intelligence(
     """
     from app.core.logging import logger
 
-    source_path = _resolve_workspace_source(
+    source_path = resolve_workspace_source(
         workspace_id, request.filename, workspace_manager
     )
 

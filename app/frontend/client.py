@@ -164,6 +164,49 @@ class BackendClient:
             json={"filename": filename},
         )
 
+    def get_architecture(self, workspace_id: str, filename: str) -> Dict[str, Any]:
+        """The real #125 evidence-based Java architecture, or
+        ``available: False`` + a reason if it could not be derived."""
+        return self._request(
+            "POST",
+            f"/workspaces/{workspace_id}/modernization/architecture",
+            json={"filename": filename},
+        )
+
+    def get_java_generation(self, workspace_id: str, filename: str) -> Dict[str, Any]:
+        """The real #126 generated Java project (with COBOL source
+        mappings) and the real #127 compilation result."""
+        return self._request(
+            "POST",
+            f"/workspaces/{workspace_id}/modernization/java",
+            json={"filename": filename},
+        )
+
+    def get_validation(self, workspace_id: str, filename: str) -> Dict[str, Any]:
+        """Explicit PASS/FAIL/INCONCLUSIVE/NOT_AVAILABLE status for every
+        pipeline stage -- never fabricated, never upgraded to PASS."""
+        return self._request(
+            "POST",
+            f"/workspaces/{workspace_id}/modernization/validation",
+            json={"filename": filename},
+        )
+
+    def get_file_content(self, workspace_id: str, filename: str) -> Dict[str, Any]:
+        """The raw COBOL source content for a workspace file -- used to
+        render the COBOL side of the COBOL<->Java split view."""
+        return self._request("GET", f"/workspaces/{workspace_id}/files/{filename}")
+
+    def get_modernization_report(
+        self, workspace_id: str, filename: str
+    ) -> Dict[str, Any]:
+        """The full modernization dossier -- aggregates the same data the
+        other endpoints expose; nothing is recomputed here."""
+        return self._request(
+            "POST",
+            f"/workspaces/{workspace_id}/modernization/report",
+            json={"filename": filename},
+        )
+
     def send_chat_message(
         self,
         workspace_id: str,

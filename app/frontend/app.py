@@ -32,9 +32,11 @@ from typing import Any, Dict, List, Optional  # noqa: E402
 
 import streamlit as st  # noqa: E402
 
+from app.frontend.architecture_view import render_architecture  # noqa: E402
 from app.frontend.client import BackendAPIError, BackendClient  # noqa: E402
 from app.frontend.dependencies_view import render_dependencies  # noqa: E402
 from app.frontend.entry import render_entry  # noqa: E402
+from app.frontend.java_view import render_java_view  # noqa: E402
 from app.frontend.landing import render_landing  # noqa: E402
 from app.frontend.mainframe import (  # noqa: E402
     ChipState,
@@ -43,12 +45,14 @@ from app.frontend.mainframe import (  # noqa: E402
     render_mainframe_diagram,
     render_subsystem_nav,
 )
+from app.frontend.report_view import render_report  # noqa: E402
 from app.frontend.rules_view import (  # noqa: E402
     render_business_rules,
     render_risks_and_strategy,
 )
 from app.frontend.stub_view import render_not_yet_available  # noqa: E402
 from app.frontend.theme import inject_base_theme  # noqa: E402
+from app.frontend.validation_view import render_validation  # noqa: E402
 
 PRIORITY_ICONS = {"HIGH": "\U0001f534", "MEDIUM": "\U0001f7e0", "LOW": "\U0001f7e2"}
 
@@ -94,6 +98,21 @@ def _init_session_state() -> None:
         "intelligence_result": None,
         "intelligence_result_filename": None,
         "intelligence_error": None,
+        # -- new, lazily-loaded views (Architecture / Java / Validation / Report) --
+        "architecture_result": None,
+        "architecture_result_filename": None,
+        "architecture_error": None,
+        "java_generation_result": None,
+        "java_generation_result_filename": None,
+        "java_generation_error": None,
+        "cobol_source": None,
+        "cobol_source_filename": None,
+        "validation_result": None,
+        "validation_result_filename": None,
+        "validation_error": None,
+        "report_result": None,
+        "report_result_filename": None,
+        "report_error": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -118,6 +137,20 @@ def _reset_workspace(workspace_id: str) -> None:
     st.session_state.intelligence_result = None
     st.session_state.intelligence_result_filename = None
     st.session_state.intelligence_error = None
+    st.session_state.architecture_result = None
+    st.session_state.architecture_result_filename = None
+    st.session_state.architecture_error = None
+    st.session_state.java_generation_result = None
+    st.session_state.java_generation_result_filename = None
+    st.session_state.java_generation_error = None
+    st.session_state.cobol_source = None
+    st.session_state.cobol_source_filename = None
+    st.session_state.validation_result = None
+    st.session_state.validation_result_filename = None
+    st.session_state.validation_error = None
+    st.session_state.report_result = None
+    st.session_state.report_result_filename = None
+    st.session_state.report_error = None
 
 
 def _load_inventory(client: BackendClient, workspace_id: str) -> None:
@@ -165,6 +198,87 @@ def _ensure_intelligence(
         st.session_state.intelligence_result = None
         st.session_state.intelligence_result_filename = filename
         st.session_state.intelligence_error = e.message
+
+
+def _ensure_architecture(
+    client: BackendClient, workspace_id: str, filename: str
+) -> None:
+    if st.session_state.architecture_result_filename == filename:
+        return
+    try:
+        with st.spinner("Deriving architecture..."):
+            st.session_state.architecture_result = client.get_architecture(
+                workspace_id, filename
+            )
+        st.session_state.architecture_result_filename = filename
+        st.session_state.architecture_error = None
+    except BackendAPIError as e:
+        st.session_state.architecture_result = None
+        st.session_state.architecture_result_filename = filename
+        st.session_state.architecture_error = e.message
+
+
+def _ensure_java_generation(
+    client: BackendClient, workspace_id: str, filename: str
+) -> None:
+    if st.session_state.java_generation_result_filename == filename:
+        return
+    try:
+        with st.spinner("Generating and compiling Java..."):
+            st.session_state.java_generation_result = client.get_java_generation(
+                workspace_id, filename
+            )
+        st.session_state.java_generation_result_filename = filename
+        st.session_state.java_generation_error = None
+    except BackendAPIError as e:
+        st.session_state.java_generation_result = None
+        st.session_state.java_generation_result_filename = filename
+        st.session_state.java_generation_error = e.message
+
+
+def _ensure_cobol_source(
+    client: BackendClient, workspace_id: str, filename: str
+) -> None:
+    if st.session_state.cobol_source_filename == filename:
+        return
+    try:
+        data = client.get_file_content(workspace_id, filename)
+        st.session_state.cobol_source = data.get("content")
+    except BackendAPIError:
+        st.session_state.cobol_source = None
+    st.session_state.cobol_source_filename = filename
+
+
+def _ensure_validation(client: BackendClient, workspace_id: str, filename: str) -> None:
+    if st.session_state.validation_result_filename == filename:
+        return
+    try:
+        with st.spinner("Validating..."):
+            st.session_state.validation_result = client.get_validation(
+                workspace_id, filename
+            )
+        st.session_state.validation_result_filename = filename
+        st.session_state.validation_error = None
+    except BackendAPIError as e:
+        st.session_state.validation_result = None
+        st.session_state.validation_result_filename = filename
+        st.session_state.validation_error = e.message
+
+
+def _ensure_report(client: BackendClient, workspace_id: str, filename: str) -> None:
+    if st.session_state.report_result_filename == filename:
+        return
+    try:
+        with st.spinner("Building modernization report..."):
+            st.session_state.report_result = client.get_modernization_report(
+                workspace_id, filename
+            )
+        st.session_state.report_result_filename = filename
+        st.session_state.report_error = None
+    except BackendAPIError as e:
+        st.session_state.report_result = None
+        st.session_state.report_result_filename = filename
+        st.session_state.report_error = e.message
 
 
 def _render_workspace_selection(client: BackendClient) -> None:
@@ -442,11 +556,29 @@ def _render_overview() -> None:
     )
 
 
+def _real_architecture_components() -> Optional[List[str]]:
+    """Real component names for the mainframe diagram's "modern
+    architecture" panel -- only when Architecture has actually been
+    fetched for the current file; never fabricated."""
+    arch = st.session_state.architecture_result
+    if (
+        arch is None
+        or st.session_state.architecture_result_filename != st.session_state.filename
+        or not arch.get("available")
+    ):
+        return None
+    return [c["name"] for c in arch["architecture"]["components"]]
+
+
 def _render_workspace_body(client: BackendClient) -> None:
     workspace_id = st.session_state.workspace_id
     filename = st.session_state.filename
 
-    render_mainframe_diagram(_current_chip_state(), mode="live")
+    render_mainframe_diagram(
+        _current_chip_state(),
+        mode="live",
+        architecture_components=_real_architecture_components(),
+    )
 
     def _select_view(target: str) -> None:
         st.session_state.active_view = target
@@ -475,46 +607,38 @@ def _render_workspace_body(client: BackendClient) -> None:
             st.session_state.analysis_result, error=st.session_state.analysis_error
         )
     elif view == "Architecture":
-        render_not_yet_available(
-            "Architecture",
-            "No API route exists yet for Java architecture generation "
-            "(app.java_modernization.architecture is fully built server-side "
-            "but not exposed over HTTP). This view will show real generated "
-            "components once that route is added.",
-            available_today="Business Rules, Dependencies, and Overview.",
+        _ensure_architecture(client, workspace_id, filename)
+        render_architecture(
+            st.session_state.architecture_result,
+            error=st.session_state.architecture_error,
         )
     elif view == "COBOL ↔ Java":
-        render_not_yet_available(
-            "COBOL ↔ Java",
-            "No API route exists yet for Java code generation, so there is no "
-            "generated Java to trace COBOL source lines against.",
-            available_today="Business Rules and Dependencies show COBOL source "
-            "locations directly.",
+        _ensure_java_generation(client, workspace_id, filename)
+        _ensure_cobol_source(client, workspace_id, filename)
+        render_java_view(
+            st.session_state.java_generation_result,
+            st.session_state.cobol_source,
+            error=st.session_state.java_generation_error,
         )
     elif view == "Java Workspace":
         render_not_yet_available(
             "Java Workspace",
-            "No API route exists yet for Java generation, compilation, or the "
-            "Phase 11 quality loop's repair history, even though that backend "
-            "code is fully built and tested.",
-            available_today="Overview shows modernization readiness scores today.",
+            "No API route exists yet for the Phase 11 quality loop's "
+            "repair history, even though that backend code is fully built "
+            "and tested. Generated Java and compilation status are "
+            "available on the COBOL <-> Java view.",
+            available_today="COBOL <-> Java shows generated files and "
+            "compilation status today.",
         )
     elif view == "Validation Center":
-        render_not_yet_available(
-            "Validation Center",
-            "No API route exists yet for compilation or behavioral validation "
-            "results, so a trustworthy PASS/FAIL/INCONCLUSIVE verdict cannot be "
-            "shown here yet.",
-            available_today="Overview and Business Rules reflect real analysis "
-            "coverage and risk today.",
+        _ensure_validation(client, workspace_id, filename)
+        render_validation(
+            st.session_state.validation_result, error=st.session_state.validation_error
         )
     elif view == "Report":
-        render_not_yet_available(
-            "Report",
-            "Report export requires the Architecture, Java, and Validation "
-            "data above, none of which is exposed via the API yet.",
-            available_today="Use Overview, Business Rules, and Dependencies for "
-            "now; each reflects real backend data.",
+        _ensure_report(client, workspace_id, filename)
+        render_report(
+            st.session_state.report_result, error=st.session_state.report_error
         )
 
 
