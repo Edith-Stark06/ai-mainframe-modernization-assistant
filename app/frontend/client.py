@@ -207,6 +207,18 @@ class BackendClient:
             json={"filename": filename},
         )
 
+    def get_java_workspace(self, workspace_id: str, filename: str) -> Dict[str, Any]:
+        """Real generated Java/compilation/behavioral status plus the
+        real deterministic candidate identity; quality-loop execution
+        fields (iterations, repair history, human review, audit trail)
+        are honestly empty/NOT_AVAILABLE without a configured AI
+        provider -- never fabricated."""
+        return self._request(
+            "POST",
+            f"/workspaces/{workspace_id}/modernization/java-workspace",
+            json={"filename": filename},
+        )
+
     def send_chat_message(
         self,
         workspace_id: str,

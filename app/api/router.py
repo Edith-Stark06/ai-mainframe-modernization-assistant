@@ -42,6 +42,7 @@ from app.api.routers.architecture import router as architecture_router
 from app.api.routers.java_generation import router as java_generation_router
 from app.api.routers.validation import router as validation_router
 from app.api.routers.report import router as report_router
+from app.api.routers.java_workspace import router as java_workspace_router
 
 # ---------------------------------------------------------------------------
 # Versioned API router
@@ -60,3 +61,4 @@ api_router.include_router(architecture_router)
 api_router.include_router(java_generation_router)
 api_router.include_router(validation_router)
 api_router.include_router(report_router)
+api_router.include_router(java_workspace_router)

@@ -83,5 +83,14 @@ class RAGOrchestrator:
             return RAGResult(request=request, context=context, ai_result=ai_result)
 
         except Exception as e:
-            # Preserve context but record the AI failure
-            return RAGResult(request=request, context=context, ai_error=str(e))
+            # Preserve context but record the AI failure. ai_error_type
+            # records the exception's class name (e.g.
+            # "LLMProviderUnavailableError") purely for API-layer error
+            # classification -- this orchestrator still makes no decision
+            # based on it, it only observes and reports.
+            return RAGResult(
+                request=request,
+                context=context,
+                ai_error=str(e),
+                ai_error_type=type(e).__name__,
+            )
