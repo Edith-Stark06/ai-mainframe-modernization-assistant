@@ -20,6 +20,7 @@ from app.api.schemas.modernization import ModernizationRequest
 from app.api.schemas.report import ModernizationReportResponse
 from app.api.schemas.validation import StageStatus
 from app.api.services.pipeline import run_pipeline_for_source
+from app.api.services.pipeline_cache import PipelineCache, get_pipeline_cache
 from app.api.services.validation_stages import (
     compute_overall_status,
     compute_validation_stages,
@@ -40,12 +41,13 @@ def get_modernization_report(
     workspace_id: uuid.UUID,
     request: ModernizationRequest,
     workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+    cache: PipelineCache = Depends(get_pipeline_cache),
 ) -> ModernizationReportResponse:
     """Aggregate real backend results into one modernization dossier.
     Every unavailable stage remains explicitly unavailable/inconclusive
     -- see ``unresolved_issues`` for the consolidated list."""
     bundle, mb = run_pipeline_for_source(
-        workspace_id, request.filename, workspace_manager
+        workspace_id, request.filename, workspace_manager, cache
     )
     stages = compute_validation_stages(bundle, mb)
     overall = compute_overall_status(stages)

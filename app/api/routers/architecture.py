@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends
 from app.api.schemas.architecture import ArchitectureResponse
 from app.api.schemas.modernization import ModernizationRequest
 from app.api.services.pipeline import run_pipeline_for_source
+from app.api.services.pipeline_cache import PipelineCache, get_pipeline_cache
 from app.ingestion.workspace import WorkspaceManager
 
 router = APIRouter(
@@ -38,6 +39,7 @@ def get_architecture(
     workspace_id: uuid.UUID,
     request: ModernizationRequest,
     workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+    cache: PipelineCache = Depends(get_pipeline_cache),
 ) -> ArchitectureResponse:
     """
     Return the real #125 evidence-based Java architecture for a source
@@ -46,7 +48,7 @@ def get_architecture(
     architecture.
     """
     bundle, mb = run_pipeline_for_source(
-        workspace_id, request.filename, workspace_manager
+        workspace_id, request.filename, workspace_manager, cache
     )
 
     return ArchitectureResponse(
