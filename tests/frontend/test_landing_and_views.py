@@ -353,9 +353,103 @@ def test_dependencies_filter_by_type(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_architecture_view_is_an_honest_stub_not_fabricated(monkeypatch):
+ARCHITECTURE_RESULT = {
+    "workspace_id": "ws-1",
+    "filename": "MAIN.cbl",
+    "available": True,
+    "reason": None,
+    "architecture": {
+        "architecture_id": "arch-1",
+        "version": "p9-arch-v1",
+        "analysis_version": "v1",
+        "source_id": "MAIN",
+        "primary_strategy": None,
+        "alternative_strategies": [],
+        "components": [
+            {
+                "component_id": "svc-1",
+                "name": "MainService",
+                "type": "SERVICE",
+                "responsibility": "Entry point",
+                "source_refs": [],
+                "business_rule_ids": [],
+                "dependency_ids": [],
+                "external_interface_ids": [],
+                "evidence": [],
+            }
+        ],
+        "data_model": [],
+        "external_interfaces": [],
+        "assumptions": [],
+        "unsupported_behaviors": [],
+        "source_mappings": {},
+        "semantic_equivalence_verified": False,
+    },
+}
+
+ARCHITECTURE_UNAVAILABLE = {
+    "workspace_id": "ws-1",
+    "filename": "MAIN.cbl",
+    "available": False,
+    "reason": "no AST",
+    "architecture": None,
+}
+
+VALIDATION_INCONCLUSIVE = {
+    "workspace_id": "ws-1",
+    "filename": "MAIN.cbl",
+    "overall_status": "INCONCLUSIVE",
+    "stages": [
+        {
+            "stage": "Parser",
+            "status": "PASS",
+            "summary": "No parser errors.",
+            "details": {},
+        },
+        {
+            "stage": "Behavioral Equivalence",
+            "status": "INCONCLUSIVE",
+            "summary": "COBOL runtime unavailable.",
+            "details": {},
+        },
+        {
+            "stage": "Self Repair",
+            "status": "NOT_AVAILABLE",
+            "summary": "AI provider not configured.",
+            "details": {},
+        },
+    ],
+}
+
+
+def test_architecture_view_renders_real_components(monkeypatch):
     monkeypatch.setattr(
         BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_ONE_FILE
+    )
+    monkeypatch.setattr(
+        BackendClient,
+        "get_architecture",
+        lambda self, ws_id, filename: ARCHITECTURE_RESULT,
+    )
+
+    at = _make_app()
+    _enter_workspace(at)
+    _load_and_select(at)
+    at.radio(key="active_view").set_value("Architecture").run()
+
+    assert not at.exception
+    full_text = _visible_text(at)
+    assert "MainService" in full_text
+
+
+def test_architecture_view_reports_unavailable_honestly(monkeypatch):
+    monkeypatch.setattr(
+        BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_ONE_FILE
+    )
+    monkeypatch.setattr(
+        BackendClient,
+        "get_architecture",
+        lambda self, ws_id, filename: ARCHITECTURE_UNAVAILABLE,
     )
 
     at = _make_app()
@@ -367,12 +461,16 @@ def test_architecture_view_is_an_honest_stub_not_fabricated(monkeypatch):
     full_text = _visible_text(at).upper()
     assert "NOT AVAILABLE" in full_text
     assert "READY FOR MODERNIZATION" not in full_text
-    assert "VERIFIED" not in full_text
 
 
-def test_validation_center_stub_never_claims_readiness(monkeypatch):
+def test_validation_center_never_claims_readiness_when_inconclusive(monkeypatch):
     monkeypatch.setattr(
         BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_ONE_FILE
+    )
+    monkeypatch.setattr(
+        BackendClient,
+        "get_validation",
+        lambda self, ws_id, filename: VALIDATION_INCONCLUSIVE,
     )
 
     at = _make_app()
@@ -382,9 +480,161 @@ def test_validation_center_stub_never_claims_readiness(monkeypatch):
 
     assert not at.exception
     full_text = _visible_text(at).upper()
-    assert "NOT AVAILABLE" in full_text
     assert "READY FOR MODERNIZATION" not in full_text
-    # no fake green "PASS" status pill anywhere on this view -- the word
-    # "PASS" may still appear in explanatory prose (e.g. "a PASS/FAIL/
-    # INCONCLUSIVE verdict cannot be shown yet"), which is honest, not a claim.
-    assert 'mf-status--pass"' not in "".join(m.value for m in at.markdown)
+    assert "INCONCLUSIVE" in full_text
+    # the overall headline pill itself must be inconclusive, not pass --
+    # individual stages (e.g. Parser) may legitimately still show PASS.
+    headline = next(
+        m.value
+        for m in at.markdown
+        if "NOT ALL STAGES COULD BE VERIFIED" in m.value.upper()
+    )
+    assert "mf-status--pass" not in headline
+
+
+def test_java_workspace_remains_an_honest_stub(monkeypatch):
+    """Java Workspace (repair history) is explicitly out of this task's
+    scope -- it must still render as an honest stub, not silently blank."""
+    monkeypatch.setattr(
+        BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_ONE_FILE
+    )
+
+    at = _make_app()
+    _enter_workspace(at)
+    _load_and_select(at)
+    at.radio(key="active_view").set_value("Java Workspace").run()
+
+    assert not at.exception
+    full_text = _visible_text(at).upper()
+    assert "NOT AVAILABLE" in full_text
+
+
+JAVA_GENERATION_RESULT = {
+    "workspace_id": "ws-1",
+    "filename": "MAIN.cbl",
+    "available": True,
+    "reason": None,
+    "project": {
+        "project_id": "proj-1",
+        "generation_version": "p9-gen-v1",
+        "source_id": "MAIN",
+        "architecture_id": "arch-1",
+        "main_class": "Main",
+        "files": {"src/Main.java": "public class Main {}"},
+        "artifacts": [
+            {
+                "artifact_id": "a1",
+                "file_path": "src/Main.java",
+                "class_name": "Main",
+                "method_name": "run",
+                "kind": "method",
+                "source_locations": [
+                    {
+                        "source_id": "MAIN",
+                        "source_path": "MAIN.cbl",
+                        "line_start": 7,
+                        "line_end": 9,
+                        "paragraph": "MAIN-PARA",
+                    }
+                ],
+                "mapping_status": "mapped",
+                "architecture_component_id": "svc-1",
+                "business_rule_ids": ["BR-001"],
+                "dependency_ids": [],
+                "assumptions": [],
+                "unsupported_behaviors": [],
+            }
+        ],
+        "assumptions": [],
+        "unsupported_behaviors": [],
+        "generator_diagnostics": [],
+        "semantic_equivalence_verified": False,
+    },
+    "compilation": {
+        "success": True,
+        "compilation_version": "p9-compile-v1",
+        "diagnostics": [],
+        "file_records": [],
+        "command": [],
+        "duration_s": 0.1,
+        "timed_out": False,
+        "output_truncated": False,
+        "jdk_version": "24",
+        "workspace": "/tmp/x",
+        "raw_output": "",
+    },
+}
+
+
+def test_cobol_java_view_renders_real_mapping(monkeypatch):
+    monkeypatch.setattr(
+        BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_ONE_FILE
+    )
+    monkeypatch.setattr(
+        BackendClient,
+        "get_java_generation",
+        lambda self, ws_id, filename: JAVA_GENERATION_RESULT,
+    )
+    monkeypatch.setattr(
+        BackendClient,
+        "get_file_content",
+        lambda self, ws_id, filename: {"content": "       IDENTIFICATION DIVISION."},
+    )
+
+    at = _make_app()
+    _enter_workspace(at)
+    _load_and_select(at)
+    at.radio(key="active_view").set_value("COBOL ↔ Java").run()
+
+    assert not at.exception
+    full_text = _visible_text(at) + " ".join(c.value for c in at.caption)
+    assert "MAIN.cbl" in full_text  # the real source mapping location
+    assert "BR-001" in full_text
+
+
+REPORT_RESULT = {
+    "workspace_id": "ws-1",
+    "filename": "MAIN.cbl",
+    "source_id": "MAIN",
+    "analysis_success": True,
+    "paragraphs": ["MAIN-PARA"],
+    "business_rules": [],
+    "risks": [],
+    "strategy": None,
+    "dependencies": [],
+    "coverage": {"overall": 1.0},
+    "confidence": {"score": 1.0},
+    "architecture": None,
+    "architecture_reason": "no AST",
+    "project": None,
+    "generation_reason": None,
+    "compilation": None,
+    "validation_stages": [
+        {"stage": "Parser", "status": "FAIL", "summary": "no AST", "details": {}},
+    ],
+    "overall_status": "FAIL",
+    "unsupported_syntax": None,
+    "unresolved_issues": ["Parser: no AST"],
+}
+
+
+def test_report_view_renders_real_aggregate_and_never_claims_pass(monkeypatch):
+    monkeypatch.setattr(
+        BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_ONE_FILE
+    )
+    monkeypatch.setattr(
+        BackendClient,
+        "get_modernization_report",
+        lambda self, ws_id, filename: REPORT_RESULT,
+    )
+
+    at = _make_app()
+    _enter_workspace(at)
+    _load_and_select(at)
+    at.radio(key="active_view").set_value("Report").run()
+
+    assert not at.exception
+    full_text = _visible_text(at)
+    assert "no AST" in full_text
+    assert "Parser: no AST" in full_text
+    assert "READY FOR MODERNIZATION" not in full_text.upper()
