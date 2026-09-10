@@ -14,6 +14,12 @@ Responsibilities:
       (``GET /api/v1/workspaces/{workspace_id}/inventory``).
     - Trigger the modernization pipeline for a single file
       (``POST /api/v1/workspaces/{workspace_id}/modernization/pipeline``).
+    - Run the full analysis pipeline for a file, including its
+      dependency graph
+      (``POST /api/v1/workspaces/{workspace_id}/analyze``).
+    - Fetch Phase 4 modernization intelligence (business rules, risks,
+      strategies)
+      (``POST /api/v1/workspaces/{workspace_id}/modernization/intelligence``).
     - Send a modernization-aware chat query
       (``POST /api/v1/chat/``).
     - Translate every backend failure (HTTP error status or network
@@ -124,6 +130,37 @@ class BackendClient:
         return self._request(
             "POST",
             f"/workspaces/{workspace_id}/modernization/pipeline",
+            json={"filename": filename},
+        )
+
+    def get_analysis(self, workspace_id: str, filename: str) -> Dict[str, Any]:
+        """
+        Run the full Phase 1-5 analysis pipeline for a file.
+
+        Returns coverage/coverage_report, the flat dependency list, the
+        cross-program dependency_graph (nodes/edges), syntax diagnostics,
+        and a lightweight business_rules list -- everything the
+        modernization overview, business-rules, and dependencies views
+        need, with nothing recomputed client-side.
+        """
+        return self._request(
+            "POST",
+            f"/workspaces/{workspace_id}/analyze",
+            json={"filename": filename},
+        )
+
+    def get_modernization_intelligence(
+        self, workspace_id: str, filename: str
+    ) -> Dict[str, Any]:
+        """
+        Phase 4 modernization intelligence: fully-evidenced business rules
+        (condition/actions/variables/dependencies/confidence/evidence),
+        modernization risks, and strategy recommendations. Deterministic --
+        no LLM involved.
+        """
+        return self._request(
+            "POST",
+            f"/workspaces/{workspace_id}/modernization/intelligence",
             json={"filename": filename},
         )
 
