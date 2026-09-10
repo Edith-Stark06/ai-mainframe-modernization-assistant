@@ -492,11 +492,89 @@ def test_validation_center_never_claims_readiness_when_inconclusive(monkeypatch)
     assert "mf-status--pass" not in headline
 
 
-def test_java_workspace_remains_an_honest_stub(monkeypatch):
-    """Java Workspace (repair history) is explicitly out of this task's
-    scope -- it must still render as an honest stub, not silently blank."""
+JAVA_WORKSPACE_RESULT = {
+    "workspace_id": "ws-1",
+    "filename": "MAIN.cbl",
+    "generation_available": True,
+    "generation_reason": None,
+    "project": {
+        "project_id": "proj-1",
+        "generation_version": "p9-gen-v1",
+        "source_id": "MAIN",
+        "architecture_id": "arch-1",
+        "main_class": "Main",
+        "files": {"src/Main.java": "public class Main {}"},
+        "artifacts": [],
+        "assumptions": [],
+        "unsupported_behaviors": [],
+        "generator_diagnostics": [],
+        "semantic_equivalence_verified": False,
+    },
+    "compilation": {
+        "success": True,
+        "compilation_version": "p9-compile-v1",
+        "diagnostics": [],
+        "file_records": [],
+        "command": [],
+        "duration_s": 0.1,
+        "timed_out": False,
+        "output_truncated": False,
+        "jdk_version": "24",
+        "workspace": "/tmp/x",
+        "raw_output": "",
+    },
+    "compilation_status": "PASS",
+    "behavioral_status": "INCONCLUSIVE",
+    "behavioral": None,
+    "current_candidate": {
+        "candidate_id": "candidate-v1-abc123",
+        "version": 1,
+        "architecture_hash": "a",
+        "source_hash": "s",
+        "generated_project_hash": "g",
+        "test_set_hash": "t",
+        "parent_candidate_id": None,
+        "created_from_repair": False,
+    },
+    "candidate_lineage": [
+        {
+            "candidate_id": "candidate-v1-abc123",
+            "version": 1,
+            "architecture_hash": "a",
+            "source_hash": "s",
+            "generated_project_hash": "g",
+            "test_set_hash": "t",
+            "parent_candidate_id": None,
+            "created_from_repair": False,
+        }
+    ],
+    "quality_loop_available": False,
+    "quality_loop_reason": "AI provider not configured -- no quality loop has run.",
+    "loop_state": None,
+    "final_status": None,
+    "stop_reason": None,
+    "iteration_count": 0,
+    "repair_count": 0,
+    "iterations": [],
+    "human_review_required": False,
+    "human_review_checkpoints": [],
+    "audit_trail": [],
+}
+
+
+def test_java_workspace_renders_real_generation_and_honest_self_repair_state(
+    monkeypatch,
+):
+    """Java Workspace is no longer a whole-view stub -- generation/
+    compilation are real, while self-repair (no AI provider configured)
+    is honestly reported as NOT AVAILABLE within the real view."""
     monkeypatch.setattr(
         BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_ONE_FILE
+    )
+    monkeypatch.setattr(
+        BackendClient,
+        "get_java_workspace",
+        lambda self, ws_id, filename: JAVA_WORKSPACE_RESULT,
     )
 
     at = _make_app()
@@ -505,8 +583,12 @@ def test_java_workspace_remains_an_honest_stub(monkeypatch):
     at.radio(key="active_view").set_value("Java Workspace").run()
 
     assert not at.exception
-    full_text = _visible_text(at).upper()
-    assert "NOT AVAILABLE" in full_text
+    full_text = _visible_text(at) + " ".join(c.value for c in at.caption)
+    assert "candidate-v1-abc123" in full_text
+    assert "AI provider not configured" in full_text
+    assert (
+        "NOT AVAILABLE" in full_text.upper()
+    )  # self-repair specifically, not the whole view
 
 
 JAVA_GENERATION_RESULT = {
