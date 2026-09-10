@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Optional  # noqa: E402
 import streamlit as st  # noqa: E402
 
 from app.frontend.architecture_view import render_architecture  # noqa: E402
+from app.frontend.chat_view import render_chat  # noqa: E402
 from app.frontend.client import BackendAPIError, BackendClient  # noqa: E402
 from app.frontend.dependencies_view import render_dependencies  # noqa: E402
 from app.frontend.entry import render_entry  # noqa: E402
@@ -488,49 +489,6 @@ def _render_recommendations(recommendations: List[Dict[str, Any]]) -> None:
             st.write(rec.get("description", ""))
 
 
-def _render_chat(
-    client: BackendClient, workspace_id: str, filename: Optional[str]
-) -> None:
-    st.subheader("Modernization Chat")
-
-    include_context = st.checkbox(
-        "Include modernization context for this file",
-        value=False,
-        disabled=not filename,
-        key="include_modernization_context",
-    )
-
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
-
-    prompt = st.chat_input("Ask about this source file", key="chat_input")
-    if prompt:
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.write(prompt)
-
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                try:
-                    chat_res = client.send_chat_message(
-                        workspace_id=workspace_id,
-                        query=prompt,
-                        filename=filename,
-                        include_modernization_context=include_context,
-                    )
-                    error = chat_res.get("error")
-                    if error:
-                        st.warning(error)
-                    answer = chat_res.get("answer") or "No response generated."
-                    st.write(answer)
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": answer}
-                    )
-                except BackendAPIError as e:
-                    st.error(e.message)
-
-
 def _render_overview() -> None:
     """The original modernization-pipeline results: scores, flow,
     recommendations, and chat -- unchanged in behavior, restyled in place."""
@@ -569,7 +527,7 @@ def _render_overview() -> None:
     with tab3:
         _render_recommendations(recommendations)
     with tab4:
-        _render_chat(
+        render_chat(
             get_client(), st.session_state.workspace_id, st.session_state.filename
         )
 
