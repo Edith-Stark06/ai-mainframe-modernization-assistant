@@ -85,6 +85,13 @@ class RAGResult:
     ai_result: AIAnalysisResult | None = None
     ai_unavailable: bool = False
     ai_error: str | None = None
+    #: type(exception).__name__ when ai_error came from an exception raised
+    #: during AI generation (step 5 of orchestrate()) -- None otherwise
+    #: (ai_unavailable / empty-retrieval-context are not exceptions).
+    #: Purely additive/observational: lets API callers distinguish e.g.
+    #: LLMProviderUnavailableError from other generation failures without
+    #: RAGOrchestrator itself making that classification decision.
+    ai_error_type: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         result_dict: dict[str, Any] = {
@@ -92,6 +99,7 @@ class RAGResult:
             "context": self.context.to_dict(),
             "ai_unavailable": self.ai_unavailable,
             "ai_error": self.ai_error,
+            "ai_error_type": self.ai_error_type,
         }
 
         if self.ai_result is not None:
