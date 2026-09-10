@@ -38,6 +38,10 @@ from app.api.routers.upload import router as upload_router
 from app.api.routers.workspace import router as workspace_router
 from app.api.routers.modernization import router as modernization_router
 from app.api.routers.chat import router as chat_router
+from app.api.routers.architecture import router as architecture_router
+from app.api.routers.java_generation import router as java_generation_router
+from app.api.routers.validation import router as validation_router
+from app.api.routers.report import router as report_router
 
 # ---------------------------------------------------------------------------
 # Versioned API router
@@ -52,3 +56,7 @@ api_router.include_router(upload_router)
 api_router.include_router(workspace_router)
 api_router.include_router(modernization_router)
 api_router.include_router(chat_router)
+api_router.include_router(architecture_router)
+api_router.include_router(java_generation_router)
+api_router.include_router(validation_router)
+api_router.include_router(report_router)
