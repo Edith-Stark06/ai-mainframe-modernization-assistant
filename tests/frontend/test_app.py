@@ -19,6 +19,46 @@ from app.frontend.client import BackendAPIError, BackendClient
 APP_PATH = str(Path(__file__).parent.parent.parent / "app" / "frontend" / "app.py")
 
 
+def _snapshot_and_pop_app_frontend_modules() -> dict:
+    """
+    Pop `app`, `app.frontend`, and every `app.frontend.*` submodule (client,
+    chat_view, java_workspace, ...) out of sys.modules, returning what was
+    there so it can be restored afterward.
+
+    Popping only ("app", "app.frontend", "app.frontend.client") -- as this
+    used to do -- is not enough: app.py's own module-level imports pull in
+    every app.frontend.* view submodule (chat_view, java_workspace, etc.),
+    and each of those does its own `from app.frontend.client import
+    BackendAPIError`. When a test forces app.py to re-execute with a
+    poisoned/missing `app` cache, those submodules get fresh module objects
+    with their own fresh BackendAPIError class -- but if only client.py's
+    entry gets restored afterward, a view submodule imported during the
+    poisoned run keeps referencing the *stale* fresh class forever (Python
+    never re-executes an already-cached module), so its
+    `except BackendAPIError` stops matching exceptions raised by the
+    restored, real client module in every later test. Popping/restoring the
+    whole app.frontend.* subtree keeps every submodule's BackendAPIError
+    reference consistent with the one tests raise against.
+    """
+    names = [
+        n
+        for n in sys.modules
+        if n == "app" or n == "app.frontend" or n.startswith("app.frontend.")
+    ]
+    return {n: sys.modules.pop(n) for n in names}
+
+
+def _restore_app_frontend_modules(snapshot: dict) -> None:
+    for n in [
+        n
+        for n in sys.modules
+        if n == "app" or n == "app.frontend" or n.startswith("app.frontend.")
+    ]:
+        if n not in snapshot:
+            del sys.modules[n]
+    sys.modules.update(snapshot)
+
+
 def test_entrypoint_survives_streamlit_sys_path_bootstrap():
     """
     Regression test for a real startup failure: `streamlit run app/frontend/app.py`
@@ -41,9 +81,7 @@ def test_entrypoint_survives_streamlit_sys_path_bootstrap():
     script_dir = str(Path(APP_PATH).resolve().parent)
 
     original_sys_path = list(sys.path)
-    original_app_module = sys.modules.pop("app", None)
-    original_app_frontend_module = sys.modules.pop("app.frontend", None)
-    original_app_frontend_client_module = sys.modules.pop("app.frontend.client", None)
+    app_modules_snapshot = _snapshot_and_pop_app_frontend_modules()
     try:
         # Simulate the worst case explicitly: the project root is entirely
         # absent from sys.path (not merely present-but-later), and
@@ -84,15 +122,7 @@ def test_entrypoint_survives_streamlit_sys_path_bootstrap():
         assert hasattr(client_module, "BackendAPIError")
     finally:
         sys.path[:] = original_sys_path
-        for name, original in (
-            ("app", original_app_module),
-            ("app.frontend", original_app_frontend_module),
-            ("app.frontend.client", original_app_frontend_client_module),
-        ):
-            if original is not None:
-                sys.modules[name] = original
-            else:
-                sys.modules.pop(name, None)
+        _restore_app_frontend_modules(app_modules_snapshot)
         # st.cache_resource is a process-wide cache that outlives this
         # AppTest run. It may have cached a BackendClient instance built
         # from the module state that existed during this test (before the
@@ -115,9 +145,7 @@ def test_entrypoint_recovers_from_poisoned_app_module_cache():
     import types
 
     original_sys_path = list(sys.path)
-    original_app_module = sys.modules.pop("app", None)
-    original_app_frontend_module = sys.modules.pop("app.frontend", None)
-    original_app_frontend_client_module = sys.modules.pop("app.frontend.client", None)
+    app_modules_snapshot = _snapshot_and_pop_app_frontend_modules()
     try:
         # Poison the cache exactly the way the real bug would: `app` bound
         # to a plain module (no __path__), standing in for app.py itself.
@@ -137,15 +165,7 @@ def test_entrypoint_recovers_from_poisoned_app_module_cache():
         assert hasattr(resolved_app, "__path__")
     finally:
         sys.path[:] = original_sys_path
-        for name, original in (
-            ("app", original_app_module),
-            ("app.frontend", original_app_frontend_module),
-            ("app.frontend.client", original_app_frontend_client_module),
-        ):
-            if original is not None:
-                sys.modules[name] = original
-            else:
-                sys.modules.pop(name, None)
+        _restore_app_frontend_modules(app_modules_snapshot)
         # See the matching comment in test_entrypoint_survives_streamlit_sys_path_bootstrap.
         st.cache_resource.clear()
 

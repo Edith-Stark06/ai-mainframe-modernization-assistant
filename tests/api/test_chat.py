@@ -132,18 +132,53 @@ def test_chat_endpoint_rag_fail():
     assert resp.status_code == 200
     data = resp.json()
     assert "internal error" in data["error"]
+    assert data["error_code"] == "INTERNAL_ERROR"
     assert "Secret" not in data["error"]
 
 
 def test_chat_endpoint_ai_fail():
+    """A generic/unclassified AI generation failure (no ai_unavailable
+    flag, message doesn't match the known empty-context or provider-
+    unavailable signals) must classify as LLM_GENERATION_FAILED with a
+    safe, specific message -- never the raw exception text, never the
+    old undifferentiated "internal error" wording."""
     resp = client.post(
         "/api/v1/chat/", json={"query": "ai_fail", "workspace_id": str(uuid.uuid4())}
     )
 
     assert resp.status_code == 200
     data = resp.json()
-    assert "internal error" in data["error"]
+    assert data["error_code"] == "LLM_GENERATION_FAILED"
+    assert "failed to generate a response" in data["error"]
     assert "Secret" not in data["error"]
+
+
+def test_chat_endpoint_provider_not_configured_end_to_end():
+    """The real, unmocked get_rag_orchestrator dependency: no LLM
+    provider is configured in this environment
+    (app.api.dependencies.ai.get_llm_provider() returns None), so a
+    request asking for an AI capability must come back with the honest
+    LLM_PROVIDER_NOT_CONFIGURED code -- never a generic internal-error
+    message. This is the exact "give me an error log in this code" bug
+    scenario, end-to-end, through the real (non-test-overridden)
+    dependency chain."""
+    app.dependency_overrides.pop(get_rag_orchestrator, None)
+    try:
+        resp = client.post(
+            "/api/v1/chat/",
+            json={
+                "query": "give me an error log in this code",
+                "workspace_id": str(uuid.uuid4()),
+            },
+        )
+    finally:
+        app.dependency_overrides[get_rag_orchestrator] = override_get_rag
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["answer"] == ""
+    assert data["error_code"] == "LLM_PROVIDER_NOT_CONFIGURED"
+    assert "not configured" in data["error"]
 
 
 def test_chat_endpoint_modernization_context(monkeypatch, tmp_path):
