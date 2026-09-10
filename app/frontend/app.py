@@ -37,6 +37,7 @@ from app.frontend.client import BackendAPIError, BackendClient  # noqa: E402
 from app.frontend.dependencies_view import render_dependencies  # noqa: E402
 from app.frontend.entry import render_entry  # noqa: E402
 from app.frontend.java_view import render_java_view  # noqa: E402
+from app.frontend.java_workspace import render_java_workspace  # noqa: E402
 from app.frontend.landing import render_landing  # noqa: E402
 from app.frontend.mainframe import (  # noqa: E402
     ChipState,
@@ -50,7 +51,6 @@ from app.frontend.rules_view import (  # noqa: E402
     render_business_rules,
     render_risks_and_strategy,
 )
-from app.frontend.stub_view import render_not_yet_available  # noqa: E402
 from app.frontend.theme import inject_base_theme  # noqa: E402
 from app.frontend.validation_view import render_validation  # noqa: E402
 
@@ -113,6 +113,9 @@ def _init_session_state() -> None:
         "report_result": None,
         "report_result_filename": None,
         "report_error": None,
+        "java_workspace_result": None,
+        "java_workspace_result_filename": None,
+        "java_workspace_error": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -151,6 +154,9 @@ def _reset_workspace(workspace_id: str) -> None:
     st.session_state.report_result = None
     st.session_state.report_result_filename = None
     st.session_state.report_error = None
+    st.session_state.java_workspace_result = None
+    st.session_state.java_workspace_result_filename = None
+    st.session_state.java_workspace_error = None
 
 
 def _load_inventory(client: BackendClient, workspace_id: str) -> None:
@@ -279,6 +285,24 @@ def _ensure_report(client: BackendClient, workspace_id: str, filename: str) -> N
         st.session_state.report_result = None
         st.session_state.report_result_filename = filename
         st.session_state.report_error = e.message
+
+
+def _ensure_java_workspace(
+    client: BackendClient, workspace_id: str, filename: str
+) -> None:
+    if st.session_state.java_workspace_result_filename == filename:
+        return
+    try:
+        with st.spinner("Loading Java workspace..."):
+            st.session_state.java_workspace_result = client.get_java_workspace(
+                workspace_id, filename
+            )
+        st.session_state.java_workspace_result_filename = filename
+        st.session_state.java_workspace_error = None
+    except BackendAPIError as e:
+        st.session_state.java_workspace_result = None
+        st.session_state.java_workspace_result_filename = filename
+        st.session_state.java_workspace_error = e.message
 
 
 def _render_workspace_selection(client: BackendClient) -> None:
@@ -621,14 +645,10 @@ def _render_workspace_body(client: BackendClient) -> None:
             error=st.session_state.java_generation_error,
         )
     elif view == "Java Workspace":
-        render_not_yet_available(
-            "Java Workspace",
-            "No API route exists yet for the Phase 11 quality loop's "
-            "repair history, even though that backend code is fully built "
-            "and tested. Generated Java and compilation status are "
-            "available on the COBOL <-> Java view.",
-            available_today="COBOL <-> Java shows generated files and "
-            "compilation status today.",
+        _ensure_java_workspace(client, workspace_id, filename)
+        render_java_workspace(
+            st.session_state.java_workspace_result,
+            error=st.session_state.java_workspace_error,
         )
     elif view == "Validation Center":
         _ensure_validation(client, workspace_id, filename)
