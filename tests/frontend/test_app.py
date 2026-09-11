@@ -11,12 +11,48 @@ client itself is covered separately in ``test_client.py``.
 import sys
 from pathlib import Path
 
+import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from app.frontend.client import BackendAPIError, BackendClient
 
 APP_PATH = str(Path(__file__).parent.parent.parent / "app" / "frontend" / "app.py")
+
+#: mirrors app.py's private _NAV_KEYS -- the sidebar nav buttons that
+#: replaced the old `st.radio(key="active_view")` tab bar.
+_NAV_KEYS = {
+    "Overview": "nav_overview",
+    "Business Rules": "nav_business_rules",
+    "Dependencies": "nav_dependencies",
+    "Architecture": "nav_architecture",
+    "COBOL ↔ Java": "nav_cobol_java",
+    "Java Workspace": "nav_java_workspace",
+    "Validation Center": "nav_validation_center",
+    "Report": "nav_report",
+    "Modernization Chat": "nav_chat",
+}
+
+
+def _open_view(at: AppTest, view: str) -> AppTest:
+    at.button(key=_NAV_KEYS[view]).click().run()
+    return at
+
+
+@pytest.fixture(autouse=True)
+def _default_report_and_java_workspace_stubs(monkeypatch):
+    """Overview (the default active_view once a file is selected) now
+    lazily fetches the aggregate /modernization/report on open. Give
+    every test a safe empty stub instead of a real network call; a test
+    that cares about report content sets its own, more specific
+    ``monkeypatch.setattr`` in its own body, which -- running after this
+    fixture's setup -- wins."""
+    monkeypatch.setattr(
+        BackendClient, "get_modernization_report", lambda self, ws_id, filename: {}
+    )
+    monkeypatch.setattr(
+        BackendClient, "get_java_workspace", lambda self, ws_id, filename: {}
+    )
 
 
 def _snapshot_and_pop_app_frontend_modules() -> dict:
@@ -296,7 +332,13 @@ def test_inventory_failure_shows_safe_error_not_stack_trace(monkeypatch):
     assert not any("Traceback" in e.value for e in at.error)
 
 
-def test_successful_analysis_renders_scores_flow_and_recommendations(monkeypatch):
+def test_successful_analysis_renders_pipeline_and_topology(monkeypatch):
+    """Overview's Critical Topology panel renders the real, already-fetched
+    control-flow graph -- never a fabricated relationship. (Scores/Flow-as-
+    tables/Recommendations were dropped from Overview in the Stitch
+    redesign in favor of the compact stat row + pipeline stepper + Key
+    Findings + Critical Topology composition -- see report_result-driven
+    tests below for those.)"""
     monkeypatch.setattr(
         BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_TWO_FILES
     )
@@ -311,28 +353,13 @@ def test_successful_analysis_renders_scores_flow_and_recommendations(monkeypatch
     at.button(key="analyze_button").click().run()
 
     assert not at.exception
-    assert any("Analysis complete" in s.value for s in at.success)
-
-    metric_values = {m.label: m.value for m in at.metric}
-    assert metric_values["Complexity"] == "42%"
-    assert metric_values["Coupling"] == "20%"
-    assert metric_values["Overall Readiness"] == "80%"
-
-    node_rows = at.dataframe[0].value
-    assert list(node_rows["ID"]) == ["n1", "n2"]
-    assert "EXTERNAL" in list(node_rows["Type"])
-
-    assert any(
-        "external" in c.value.lower()
-        for c in at.caption
-        if "external" in c.value.lower()
-    )
-
-    rec_titles = [e.label for e in at.expander]
-    assert any("Ready for Modernization" in title for title in rec_titles)
+    full_text = " ".join(m.value for m in at.markdown)
+    assert "MAIN" in full_text
+    assert "SUBRTN" in full_text
+    assert any("2 node(s), 1 edge(s)" in c.value for c in at.caption)
 
 
-def test_insufficient_data_does_not_claim_success(monkeypatch):
+def test_insufficient_data_topology_shows_honest_empty_state(monkeypatch):
     monkeypatch.setattr(
         BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_TWO_FILES
     )
@@ -347,9 +374,10 @@ def test_insufficient_data_does_not_claim_success(monkeypatch):
     at.button(key="analyze_button").click().run()
 
     assert not at.exception
-    assert not list(at.success)
-    assert any("Insufficient data" in w.value for w in at.warning)
     assert any("Empty flow generated" in i.value for i in at.info)
+    assert (
+        "READY FOR MODERNIZATION" not in " ".join(m.value for m in at.markdown).upper()
+    )
 
 
 def test_analysis_api_failure_shows_safe_error(monkeypatch):
@@ -369,7 +397,6 @@ def test_analysis_api_failure_shows_safe_error(monkeypatch):
     at.button(key="analyze_button").click().run()
 
     assert not at.exception
-    assert not list(at.success)
     assert any("server encountered an error" in e.value for e in at.error)
 
 
@@ -386,27 +413,27 @@ def test_switching_file_clears_stale_results(monkeypatch):
     at = _make_app()
     _load_workspace(at)
     at.button(key="analyze_button").click().run()
-    assert any("Analysis complete" in s.value for s in at.success)
+    full_text = " ".join(m.value for m in at.markdown)
+    assert "SUBRTN" in full_text
 
     at.selectbox(key="file_select").set_value("UTIL.cbl").run()
 
-    assert not list(at.success)
-    assert any("Click 'Analyze for Modernization' to begin" in i.value for i in at.info)
+    assert any(
+        "Click 'Analyze for Modernization' in the sidebar to see topology" in i.value
+        for i in at.info
+    )
 
 
 def test_switching_file_clears_stale_chat_history(monkeypatch):
     """
     Regression: chat messages about a previously selected file must not
     remain displayed as if they were part of an ongoing conversation about
-    a newly selected file.
+    a newly selected file. Modernization Chat is now its own sidebar view
+    (no longer nested inside Overview), and no longer depends on the
+    "Analyze for Modernization" pipeline having run first.
     """
     monkeypatch.setattr(
         BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_TWO_FILES
-    )
-    monkeypatch.setattr(
-        BackendClient,
-        "analyze_modernization",
-        lambda self, ws_id, filename: SUCCESSFUL_PIPELINE,
     )
     monkeypatch.setattr(
         BackendClient,
@@ -422,7 +449,7 @@ def test_switching_file_clears_stale_chat_history(monkeypatch):
 
     at = _make_app()
     _load_workspace(at)
-    at.button(key="analyze_button").click().run()
+    _open_view(at, "Modernization Chat")
     at.chat_input(key="chat_input").set_value("What does this do?").run()
 
     assert len(at.session_state["messages"]) == 2
@@ -430,25 +457,6 @@ def test_switching_file_clears_stale_chat_history(monkeypatch):
     at.selectbox(key="file_select").set_value("UTIL.cbl").run()
 
     assert at.session_state["messages"] == []
-
-
-def test_recommendations_empty_state(monkeypatch):
-    pipeline = {
-        **SUCCESSFUL_PIPELINE,
-        "recommendations": [],
-    }
-    monkeypatch.setattr(
-        BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_TWO_FILES
-    )
-    monkeypatch.setattr(
-        BackendClient, "analyze_modernization", lambda self, ws_id, filename: pipeline
-    )
-
-    at = _make_app()
-    _load_workspace(at)
-    at.button(key="analyze_button").click().run()
-
-    assert any("No recommendations available" in i.value for i in at.info)
 
 
 def test_chat_with_modernization_context_renders_answer(monkeypatch):
@@ -475,16 +483,11 @@ def test_chat_with_modernization_context_renders_answer(monkeypatch):
     monkeypatch.setattr(
         BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_TWO_FILES
     )
-    monkeypatch.setattr(
-        BackendClient,
-        "analyze_modernization",
-        lambda self, ws_id, filename: SUCCESSFUL_PIPELINE,
-    )
     monkeypatch.setattr(BackendClient, "send_chat_message", fake_chat)
 
     at = _make_app()
     _load_workspace(at)
-    at.button(key="analyze_button").click().run()
+    _open_view(at, "Modernization Chat")
 
     at.checkbox(key="include_modernization_context").set_value(True).run()
     at.chat_input(key="chat_input").set_value("What does this program do?").run()
@@ -515,16 +518,11 @@ def test_chat_api_failure_shows_safe_error(monkeypatch):
     monkeypatch.setattr(
         BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_TWO_FILES
     )
-    monkeypatch.setattr(
-        BackendClient,
-        "analyze_modernization",
-        lambda self, ws_id, filename: SUCCESSFUL_PIPELINE,
-    )
     monkeypatch.setattr(BackendClient, "send_chat_message", raise_error)
 
     at = _make_app()
     _load_workspace(at)
-    at.button(key="analyze_button").click().run()
+    _open_view(at, "Modernization Chat")
     at.chat_input(key="chat_input").set_value("hello").run()
 
     assert not at.exception

@@ -1,5 +1,5 @@
 """
-Phase 12 -- Java Workspace view, backed by the real
+Phase 12 (Stitch redesign) -- Java Workspace view, backed by the real
 ``POST /workspaces/{id}/modernization/java-workspace`` endpoint.
 
 Shows generation/compilation/behavioral/self-repair status, generated
@@ -14,19 +14,20 @@ candidate exists.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import streamlit as st
 
+from app.frontend.components import section_header, status_matrix
 from app.frontend.theme import status_pill
 
 __all__ = ["render_java_workspace"]
 
 
 def render_java_workspace(
-    workspace: Dict[str, Any] | None, *, error: str | None
+    workspace: Optional[Dict[str, Any]], *, error: Optional[str]
 ) -> None:
-    st.subheader("Java Workspace")
+    section_header("Java Workspace")
     if error:
         st.error(error)
         return
@@ -34,38 +35,16 @@ def render_java_workspace(
         st.info("Run analysis from the sidebar to populate the Java workspace.")
         return
 
-    st.markdown("**Program**")
-    cols = st.columns(4)
-    with cols[0]:
-        gen_status = "PASS" if workspace["generation_available"] else "FAIL"
-        st.markdown(
-            f"Generation  \n{status_pill(gen_status, gen_status)}",
-            unsafe_allow_html=True,
-        )
-    with cols[1]:
-        st.markdown(
-            "Compilation  \n"
-            + status_pill(
-                workspace["compilation_status"], workspace["compilation_status"]
-            ),
-            unsafe_allow_html=True,
-        )
-    with cols[2]:
-        st.markdown(
-            "Behavioral Validation  \n"
-            + status_pill(
-                workspace["behavioral_status"], workspace["behavioral_status"]
-            ),
-            unsafe_allow_html=True,
-        )
-    with cols[3]:
-        repair_status = (
-            "PASS" if workspace["quality_loop_available"] else "NOT_AVAILABLE"
-        )
-        st.markdown(
-            "Self Repair  \n" + status_pill(repair_status, repair_status),
-            unsafe_allow_html=True,
-        )
+    gen_status = "PASS" if workspace["generation_available"] else "FAIL"
+    repair_status = "PASS" if workspace["quality_loop_available"] else "NOT_AVAILABLE"
+    status_matrix(
+        [
+            ("Generation", gen_status),
+            ("Compilation", workspace["compilation_status"]),
+            ("Behavioral Validation", workspace["behavioral_status"]),
+            ("Self Repair", repair_status),
+        ]
+    )
 
     if not workspace["generation_available"]:
         st.warning(
@@ -73,7 +52,7 @@ def render_java_workspace(
         )
         return
 
-    st.markdown("**Generated Java Files**")
+    st.markdown("**Project**")
     project = workspace["project"]
     for path in sorted(project["files"].keys()):
         if path.endswith(".java"):

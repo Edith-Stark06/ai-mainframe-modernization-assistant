@@ -28,13 +28,19 @@ if not hasattr(sys.modules.get("app"), "__path__"):
     sys.modules.pop("app", None)
     sys.modules.pop("app.frontend", None)
 
-from typing import Any, Dict, List, Optional  # noqa: E402
+from typing import Any, Dict, List, Optional, Tuple  # noqa: E402
 
 import streamlit as st  # noqa: E402
 
 from app.frontend.architecture_view import render_architecture  # noqa: E402
 from app.frontend.chat_view import render_chat  # noqa: E402
 from app.frontend.client import BackendAPIError, BackendClient  # noqa: E402
+from app.frontend.components import (  # noqa: E402
+    pipeline_steps,
+    render_force_graph,
+    section_header,
+    stat_row,
+)
 from app.frontend.dependencies_view import render_dependencies  # noqa: E402
 from app.frontend.entry import render_entry  # noqa: E402
 from app.frontend.java_view import render_java_view  # noqa: E402
@@ -42,31 +48,45 @@ from app.frontend.java_workspace import render_java_workspace  # noqa: E402
 from app.frontend.landing import render_landing  # noqa: E402
 from app.frontend.mainframe import (  # noqa: E402
     ChipState,
+    chip_label_and_status,
     compute_chip_state,
-    render_ai_core_status,
-    render_mainframe_diagram,
-    render_subsystem_nav,
 )
 from app.frontend.report_view import render_report  # noqa: E402
 from app.frontend.rules_view import (  # noqa: E402
+    SEVERITY_TO_STATUS,
     render_business_rules,
-    render_risks_and_strategy,
 )
-from app.frontend.theme import inject_base_theme  # noqa: E402
+from app.frontend.theme import inject_base_theme, status_pill  # noqa: E402
 from app.frontend.validation_view import render_validation  # noqa: E402
 
-PRIORITY_ICONS = {"HIGH": "\U0001f534", "MEDIUM": "\U0001f7e0", "LOW": "\U0001f7e2"}
-
-OUTER_VIEWS = [
-    "Overview",
-    "Business Rules",
-    "Dependencies",
-    "Architecture",
-    "COBOL ↔ Java",
-    "Java Workspace",
-    "Validation Center",
-    "Report",
+# -- left sidebar navigation ------------------------------------------------
+# Grouped exactly per the locked Stitch design: Overview stands alone,
+# then ANALYSIS / TRANSFORMATION / VALIDATION / AI. Each entry is a real
+# st.button (Streamlit cannot bind arbitrary custom nav widgets), styled in
+# theme.py so the active one reads as a highlighted row rather than
+# Streamlit's default filled button.
+NAV_GROUPS: List[Tuple[Optional[str], List[str]]] = [
+    (None, ["Overview"]),
+    ("ANALYSIS", ["Business Rules", "Dependencies", "Architecture"]),
+    ("TRANSFORMATION", ["COBOL ↔ Java", "Java Workspace"]),
+    ("VALIDATION", ["Validation Center", "Report"]),
+    ("AI", ["Modernization Chat"]),
 ]
+OUTER_VIEWS: List[str] = [view for _, views in NAV_GROUPS for view in views]
+
+_NAV_KEYS: Dict[str, str] = {
+    "Overview": "nav_overview",
+    "Business Rules": "nav_business_rules",
+    "Dependencies": "nav_dependencies",
+    "Architecture": "nav_architecture",
+    "COBOL ↔ Java": "nav_cobol_java",
+    "Java Workspace": "nav_java_workspace",
+    "Validation Center": "nav_validation_center",
+    "Report": "nav_report",
+    "Modernization Chat": "nav_chat",
+}
+
+_SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
 
 @st.cache_resource
@@ -306,12 +326,46 @@ def _ensure_java_workspace(
         st.session_state.java_workspace_error = e.message
 
 
-def _render_workspace_selection(client: BackendClient) -> None:
-    st.header("Source Selection")
+# -- sidebar: navigation + compact workspace/file/session block -------------
 
-    with st.expander(
-        "Upload new source files", expanded=not st.session_state.workspace_id
-    ):
+
+def _render_sidebar_nav() -> None:
+    st.markdown(
+        '<div class="mf-nav-brand">MAINFRAME<br/>MODERNIZATION'
+        '<span class="mf-tagline">UNDERSTAND · TRANSFORM · VALIDATE</span></div>',
+        unsafe_allow_html=True,
+    )
+    active = st.session_state.active_view
+    for group_label, views in NAV_GROUPS:
+        if group_label:
+            group_cls = (
+                "mf-nav-group mf-nav-group--ai"
+                if group_label == "AI"
+                else "mf-nav-group"
+            )
+            st.markdown(
+                f'<div class="{group_cls}">{group_label}</div>',
+                unsafe_allow_html=True,
+            )
+        for view in views:
+            if st.button(
+                view,
+                key=_NAV_KEYS[view],
+                type="primary" if view == active else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state.active_view = view
+                st.rerun()
+
+
+def _render_workspace_selection(client: BackendClient) -> None:
+    st.markdown(
+        '<div class="mf-nav-group" style="margin-left:0;">WORKSPACE</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("Change workspace", expanded=not st.session_state.workspace_id):
+        st.markdown("**Upload new source files**")
         uploaded = st.file_uploader(
             "Mainframe source files (.cbl, .cob, .cpy, .jcl, .txt, .zip)",
             accept_multiple_files=True,
@@ -328,7 +382,7 @@ def _render_workspace_selection(client: BackendClient) -> None:
             except BackendAPIError as e:
                 st.error(e.message)
 
-    with st.expander("Use an existing workspace", expanded=False):
+        st.markdown("**Use an existing workspace**")
         options = ["(enter manually)"] + st.session_state.known_workspace_ids
         choice = st.selectbox(
             "Known workspaces", options=options, index=0, key="known_ws_select"
@@ -344,49 +398,54 @@ def _render_workspace_selection(client: BackendClient) -> None:
             _reset_workspace(target_id.strip())
             _load_inventory(client, target_id.strip())
 
-    if st.session_state.workspace_id:
-        st.caption(f"Active workspace: `{st.session_state.workspace_id}`")
+    if not st.session_state.workspace_id:
+        st.caption("No workspace selected.")
+        greeting = st.session_state.engineer_name or "Guest"
+        st.caption(f"Session: {greeting}")
+        return
 
-        if st.session_state.inventory_error:
-            st.error(st.session_state.inventory_error)
-        elif not st.session_state.inventory_files:
-            st.info("No files found in this workspace.")
-        else:
-            filenames = [f["filename"] for f in st.session_state.inventory_files]
-            current = st.session_state.filename
-            index = filenames.index(current) if current in filenames else 0
-            selected = st.selectbox(
-                "Source File", options=filenames, index=index, key="file_select"
-            )
-            if selected != current:
-                # Switching files must not leave the previous file's chat
-                # transcript displayed as if it were part of an ongoing
-                # conversation about the newly selected file.
-                st.session_state.messages = []
-            st.session_state.filename = selected
+    st.caption(f"Workspace: `{st.session_state.workspace_id}`")
 
-            if st.button(
-                "Analyze for Modernization",
-                disabled=st.session_state.loading or not selected,
-                key="analyze_button",
-            ):
-                st.session_state.loading = True
-                st.session_state.modernization_result = None
-                st.session_state.modernization_error = None
-                try:
-                    with st.spinner("Analyzing..."):
-                        data = client.analyze_modernization(
-                            st.session_state.workspace_id, selected
-                        )
-                    st.session_state.modernization_result = data
-                    st.session_state.modernization_result_filename = selected
-                except BackendAPIError as e:
-                    st.session_state.modernization_error = e.message
-                finally:
-                    st.session_state.loading = False
+    if st.session_state.inventory_error:
+        st.error(st.session_state.inventory_error)
+    elif not st.session_state.inventory_files:
+        st.info("No files found in this workspace.")
+    else:
+        filenames = [f["filename"] for f in st.session_state.inventory_files]
+        current = st.session_state.filename
+        index = filenames.index(current) if current in filenames else 0
+        selected = st.selectbox(
+            "Source File", options=filenames, index=index, key="file_select"
+        )
+        if selected != current:
+            # Switching files must not leave the previous file's chat
+            # transcript displayed as if it were part of an ongoing
+            # conversation about the newly selected file.
+            st.session_state.messages = []
+        st.session_state.filename = selected
 
-    st.markdown("---")
-    render_ai_core_status(_current_chip_state())
+        if st.button(
+            "Analyze for Modernization",
+            disabled=st.session_state.loading or not selected,
+            key="analyze_button",
+        ):
+            st.session_state.loading = True
+            st.session_state.modernization_result = None
+            st.session_state.modernization_error = None
+            try:
+                with st.spinner("Analyzing..."):
+                    data = client.analyze_modernization(
+                        st.session_state.workspace_id, selected
+                    )
+                st.session_state.modernization_result = data
+                st.session_state.modernization_result_filename = selected
+            except BackendAPIError as e:
+                st.session_state.modernization_error = e.message
+            finally:
+                st.session_state.loading = False
+
+    greeting = st.session_state.engineer_name or "Guest"
+    st.caption(f"Session: {greeting}")
 
 
 def _current_chip_state() -> ChipState:
@@ -415,167 +474,216 @@ def _current_chip_state() -> ChipState:
     )
 
 
-def _render_scores(score: Dict[str, Any]) -> None:
-    st.subheader("Modernization Scores")
-    insufficient = bool(score.get("metadata", {}).get("insufficient_data"))
-    if insufficient:
-        st.caption("Scores are not meaningful: insufficient flow data was extracted.")
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Complexity", f"{score.get('complexity_score', 0.0) * 100:.0f}%")
-    col2.metric("Coupling", f"{score.get('coupling_score', 0.0) * 100:.0f}%")
-    col3.metric(
-        "Overall Readiness", f"{score.get('overall_readiness', 0.0) * 100:.0f}%"
-    )
+# -- top bar ------------------------------------------------------------
 
 
-def _render_flow(flow: Dict[str, Any]) -> None:
-    st.subheader("Program Flow")
-    nodes: List[Dict[str, Any]] = flow.get("nodes", [])
-    edges: List[Dict[str, Any]] = flow.get("edges", [])
+def _render_topbar() -> None:
+    """The thin header row above the workspace: filename/COBOL badge/honest
+    status on the left, a real Help popover (static product copy -- no
+    fabricated capability) and the session line on the right. No search box
+    is rendered: no backend search endpoint exists, and a non-functional
+    search input would be a fake affordance."""
+    filename = st.session_state.filename or "No file selected"
+    label, word = chip_label_and_status(_current_chip_state())
+    greeting = st.session_state.engineer_name or "Guest"
 
-    if not nodes:
-        st.info(
-            "Empty flow generated. No process flow could be extracted from this file."
+    left, help_col, session_col = st.columns([6, 1, 2])
+    with left:
+        st.markdown(
+            f'<div class="mf-topbar-left">'
+            f'<span class="mf-topbar-file">{filename}</span>'
+            f'<span class="mf-topbar-badge">COBOL</span>'
+            f"&nbsp;&nbsp;{status_pill(label, word)}"
+            f"</div>",
+            unsafe_allow_html=True,
         )
-        return
-
-    external_count = sum(1 for n in nodes if n.get("node_type") == "EXTERNAL")
-    st.caption(f"{len(nodes)} node(s), {len(edges)} edge(s)")
-    if external_count:
-        st.caption(
-            f"⚠️ {external_count} external/unresolved reference(s) — these "
-            "represent calls to code outside this file and are not resolved locally."
+    with help_col:
+        with st.popover("Help", use_container_width=True):
+            st.markdown("**Mainframe Modernization Assistant**")
+            st.caption(
+                "Understand, transform, and validate COBOL programs. Every "
+                "result shown is grounded in real backend analysis -- "
+                "nothing is fabricated."
+            )
+            st.caption(
+                "Start in the sidebar: select or upload a workspace, choose "
+                "a source file, then use Analysis / Transformation / "
+                "Validation / AI to explore it."
+            )
+    with session_col:
+        st.markdown(
+            f'<div class="mf-topbar-session">{greeting} &middot; session-local</div>',
+            unsafe_allow_html=True,
         )
+    st.markdown('<div class="mf-topbar-rule"></div>', unsafe_allow_html=True)
 
-    st.write("**Nodes**")
-    st.dataframe(
-        [
-            {"ID": n.get("id"), "Name": n.get("name"), "Type": n.get("node_type")}
-            for n in nodes
-        ],
-        width="stretch",
-        hide_index=True,
-    )
 
-    st.write("**Edges**")
-    if not edges:
-        st.caption("No edges detected.")
+# -- Overview: modernization command center ------------------------------
+
+
+def _pipeline_step_states(report: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """Derive the four pipeline-stepper states purely from real,
+    already-fetched report fields -- same class of derivation as
+    ``compute_chip_state``: no timers, no guesses.
+
+    Each stage is evaluated independently from its own real signal, never
+    cascaded off an earlier stage's flag: a partial/unclean parse
+    (``analysis_success`` False, e.g. from unsupported COBOL constructs)
+    does not by itself mean no business rules were extracted or no Java
+    was generated -- the pipeline is resilient and best-effort, and the
+    stepper must reflect that honestly instead of hiding real downstream
+    results behind an unrelated upstream flag.
+    """
+    analyze_state = "done" if report.get("analysis_success") else "fail"
+
+    rules = report.get("business_rules") or []
+    understand_state = "done" if rules else "pending"
+
+    project = report.get("project")
+    compilation = report.get("compilation")
+    if project and compilation and compilation.get("success"):
+        transform_state = "done"
+    elif project:
+        transform_state = "partial"
     else:
-        st.dataframe(
-            [
-                {
-                    "Source": e.get("source_id"),
-                    "Target": e.get("target_id"),
-                    "Type": e.get("edge_type"),
-                }
-                for e in edges
-            ],
-            width="stretch",
-            hide_index=True,
+        transform_state = "pending"
+
+    overall = report.get("overall_status")
+    if overall == "PASS":
+        validate_state = "done"
+    elif overall == "FAIL":
+        validate_state = "fail"
+    elif overall == "INCONCLUSIVE":
+        validate_state = "partial"
+    else:
+        validate_state = "pending"
+
+    return [
+        ("ANALYZE", analyze_state),
+        ("UNDERSTAND", understand_state),
+        ("TRANSFORM", transform_state),
+        ("VALIDATE", validate_state),
+    ]
+
+
+def _overview_stat_items(report: Dict[str, Any]) -> List[Tuple[str, str]]:
+    architecture = report.get("architecture") or {}
+    components = architecture.get("components") or []
+    services = sum(1 for c in components if c.get("type") == "SERVICE")
+    project = report.get("project") or {}
+    java_files = sum(1 for p in (project.get("files") or {}) if p.endswith(".java"))
+    coverage = report.get("coverage")
+    coverage_pct = f"{coverage['overall']:.0%}" if coverage else "—"
+    return [
+        ("Business Rules", str(len(report.get("business_rules") or []))),
+        ("Dependencies", str(len(report.get("dependencies") or []))),
+        ("Risks", str(len(report.get("risks") or []))),
+        ("Services", str(services)),
+        ("Java Files", str(java_files)),
+        ("Coverage", coverage_pct),
+    ]
+
+
+def _render_key_findings(report: Dict[str, Any]) -> None:
+    st.markdown("**Key Findings**")
+    risks = sorted(
+        report.get("risks") or [],
+        key=lambda r: _SEVERITY_ORDER.get(str(r.get("severity", "")).upper(), 9),
+    )[:4]
+    if not risks:
+        st.caption("No risks identified.")
+    for risk in risks:
+        status = SEVERITY_TO_STATUS.get(str(risk.get("severity", "")).upper(), "WARN")
+        st.markdown(
+            status_pill(risk.get("title", risk.get("risk_id", "")), status),
+            unsafe_allow_html=True,
+        )
+        st.caption(risk.get("explanation", ""))
+
+    strategy = (report.get("strategy") or {}).get("primary")
+    if strategy:
+        st.caption(
+            f"Recommended strategy: **{strategy['strategy']}** — "
+            f"{strategy.get('rationale', '')}"
         )
 
 
-def _render_recommendations(recommendations: List[Dict[str, Any]]) -> None:
-    st.subheader("Recommendations")
-    if not recommendations:
-        st.info("No recommendations available for this file.")
-        return
-
-    for rec in recommendations:
-        priority = rec.get("priority", "")
-        icon = PRIORITY_ICONS.get(priority, "ℹ️")
-        with st.expander(f"{icon} [{priority}] {rec.get('title', 'Recommendation')}"):
-            st.write(rec.get("description", ""))
-
-
-def _render_overview() -> None:
-    """The original modernization-pipeline results: scores, flow,
-    recommendations, and chat -- unchanged in behavior, restyled in place."""
+def _render_critical_topology() -> None:
+    st.markdown("**Critical Topology**")
     if st.session_state.modernization_error:
         st.error(st.session_state.modernization_error)
         return
 
     result = st.session_state.modernization_result
-    if (
-        result is None
-        or st.session_state.modernization_result_filename != st.session_state.filename
-    ):
-        st.info("Click 'Analyze for Modernization' to begin.")
+    has_result = (
+        result is not None
+        and st.session_state.modernization_result_filename == st.session_state.filename
+    )
+    if not has_result:
+        st.info("Click 'Analyze for Modernization' in the sidebar to see topology.")
         return
 
-    score = result.get("score", {})
-    flow = result.get("flow", {})
-    recommendations = result.get("recommendations", [])
-    insufficient = bool(
-        score.get("metadata", {}).get("insufficient_data")
-    ) or not flow.get("nodes")
-
-    if insufficient:
-        st.warning(
-            "Insufficient data was available to generate meaningful modernization "
-            "results for this file."
-        )
-    else:
-        st.success("Analysis complete.")
-
-    tab1, tab2, tab3, tab4 = st.tabs(["Scores", "Flow", "Recommendations", "Chat"])
-    with tab1:
-        _render_scores(score)
-    with tab2:
-        _render_flow(flow)
-    with tab3:
-        _render_recommendations(recommendations)
-    with tab4:
-        render_chat(
-            get_client(), st.session_state.workspace_id, st.session_state.filename
-        )
-
-    render_risks_and_strategy(
-        st.session_state.intelligence_result
-        if st.session_state.intelligence_result_filename == st.session_state.filename
-        else None
+    flow = result.get("flow") or {}
+    nodes = [(n["id"], n.get("name", n["id"])) for n in flow.get("nodes", [])]
+    edges = [
+        (e["source_id"], e["target_id"], e.get("edge_type", ""))
+        for e in flow.get("edges", [])
+    ]
+    render_force_graph(
+        nodes,
+        edges,
+        empty_message=(
+            "Empty flow generated. No control-flow topology could be "
+            "extracted from this file."
+        ),
     )
 
 
-def _real_architecture_components() -> Optional[List[str]]:
-    """Real component names for the mainframe diagram's "modern
-    architecture" panel -- only when Architecture has actually been
-    fetched for the current file; never fabricated."""
-    arch = st.session_state.architecture_result
-    if (
-        arch is None
-        or st.session_state.architecture_result_filename != st.session_state.filename
-        or not arch.get("available")
-    ):
-        return None
-    return [c["name"] for c in arch["architecture"]["components"]]
+def _render_overview() -> None:
+    filename = st.session_state.filename
+    if st.session_state.report_error:
+        st.error(st.session_state.report_error)
+        return
+
+    report = st.session_state.report_result
+    has_report = (
+        report is not None and st.session_state.report_result_filename == filename
+    )
+    if not has_report:
+        st.info("Loading modernization report...")
+        return
+
+    paragraphs = report.get("paragraphs") or []
+    subtitle = (
+        f"{len(paragraphs)} paragraph(s) analyzed."
+        if paragraphs
+        else "No paragraphs were extracted from this file."
+    )
+    section_header(filename or "", subtitle)
+
+    stat_row(_overview_stat_items(report))
+
+    st.markdown("**Modernization Pipeline**")
+    pipeline_steps(_pipeline_step_states(report))
+
+    left, right = st.columns([1, 1], gap="large")
+    with left:
+        _render_key_findings(report)
+    with right:
+        _render_critical_topology()
 
 
 def _render_workspace_body(client: BackendClient) -> None:
     workspace_id = st.session_state.workspace_id
     filename = st.session_state.filename
 
-    render_mainframe_diagram(
-        _current_chip_state(),
-        mode="live",
-        architecture_components=_real_architecture_components(),
-    )
-
-    def _select_view(target: str) -> None:
-        st.session_state.active_view = target
-
-    render_subsystem_nav(_select_view)
-
-    view = st.radio(
-        "View",
-        options=OUTER_VIEWS,
-        horizontal=True,
-        key="active_view",
-        label_visibility="collapsed",
-    )
+    view = st.session_state.active_view
+    if view not in OUTER_VIEWS:
+        view = "Overview"
+        st.session_state.active_view = view
 
     if view == "Overview":
+        _ensure_report(client, workspace_id, filename)
         _render_overview()
     elif view == "Business Rules":
         _ensure_intelligence(client, workspace_id, filename)
@@ -597,9 +705,19 @@ def _render_workspace_body(client: BackendClient) -> None:
     elif view == "COBOL ↔ Java":
         _ensure_java_generation(client, workspace_id, filename)
         _ensure_cobol_source(client, workspace_id, filename)
+        _ensure_java_workspace(client, workspace_id, filename)
+        behavioral_status = None
+        if (
+            st.session_state.java_workspace_result is not None
+            and st.session_state.java_workspace_result_filename == filename
+        ):
+            behavioral_status = st.session_state.java_workspace_result.get(
+                "behavioral_status"
+            )
         render_java_view(
             st.session_state.java_generation_result,
             st.session_state.cobol_source,
+            behavioral_status=behavioral_status,
             error=st.session_state.java_generation_error,
         )
     elif view == "Java Workspace":
@@ -610,14 +728,30 @@ def _render_workspace_body(client: BackendClient) -> None:
         )
     elif view == "Validation Center":
         _ensure_validation(client, workspace_id, filename)
+        _ensure_report(client, workspace_id, filename)
+        report_for_validation = (
+            st.session_state.report_result
+            if st.session_state.report_result_filename == filename
+            else None
+        )
         render_validation(
-            st.session_state.validation_result, error=st.session_state.validation_error
+            st.session_state.validation_result,
+            report=report_for_validation,
+            error=st.session_state.validation_error,
         )
     elif view == "Report":
         _ensure_report(client, workspace_id, filename)
         render_report(
             st.session_state.report_result, error=st.session_state.report_error
         )
+    elif view == "Modernization Chat":
+        _ensure_report(client, workspace_id, filename)
+        report_for_chat = (
+            st.session_state.report_result
+            if st.session_state.report_result_filename == filename
+            else None
+        )
+        render_chat(client, workspace_id, filename, report=report_for_chat)
 
 
 def _render_landing_stage() -> None:
@@ -657,18 +791,30 @@ def _render_entry_stage() -> None:
 
 
 def _render_workspace_stage(client: BackendClient) -> None:
-    greeting = st.session_state.engineer_name or "Engineer"
-    st.title("\U0001f916 AI-Powered Mainframe Modernization Assistant")
-    st.caption(f"Welcome, {greeting}. Session is local to this browser tab.")
+    # An invisible anchor element, deliberately rendered before `with
+    # st.sidebar:` below. Without *some* real main-body element preceding
+    # it, `st.sidebar` being the very first thing this stage renders
+    # confuses Streamlit's delta-path reconciliation on the rerun that
+    # transitions from the entry stage into this one: the entry screen's
+    # widgets (Sign In / Continue as Guest, its text inputs) survive into
+    # the workspace stage's tree instead of being cleared, and later crash
+    # on a stale session_state lookup once any widget below triggers
+    # another rerun (e.g. clicking "Load Workspace"). Confirmed empirically
+    # with streamlit.testing.v1.AppTest; a raw `unsafe_allow_html` markdown
+    # block does not have the same anchoring effect, so this must stay a
+    # plain, native Streamlit element.
+    st.empty()
 
     with st.sidebar:
+        _render_sidebar_nav()
         _render_workspace_selection(client)
+
+    _render_topbar()
 
     if st.session_state.loading:
         st.info("Loading modernization analysis...")
     elif not st.session_state.workspace_id or not st.session_state.filename:
         st.info("Please select a workspace and file from the sidebar.")
-        render_mainframe_diagram(ChipState.IDLE, mode="live")
     else:
         _render_workspace_body(client)
 

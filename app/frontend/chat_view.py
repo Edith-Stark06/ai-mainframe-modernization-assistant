@@ -21,6 +21,7 @@ from typing import Any, Dict, Optional
 import streamlit as st
 
 from app.frontend.client import BackendAPIError, BackendClient
+from app.frontend.components import section_header, stat_row
 from app.frontend.theme import status_pill
 
 __all__ = ["render_chat"]
@@ -61,10 +62,33 @@ def _render_answer(chat_res: Dict[str, Any]) -> str:
     return answer
 
 
+def _render_context_stats(report: Dict[str, Any]) -> None:
+    coverage = report.get("coverage")
+    stat_row(
+        [
+            ("Rules", str(len(report.get("business_rules") or []))),
+            ("Dependencies", str(len(report.get("dependencies") or []))),
+            ("Risks", str(len(report.get("risks") or []))),
+            ("Coverage", f"{coverage['overall']:.0%}" if coverage else "—"),
+        ]
+    )
+
+
 def render_chat(
-    client: BackendClient, workspace_id: str, filename: Optional[str]
+    client: BackendClient,
+    workspace_id: str,
+    filename: Optional[str],
+    *,
+    report: Optional[Dict[str, Any]] = None,
 ) -> None:
-    st.subheader("Modernization Chat")
+    section_header(
+        "Modernization Chat",
+        filename or None,
+        eyebrow="AI",
+        eyebrow_accent="violet",
+    )
+    if report is not None:
+        _render_context_stats(report)
 
     include_context = st.checkbox(
         "Include modernization context for this file",

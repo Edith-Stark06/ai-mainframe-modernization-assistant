@@ -12,7 +12,7 @@ mock_st = MagicMock()
 sys.modules.setdefault("streamlit", mock_st)
 
 from app.frontend.mainframe import (  # noqa: E402
-    SUBSYSTEMS,
+    SUBSYSTEM_LABELS,
     ChipState,
     compute_chip_state,
 )
@@ -89,17 +89,10 @@ def test_unreachable_states_are_never_produced_by_compute_chip_state():
     assert reachable.isdisjoint(unreachable)
 
 
-def test_five_subsystems_each_map_to_a_view_that_actually_exists():
-    existing_views = {
-        "Overview",
-        "Business Rules",
-        "Dependencies",
-        "Architecture",
-        "COBOL ↔ Java",
-        "Java Workspace",
-        "Validation Center",
-        "Report",
-    }
-    assert len(SUBSYSTEMS) == 5
-    for sub in SUBSYSTEMS:
-        assert sub.target_tab in existing_views
+def test_five_subsystem_labels_for_the_landing_diagram():
+    """The diagram's left-side subsystem labels are purely illustrative
+    under the Stitch redesign (navigation moved to the sidebar in
+    app.py) -- this just guards against an accidental empty/duplicate
+    label list."""
+    assert len(SUBSYSTEM_LABELS) == 5
+    assert len(set(SUBSYSTEM_LABELS)) == 5
