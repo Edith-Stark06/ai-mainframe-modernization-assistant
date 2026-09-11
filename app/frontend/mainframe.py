@@ -1,21 +1,19 @@
 """
 Phase 12 — the virtual mainframe / AI Core diagram.
 
-This is the product's persistent visual identity: a schematic SVG of
-the legacy mainframe, its subsystems, the AI Core, and (once real
-architecture exists) the modern components it produced.
+Under the Stitch-locked redesign this diagram is no longer the primary
+in-workspace navigation surface (that is now the left sidebar in
+``app.py``) -- it survives only as the logged-out landing page's hero
+visual (``mode="concept"``), illustrating COBOL -> analysis -> modern
+Java at a glance before a workspace exists.
 
 Design constraints this module honors:
 
 * No custom Streamlit component build (no React/JS toolchain) -- pure
   SVG + CSS keyframe animation, per the Phase 12 technology constraint.
 * Streamlit cannot route an arbitrary in-page SVG click back into
-  Python without a custom bidirectional component. Rather than fake
-  interactivity, each subsystem is rendered TWICE: once inside the
-  animated SVG (decorative, CSS ``:hover`` only) and once as a real
-  ``st.button`` directly beneath it, sharing the same label/icon so the
-  two read as one connected control. Clicking the button is the actual
-  navigation; the SVG node is the visual anchor for it.
+  Python without a custom bidirectional component, so this diagram is
+  purely illustrative (no decorative node claims to be clickable).
 * Every illuminated/colored state is driven by :class:`ChipState`,
   which is computed from real backend data by ``compute_chip_state``.
   The "modern architecture" side of the diagram only ever names real
@@ -28,20 +26,18 @@ Design constraints this module honors:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Sequence
+from typing import Sequence
 
 import streamlit as st
 
 __all__ = [
     "ChipState",
-    "Subsystem",
-    "SUBSYSTEMS",
+    "SUBSYSTEM_LABELS",
+    "chip_label_and_status",
     "compute_chip_state",
     "render_ai_core_status",
     "render_mainframe_diagram",
-    "render_subsystem_nav",
 ]
 
 
@@ -111,59 +107,34 @@ def compute_chip_state(
     return ChipState.ANALYSIS_COMPLETE
 
 
-@dataclass(frozen=True)
-class Subsystem:
-    key: str
-    label: str
-    description: str
-    #: which workspace tab clicking this subsystem should open
-    target_tab: str
-
-
-SUBSYSTEMS: Sequence[Subsystem] = (
-    Subsystem(
-        "identification",
-        "IDENTIFICATION",
-        "Program identity, source metadata, and analysis coverage.",
-        "Overview",
-    ),
-    Subsystem(
-        "data",
-        "DATA",
-        "Working-storage fields and variable-level references.",
-        "Dependencies",
-    ),
-    Subsystem(
-        "procedure",
-        "PROCEDURE",
-        "Control flow, paragraphs, and business logic (Flow tab, in Overview).",
-        "Overview",
-    ),
-    Subsystem(
-        "files",
-        "FILES",
-        "Source inventory for the active workspace.",
-        "Overview",
-    ),
-    Subsystem(
-        "dependencies",
-        "DEPENDENCIES",
-        "Cross-program CALL / PERFORM / COPY graph.",
-        "Dependencies",
-    ),
+#: labels for the diagram's illustrative left-side subsystem nodes --
+#: purely decorative (see module docstring); no longer wired to navigation.
+SUBSYSTEM_LABELS: Sequence[str] = (
+    "IDENTIFICATION",
+    "DATA",
+    "PROCEDURE",
+    "FILES",
+    "DEPENDENCIES",
 )
+
+
+def chip_label_and_status(state: ChipState) -> tuple[str, str]:
+    """The honest (label, status word) pair for a given chip state --
+    shared by ``render_ai_core_status`` and the topbar's status pill in
+    ``app.py`` so both read the exact same mapping."""
+    return _CHIP_LABEL[state], _CHIP_STATUS_WORD[state]
 
 
 def render_ai_core_status(state: ChipState) -> None:
     """A compact, honest status line -- used wherever the diagram itself
-    is not shown but the current AI Core state still needs to be legible
-    (e.g. the sidebar)."""
+    is not shown but the current AI Core state still needs to be legible."""
     from app.frontend.theme import status_pill
 
+    label, word = chip_label_and_status(state)
     st.markdown(
         f'<div class="mf-panel" style="text-align:center;">'
         f'<div class="mf-muted" style="font-size:0.72rem;letter-spacing:0.08em;">AI CORE</div>'
-        f"{status_pill(_CHIP_LABEL[state], _CHIP_STATUS_WORD[state])}"
+        f"{status_pill(label, word)}"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -226,12 +197,15 @@ _DIAGRAM_CSS = """
 
   .mf-core-idle .mf-core-shell { stroke: #1c2733; }
   .mf-core-analyzing .mf-core-shell { stroke: #2dd4e8; animation: mf-spin 3.5s linear infinite; }
-  .mf-core-lit .mf-core-shell { stroke: #2dd4e8; filter: drop-shadow(0 0 10px rgba(45,212,232,0.55)); }
-  .mf-core-warn .mf-core-shell { stroke: #e8a92d; filter: drop-shadow(0 0 10px rgba(232,169,45,0.55)); }
-  .mf-core-fail .mf-core-shell { stroke: #e84d4d; filter: drop-shadow(0 0 10px rgba(232,77,77,0.55)); }
-  .mf-core-verified .mf-core-shell { stroke: #3ddc97; filter: drop-shadow(0 0 12px rgba(61,220,151,0.65)); }
+  .mf-core-lit .mf-core-shell { stroke: #2dd4e8; filter: drop-shadow(0 0 4px rgba(45,212,232,0.35)); }
+  .mf-core-warn .mf-core-shell { stroke: #e8a92d; filter: drop-shadow(0 0 4px rgba(232,169,45,0.35)); }
+  .mf-core-fail .mf-core-shell { stroke: #e84d4d; filter: drop-shadow(0 0 4px rgba(232,77,77,0.35)); }
+  .mf-core-verified .mf-core-shell { stroke: #3ddc97; filter: drop-shadow(0 0 5px rgba(61,220,151,0.4)); }
 
   .mf-core-label { fill: #e6edf3; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; }
+  .mf-zone-label {
+    fill: #8b98a5; font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+  }
 
   .mf-core-idle .mf-core-pulse, .mf-core-analyzing .mf-core-pulse { opacity: 0; }
   .mf-core-lit .mf-core-pulse, .mf-core-warn .mf-core-pulse,
@@ -329,17 +303,23 @@ def render_mainframe_diagram(
 
     subsystem_nodes = "".join(
         _node_svg(
-            20, 20 + i * 44, 150, 34, s.label, node_cls, i * 0.12 if play_boot else 0
+            20, 20 + i * 44, 150, 34, label, node_cls, i * 0.12 if play_boot else 0
         )
-        for i, s in enumerate(SUBSYSTEMS)
+        for i, label in enumerate(SUBSYSTEM_LABELS)
     )
     connectors = "".join(
         f'<path class="mf-flow-line {flow_active}" '
         f'd="M170,{37 + i * 44} C 260,{37 + i * 44} 260,150 330,150"/>'
-        for i in range(len(SUBSYSTEMS))
+        for i in range(len(SUBSYSTEM_LABELS))
     )
 
     if mode == "concept":
+        # concept mode is illustrative only (logged-out landing page, no
+        # workspace yet) -- these name a representative modern application,
+        # not a real, analyzed architecture. The ANALYZE -> UNDERSTAND ->
+        # TRANSFORM -> VALIDATE flow itself is what the AI Core in the
+        # middle of the diagram represents; it is spelled out as a caption
+        # beneath the diagram (see landing.py) rather than duplicated here.
         arch_items = architecture_components or [
             "SERVICE",
             "DOMAIN",
@@ -373,20 +353,11 @@ def render_mainframe_diagram(
           <text class="mf-core-label" x="400" y="146" text-anchor="middle">AI</text>
           <text class="mf-core-label" x="400" y="162" text-anchor="middle">CORE</text>
           <path class="mf-flow-line {flow_active}" d="M446,150 C 500,150 500,150 560,150"/>
+          <text class="mf-zone-label" x="95" y="12" text-anchor="middle">MAINFRAME</text>
+          <text class="mf-zone-label" x="655" y="12" text-anchor="middle">MODERN APPLICATION</text>
           {arch_nodes}
         </svg>
       </div>
     </div>
     """
     st.markdown(svg, unsafe_allow_html=True)
-
-
-def render_subsystem_nav(on_select: Callable[[str], None]) -> None:
-    """The real, functional counterpart to the decorative SVG nodes above
-    -- five buttons sharing the same labels, since Streamlit cannot route
-    an SVG click back into Python without a custom component build."""
-    cols = st.columns(len(SUBSYSTEMS))
-    for col, sub in zip(cols, SUBSYSTEMS):
-        with col:
-            if st.button(sub.label, key=f"subsystem_{sub.key}", help=sub.description):
-                on_select(sub.target_tab)

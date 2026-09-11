@@ -1,66 +1,71 @@
 """
-Phase 12 — Business Rules explorer (#134) and the Risks & Strategy
-section reused on the Overview.
+Phase 12 (Stitch redesign) -- Business Rules explorer (#134).
 
-All data comes from the existing, previously-unused
-``POST /workspaces/{id}/modernization/intelligence`` endpoint (Phase 4
-business rules / risks / strategies -- deterministic, no LLM). This
-module only renders; it computes nothing.
+All data comes from the existing ``POST
+/workspaces/{id}/modernization/intelligence`` endpoint (Phase 4 business
+rules -- deterministic, no LLM). This module only renders; it computes
+nothing except two presentation thresholds documented below.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import streamlit as st
 
-from app.frontend.theme import status_pill
+from app.frontend.components import section_header, selectable_table, stat_row
 
-__all__ = ["render_business_rules", "render_risks_and_strategy"]
+__all__ = ["render_business_rules", "SEVERITY_TO_STATUS"]
 
-_SEVERITY_TO_STATUS = {
+#: real backend severity values (risk.severity) -> honest status word.
+SEVERITY_TO_STATUS = {
     "HIGH": "FAIL",
     "CRITICAL": "FAIL",
     "MEDIUM": "WARN",
     "LOW": "IDLE",
 }
 
+#: presentation threshold only (not a backend field): a rule is shown as
+#: "high confidence" once its real ``confidence`` score is >= 0.8.
+_HIGH_CONFIDENCE_THRESHOLD = 0.8
 
-def _rule_card(rule: Dict[str, Any]) -> None:
-    variables = rule.get("variables") or {}
-    actions = rule.get("actions") or []
-    location = None
+#: the real BusinessRuleCategory enum value for error-condition rules
+#: (see app/modernization/business_rules/models.py::BusinessRuleCategory).
+_ERROR_CONDITION_CATEGORY = "ERROR_CONDITION"
+
+
+def _rule_location(rule: Dict[str, Any]) -> str:
     locs = rule.get("source_locations") or []
-    if locs:
-        loc = locs[0]
-        location = f"{loc.get('filename', '')}:{loc.get('line', '?')}"
+    if not locs:
+        return "—"
+    loc = locs[0]
+    return f"{loc.get('filename', '')}:{loc.get('line', '?')}"
 
+
+def _rule_inspector(rule: Dict[str, Any], location: str) -> None:
     with st.container(border=True):
-        head_l, head_r = st.columns([4, 1])
-        with head_l:
-            st.markdown(
-                f"**{rule.get('rule_id', '')}** — {rule.get('description', '')}"
-            )
-        with head_r:
-            conf = rule.get("confidence")
-            if conf is not None:
-                st.caption(f"confidence {conf:.0%}")
+        st.markdown(f"**{rule.get('rule_id', '')}** — {rule.get('description', '')}")
+        st.markdown(f"Condition: `{rule.get('condition', '')}`")
 
-        st.markdown(f"`{rule.get('condition', '')}`")
+        actions = rule.get("actions") or []
         if actions:
             st.caption(
                 "Actions: "
                 + "; ".join(a.get("raw", "") for a in actions if a.get("raw"))
             )
 
+        variables = rule.get("variables") or {}
         meta_cols = st.columns(4)
         meta_cols[0].caption(f"Category: {rule.get('category', '—')}")
         meta_cols[1].caption(f"Paragraph: {rule.get('paragraph', '—')}")
         meta_cols[2].caption(f"Reads: {len(variables.get('reads', []))}")
         meta_cols[3].caption(f"Writes: {len(variables.get('writes', []))}")
 
-        if location:
-            st.caption(f"Source: {location}")
+        st.caption(f"Source: {location}")
+        conf = rule.get("confidence")
+        if conf is not None:
+            st.caption(f"Confidence: {conf:.0%}")
+
         if rule.get("evidence"):
             with st.expander("Evidence"):
                 for e in rule["evidence"]:
@@ -68,52 +73,63 @@ def _rule_card(rule: Dict[str, Any]) -> None:
 
 
 def render_business_rules(
-    intelligence: Dict[str, Any] | None, *, error: str | None
+    intelligence: Optional[Dict[str, Any]], *, error: Optional[str]
 ) -> None:
-    st.subheader("Business Rules")
     if error:
+        section_header("Business Rules")
         st.error(error)
         return
     if intelligence is None:
+        section_header("Business Rules")
         st.info("Run analysis from the sidebar to extract business rules.")
         return
 
     rules: List[Dict[str, Any]] = intelligence.get("business_rules", [])
+    section_header(
+        "Business Rules",
+        f"{len(rules)} extracted — deterministic extraction, no LLM involved.",
+    )
     if not rules:
         st.info("No business rules were extracted from this file.")
         return
 
-    st.caption(f"{len(rules)} rule(s) — deterministic extraction, no LLM involved.")
+    high_confidence = sum(
+        1 for r in rules if (r.get("confidence") or 0) >= _HIGH_CONFIDENCE_THRESHOLD
+    )
+    error_conditions = sum(
+        1 for r in rules if r.get("category") == _ERROR_CONDITION_CATEGORY
+    )
+    stat_row(
+        [
+            ("Total", str(len(rules))),
+            ("High Confidence", str(high_confidence)),
+            ("Error Conditions", str(error_conditions)),
+        ]
+    )
+
+    records = []
     for rule in rules:
-        _rule_card(rule)
-
-
-def render_risks_and_strategy(intelligence: Dict[str, Any] | None) -> None:
-    if intelligence is None:
-        return
-    risks: List[Dict[str, Any]] = intelligence.get("risks", [])
-    strategies: List[Dict[str, Any]] = intelligence.get("strategies", [])
-
-    if not risks and not strategies:
-        return
-
-    st.markdown("**Modernization Risks & Strategy**")
-    if risks:
-        for risk in risks:
-            status = _SEVERITY_TO_STATUS.get(
-                str(risk.get("severity", "")).upper(), "WARN"
-            )
-            st.markdown(
-                f"{status_pill(risk.get('title', risk.get('risk_id', '')), status)}",
-                unsafe_allow_html=True,
-            )
-            st.caption(risk.get("explanation", ""))
-    else:
-        st.caption("No risks identified.")
-
-    if strategies:
-        primary = next((s for s in strategies if s.get("is_primary")), strategies[0])
-        st.caption(
-            f"Recommended strategy: **{primary.get('strategy', '—')}** — "
-            f"{primary.get('rationale', '')}"
+        conf = rule.get("confidence")
+        records.append(
+            {
+                "rule_id": rule.get("rule_id", ""),
+                "condition": rule.get("condition", ""),
+                "paragraph": rule.get("paragraph") or "—",
+                "confidence": f"{conf:.0%}" if conf is not None else "—",
+                "_rule": rule,
+                "_location": _rule_location(rule),
+            }
         )
+
+    selected = selectable_table(
+        records,
+        ["rule_id", "condition", "paragraph", "confidence"],
+        key="business_rules_table",
+    )
+    if selected is None:
+        st.caption(
+            "Select a rule above to inspect its condition, actions, and evidence."
+        )
+        return
+
+    _rule_inspector(selected["_rule"], selected["_location"])

@@ -10,11 +10,30 @@ Uses the same :class:`streamlit.testing.v1.AppTest` pattern as
 
 from pathlib import Path
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 from app.frontend.client import BackendClient
 
 APP_PATH = str(Path(__file__).parent.parent.parent / "app" / "frontend" / "app.py")
+
+
+@pytest.fixture(autouse=True)
+def _default_report_and_java_workspace_stubs(monkeypatch):
+    """Overview (the default active_view once a file is selected) now
+    lazily fetches the aggregate /modernization/report on open, and
+    COBOL <-> Java now also fetches /modernization/java-workspace (for
+    its honest Behavior status). Give every test a safe empty stub for
+    both instead of a real network call; a test that cares about their
+    content sets its own, more specific ``monkeypatch.setattr`` in its own
+    body, which -- running after this fixture's setup -- wins."""
+    monkeypatch.setattr(
+        BackendClient, "get_modernization_report", lambda self, ws_id, filename: {}
+    )
+    monkeypatch.setattr(
+        BackendClient, "get_java_workspace", lambda self, ws_id, filename: {}
+    )
+
 
 INVENTORY_ONE_FILE = {
     "workspace_id": "ws-1",
@@ -126,6 +145,21 @@ ANALYSIS_RESULT = {
 }
 
 
+#: mirrors app.py's private _NAV_KEYS -- the sidebar nav buttons that
+#: replaced the old `st.radio(key="active_view")` tab bar.
+_NAV_KEYS = {
+    "Overview": "nav_overview",
+    "Business Rules": "nav_business_rules",
+    "Dependencies": "nav_dependencies",
+    "Architecture": "nav_architecture",
+    "COBOL ↔ Java": "nav_cobol_java",
+    "Java Workspace": "nav_java_workspace",
+    "Validation Center": "nav_validation_center",
+    "Report": "nav_report",
+    "Modernization Chat": "nav_chat",
+}
+
+
 def _make_app() -> AppTest:
     at = AppTest.from_file(APP_PATH)
     at.default_timeout = 20
@@ -151,6 +185,23 @@ def _visible_text(at: AppTest) -> str:
     return " ".join(
         m.value for m in at.markdown if not m.value.strip().startswith("<style>")
     )
+
+
+def _open_view(at: AppTest, view: str) -> AppTest:
+    """Navigate via the left sidebar nav button for ``view`` (the
+    Stitch-redesign replacement for the old `st.radio` tab bar)."""
+    at.button(key=_NAV_KEYS[view]).click().run()
+    return at
+
+
+def _dataframe_with_column(at: AppTest, column: str):
+    """Several views now render more than one ``st.dataframe`` (a node/
+    row-selection table plus a detail list) -- find the one carrying
+    ``column`` rather than assuming a fixed index."""
+    for df in at.dataframe:
+        if column in df.value.columns:
+            return df
+    raise AssertionError(f"no dataframe with column {column!r} was rendered")
 
 
 def _load_and_select(at: AppTest, filename: str = "MAIN.cbl") -> AppTest:
@@ -217,7 +268,10 @@ def test_guest_entry_reaches_workspace_and_greets_guest():
     assert not at.exception
     assert at.session_state["stage"] == "workspace"
     assert at.session_state["engineer_name"] == "Guest"
-    assert any("Guest" in c.value for c in at.caption)
+    # the greeting now lives in the top bar (markdown) and the sidebar's
+    # compact "Session" line (caption) -- either is sufficient proof it's
+    # honestly shown, not a specific widget type.
+    assert "Guest" in _visible_text(at) or any("Guest" in c.value for c in at.caption)
 
 
 def test_named_sign_in_personalizes_the_greeting():
@@ -225,11 +279,11 @@ def test_named_sign_in_personalizes_the_greeting():
     _enter_workspace(at, name="Alex")
 
     assert at.session_state["engineer_name"] == "Alex"
-    assert any("Alex" in c.value for c in at.caption)
+    assert "Alex" in _visible_text(at) or any("Alex" in c.value for c in at.caption)
 
 
 # ---------------------------------------------------------------------------
-# AI Core diagram + subsystem navigation, inside the workspace
+# AI Core status + left sidebar navigation, inside the workspace
 # ---------------------------------------------------------------------------
 
 
@@ -240,7 +294,7 @@ def test_idle_ai_core_state_before_any_workspace_selected():
     assert "AWAITING ANALYSIS" in _visible_text(at)
 
 
-def test_subsystem_button_switches_the_active_view(monkeypatch):
+def test_sidebar_nav_button_switches_the_active_view(monkeypatch):
     monkeypatch.setattr(
         BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_ONE_FILE
     )
@@ -249,9 +303,9 @@ def test_subsystem_button_switches_the_active_view(monkeypatch):
     _enter_workspace(at)
     _load_and_select(at)
 
-    assert at.radio(key="active_view").value == "Overview"
-    at.button(key="subsystem_data").click().run()
-    assert at.radio(key="active_view").value == "Dependencies"
+    assert at.session_state["active_view"] == "Overview"
+    _open_view(at, "Dependencies")
+    assert at.session_state["active_view"] == "Dependencies"
 
 
 # ---------------------------------------------------------------------------
@@ -273,12 +327,16 @@ def test_business_rules_view_renders_real_rule_data(monkeypatch):
     at = _make_app()
     _enter_workspace(at)
     _load_and_select(at)
-    at.radio(key="active_view").set_value("Business Rules").run()
+    _open_view(at, "Business Rules")
 
     assert not at.exception
-    full_text = _visible_text(at)
-    assert "BR-001" in full_text
-    assert "Customer must be 18 or older" in full_text
+    table = _dataframe_with_column(at, "rule_id")
+    assert "BR-001" in list(table.value["rule_id"])
+    assert "WS-AGE >= 18" in list(table.value["condition"])
+    # progressive disclosure (#14): the rule's full description only
+    # appears in the inspector once a row is selected, never by default.
+    assert "Customer must be 18 or older" not in _visible_text(at)
+    assert any("Select a rule" in c.value for c in at.caption)
 
 
 def test_business_rules_view_empty_state_without_fabricating(monkeypatch):
@@ -298,7 +356,7 @@ def test_business_rules_view_empty_state_without_fabricating(monkeypatch):
     at = _make_app()
     _enter_workspace(at)
     _load_and_select(at)
-    at.radio(key="active_view").set_value("Business Rules").run()
+    _open_view(at, "Business Rules")
 
     assert not at.exception
     assert any("No business rules" in i.value for i in at.info)
@@ -320,13 +378,17 @@ def test_dependencies_view_renders_real_graph_and_flat_list(monkeypatch):
     at = _make_app()
     _enter_workspace(at)
     _load_and_select(at)
-    at.radio(key="active_view").set_value("Dependencies").run()
+    _open_view(at, "Dependencies")
 
     assert not at.exception
-    assert any("SUBRTN" in c.value or "resolved" in c.value for c in at.caption)
-    rows = at.dataframe[0].value
+    assert any("SUBRTN" in c.value or "node(s)" in c.value for c in at.caption)
+    rows = _dataframe_with_column(at, "Type").value
     assert "CALL" in list(rows["Type"])
     assert "VARIABLE_READ" in list(rows["Type"])
+    # the node-selection table backing the inspector also renders, with
+    # the real graph node identifiers.
+    node_rows = _dataframe_with_column(at, "Program").value
+    assert set(node_rows["Program"]) == {"MAIN", "SUBRTN"}
 
 
 def test_dependencies_filter_by_type(monkeypatch):
@@ -340,10 +402,10 @@ def test_dependencies_filter_by_type(monkeypatch):
     at = _make_app()
     _enter_workspace(at)
     _load_and_select(at)
-    at.radio(key="active_view").set_value("Dependencies").run()
-    at.selectbox(key="dep_filter").set_value("Variable Reads").run()
+    _open_view(at, "Dependencies")
+    at.pills(key="dep_filter").set_value("VARIABLE").run()
 
-    rows = at.dataframe[0].value
+    rows = _dataframe_with_column(at, "Type").value
     assert list(rows["Type"]) == ["VARIABLE_READ"]
 
 
@@ -435,7 +497,7 @@ def test_architecture_view_renders_real_components(monkeypatch):
     at = _make_app()
     _enter_workspace(at)
     _load_and_select(at)
-    at.radio(key="active_view").set_value("Architecture").run()
+    _open_view(at, "Architecture")
 
     assert not at.exception
     full_text = _visible_text(at)
@@ -455,7 +517,7 @@ def test_architecture_view_reports_unavailable_honestly(monkeypatch):
     at = _make_app()
     _enter_workspace(at)
     _load_and_select(at)
-    at.radio(key="active_view").set_value("Architecture").run()
+    _open_view(at, "Architecture")
 
     assert not at.exception
     full_text = _visible_text(at).upper()
@@ -476,7 +538,7 @@ def test_validation_center_never_claims_readiness_when_inconclusive(monkeypatch)
     at = _make_app()
     _enter_workspace(at)
     _load_and_select(at)
-    at.radio(key="active_view").set_value("Validation Center").run()
+    _open_view(at, "Validation Center")
 
     assert not at.exception
     full_text = _visible_text(at).upper()
@@ -580,7 +642,7 @@ def test_java_workspace_renders_real_generation_and_honest_self_repair_state(
     at = _make_app()
     _enter_workspace(at)
     _load_and_select(at)
-    at.radio(key="active_view").set_value("Java Workspace").run()
+    _open_view(at, "Java Workspace")
 
     assert not at.exception
     full_text = _visible_text(at) + " ".join(c.value for c in at.caption)
@@ -666,7 +728,7 @@ def test_cobol_java_view_renders_real_mapping(monkeypatch):
     at = _make_app()
     _enter_workspace(at)
     _load_and_select(at)
-    at.radio(key="active_view").set_value("COBOL ↔ Java").run()
+    _open_view(at, "COBOL ↔ Java")
 
     assert not at.exception
     full_text = _visible_text(at) + " ".join(c.value for c in at.caption)
@@ -713,7 +775,7 @@ def test_report_view_renders_real_aggregate_and_never_claims_pass(monkeypatch):
     at = _make_app()
     _enter_workspace(at)
     _load_and_select(at)
-    at.radio(key="active_view").set_value("Report").run()
+    _open_view(at, "Report")
 
     assert not at.exception
     full_text = _visible_text(at)

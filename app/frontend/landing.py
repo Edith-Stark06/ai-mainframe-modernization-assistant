@@ -40,6 +40,8 @@ _HERO_CSS = """
   .mf-hero-title .mf-accent { color: var(--mf-cyan); }
   .mf-hero-sub { color: var(--mf-muted); font-size: 1.02rem; max-width: 34rem;
     margin-bottom: 1.6rem; }
+  .mf-flow-caption { text-align: center; color: var(--mf-muted); font-size: 0.7rem;
+    letter-spacing: 0.08em; font-weight: 600; margin-top: 0.5rem; }
 
   .mf-pillar { border: 1px solid var(--mf-border); border-radius: 10px;
     padding: 1.1rem 1.2rem; background: var(--mf-panel); height: 100%;
@@ -93,11 +95,11 @@ def render_landing(
     with hero_l:
         st.markdown(
             """
-            <div class="mf-eyebrow">LEGACY SYSTEMS → MODERN POSSIBILITIES</div>
-            <div class="mf-hero-title">AI-ASSISTED<br/>MAINFRAME<br/>
-              <span class="mf-accent">MODERNIZATION</span></div>
-            <div class="mf-hero-sub">From complex COBOL systems to evidence-backed
-              modern architecture. Every result you see is grounded in real
+            <div class="mf-eyebrow">PRESERVE WHAT MATTERS. BUILD WHAT'S NEXT.</div>
+            <div class="mf-hero-title">Turn legacy<br/>into
+              <span class="mf-accent">opportunity.</span></div>
+            <div class="mf-hero-sub">AI-assisted modernization for COBOL and
+              mainframe systems. Every result you see is grounded in real
               analysis — nothing is fabricated for the sake of a demo.</div>
             """,
             unsafe_allow_html=True,
@@ -105,14 +107,14 @@ def render_landing(
         btn_l, btn_r = st.columns([1, 1])
         with btn_l:
             if st.button(
-                "Enter the Platform →",
+                "Get Started →",
                 key="landing_enter_platform",
                 type="primary",
                 use_container_width=True,
             ):
                 on_enter_platform()
         with btn_r:
-            label = "Watch Intro" if not intro_seen else "Replay Intro"
+            label = "Watch Demo" if not intro_seen else "Replay Demo"
             if st.button(label, key="landing_watch_intro", use_container_width=True):
                 on_watch_intro()
 
@@ -121,6 +123,11 @@ def render_landing(
             ChipState.ANALYSIS_COMPLETE,
             mode="concept",
             play_boot=not intro_seen,
+        )
+        st.markdown(
+            '<div class="mf-flow-caption">ANALYZE &rarr; UNDERSTAND &rarr; '
+            "TRANSFORM &rarr; VALIDATE</div>",
+            unsafe_allow_html=True,
         )
         if not intro_seen:
             st.caption("First visit — playing the boot sequence once.")
