@@ -1,11 +1,16 @@
 public class MoveDisplay {
 
-    private static String msg;
+    private String msg;
 
     public static void main(String[] args) {
+        new MoveDisplay().run();
+    }
+
+    public void run() {
 
         msg = "TESTING";
         System.out.println(msg);
+        return;
 
     }
 

@@ -65,6 +65,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.ir.nodes import IRNode, IRNodeKind
+from app.parser.lexer.position import Position
 
 __all__ = [
     "IRAccept",
@@ -117,6 +118,24 @@ class IRInstruction(IRNode):
             :class:`IRReturn`, void :class:`IRCall`).
         comment:
             Optional human-readable annotation for logging and dumps.
+        source_position:
+            The :class:`~app.parser.lexer.position.Position` of the AST
+            statement this instruction was lowered from, or ``None`` if
+            unavailable (task #109 source-mapping requirement).
+            Excluded from equality comparison (``compare=False``) so
+            existing tests asserting instruction equality by operand
+            values are unaffected by this addition.
+        paragraph:
+            The uppercased name of the COBOL paragraph this instruction
+            was lowered from, or ``""`` if it did not originate from a
+            paragraph.  This is how paragraph identity survives AST -> IR
+            lowering despite every paragraph's statements being
+            flattened into a single :class:`~app.ir.blocks.IRBasicBlock`
+            (task #109; the block structure itself is not split further
+            because the Java backend and CFG-relevant tooling currently
+            read only ``function.blocks[0]`` -- see
+            :mod:`app.ir.builder`'s module docstring).  Also excluded
+            from equality comparison.
 
     Examples:
         >>> from app.ir.instructions import IRMove
@@ -130,6 +149,8 @@ class IRInstruction(IRNode):
     kind: IRNodeKind = field(default=IRNodeKind.INSTRUCTION, init=False)
     result: str = field(default="")
     comment: str = field(default="")
+    source_position: Position | None = field(default=None, compare=False)
+    paragraph: str = field(default="", compare=False)
 
     @abstractmethod
     def accept(self, visitor: Any) -> Any:

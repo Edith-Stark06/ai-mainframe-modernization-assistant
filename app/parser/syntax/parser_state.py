@@ -174,13 +174,29 @@ class ParserState:
         """
         Increment the legacy error counter by one.
 
-        Call this when a recoverable parse error is encountered and the
-        parser chooses to continue rather than raise immediately, but no
-        structured diagnostic is needed (e.g. in existing grammar rules
-        that predate the recovery system).
+        Deprecated (task #108):
+            No grammar rule in this codebase calls this method — every
+            production emission site uses :meth:`record_and_synchronise`
+            or :attr:`recovery_manager`'s ``record_error``, both of which
+            create a structured
+            :class:`~app.parser.diagnostics.recovery.SyntaxDiagnostic`
+            with a location, category, and code.  This method produces
+            no diagnostic at all, only a bare counter increment, which is
+            exactly the kind of untracked problem task #108 exists to
+            eliminate.  It is kept only because existing tests exercise
+            this low-level counter directly
+            (``tests/parser/test_parser_framework.py``,
+            ``tests/parser/test_parser_recovery.py``); do not call it
+            from new grammar code.
 
-        For new code, prefer :meth:`record_and_synchronise` which
-        creates a full :class:`~app.parser.diagnostics.recovery.SyntaxDiagnostic`.
+            :attr:`error_count` and :attr:`has_errors` already combine
+            this counter with the structured diagnostic count (see
+            their implementations), so the two channels cannot disagree
+            about *whether* an error occurred — this method simply adds
+            a count with no accompanying record of *what* the error was.
+
+        For new code, use :meth:`record_and_synchronise`, which creates
+        a full :class:`~app.parser.diagnostics.recovery.SyntaxDiagnostic`.
         """
         self._error_count += 1
 
@@ -230,6 +246,7 @@ class ParserState:
         message: str,
         error_token: Token,
         context: RecoveryContext = RecoveryContext.UNKNOWN,
+        code: str = "SYN001",
     ) -> SyntaxDiagnostic:
         """
         Record a syntax error and advance the stream to a safe point.
@@ -264,6 +281,7 @@ class ParserState:
             message=message,
             error_token=error_token,
             context=context,
+            code=code,
         )
 
     @property

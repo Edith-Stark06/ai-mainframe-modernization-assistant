@@ -1,0 +1,58 @@
+{
+  "analysis_version": "deterministic-analysis-phases-1-5",
+  "created_at": "2026-09-07T00:00:00Z",
+  "dataset_version": "phase6-v2",
+  "example_count": 198,
+  "generator_version": "phase6-gen-v1",
+  "per_difficulty": {
+    "difficult": 44,
+    "easy": 11,
+    "medium": 143
+  },
+  "per_ground_truth_status": {
+    "deterministic": 180,
+    "executable_verified": 2,
+    "reference": 16
+  },
+  "per_provenance": {
+    "deterministic_generated": 196,
+    "reviewed_reference": 2
+  },
+  "per_source_provenance": {
+    "repository_fixture": 33,
+    "synthetic": 165
+  },
+  "per_task": {
+    "business_rule_extraction": 18,
+    "cobol_explanation": 18,
+    "cobol_to_java": 18,
+    "cobol_to_structured": 18,
+    "modernization_qa": 54,
+    "modernization_recommendation": 18,
+    "risk_identification": 18,
+    "source_grounded_qa": 36
+  },
+  "skipped": [],
+  "skipped_count": 0,
+  "source_count": 18,
+  "source_ids": [
+    "fx_combined",
+    "fx_perform_until",
+    "fx_simple_proc",
+    "t_account_validate",
+    "t_bonus_calc",
+    "t_credit_limit",
+    "t_discount_tier",
+    "t_grade_letter",
+    "t_interest_accrue",
+    "t_late_fee",
+    "t_loan_balance",
+    "t_overdraft_fee",
+    "t_payroll_net_pay",
+    "t_reorder_point",
+    "t_shipping_zone",
+    "t_stock_alert",
+    "t_temp_convert",
+    "t_vacation_accrual"
+  ]
+}

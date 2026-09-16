@@ -1,0 +1,25 @@
+{
+  "analysis_version": "deterministic-analysis-phases-1-5",
+  "benchmark_version": "benchmark-v1",
+  "content_hash": "df0ff3202f54bfaf1dabecb801bbb07506875d78b689d9c641a2dd461aa8a632",
+  "difficulty_distribution": {
+    "adversarial": 6,
+    "difficult": 4,
+    "easy": 4,
+    "medium": 8
+  },
+  "example_count": 22,
+  "frozen": true,
+  "note": "This benchmark is IMMUTABLE and is NEVER used as training data. It is not regenerated during dataset builds. Any change requires a new BENCHMARK_VERSION.",
+  "prompt_version": "p6-prompt-v1",
+  "task_distribution": {
+    "business_rule_extraction": 5,
+    "cobol_explanation": 2,
+    "cobol_to_java": 3,
+    "cobol_to_structured": 1,
+    "modernization_qa": 2,
+    "modernization_recommendation": 2,
+    "risk_identification": 4,
+    "source_grounded_qa": 3
+  }
+}

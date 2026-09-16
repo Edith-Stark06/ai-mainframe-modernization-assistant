@@ -1,0 +1,134 @@
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException
+from app.api.schemas.modernization import (
+    ModernizationRequest,
+    ModernizationPipelineResponse,
+    ModernizationIntelligenceResponse,
+    FlowResponse,
+    ModernizationScoreResponse,
+    RecommendationResponse,
+)
+from app.api.dependencies.workspace import resolve_workspace_source
+from app.analysis.service import AnalysisService
+from app.modernization.flow.generator import generate_flow
+from app.modernization.intelligence import analyze_modernization_intelligence
+from app.modernization.scoring.confidence_aware import score_with_confidence
+from app.modernization.scoring.service import calculate_scores
+from app.modernization.recommendations.service import generate_recommendations
+from app.ingestion.workspace import WorkspaceManager
+
+router = APIRouter(
+    prefix="/workspaces/{workspace_id}/modernization", tags=["modernization"]
+)
+
+
+def get_analysis_service() -> AnalysisService:
+    return AnalysisService()
+
+
+def get_workspace_manager() -> WorkspaceManager:
+    return WorkspaceManager()
+
+
+@router.post("/pipeline", response_model=ModernizationPipelineResponse)
+def execute_modernization_pipeline(
+    workspace_id: uuid.UUID,
+    request: ModernizationRequest,
+    analysis_service: AnalysisService = Depends(get_analysis_service),
+    workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+):
+    """
+    Executes the full modernization pipeline (Flow -> Scoring -> Recommendations).
+    """
+    source_path = resolve_workspace_source(
+        workspace_id, request.filename, workspace_manager
+    )
+
+    from app.core.logging import logger
+
+    # Generate AnalysisResult
+    try:
+        analysis_result = analysis_service.analyze_file(source_path)
+    except Exception as e:
+        logger.error(f"Analysis failed for {source_path}: {e}")
+        raise HTTPException(status_code=500, detail="Analysis failed")
+
+    # Generate Flow
+    try:
+        flow = generate_flow(analysis_result)
+    except Exception as e:
+        logger.error(f"Flow generation failed for {source_path}: {e}")
+        raise HTTPException(status_code=500, detail="Flow generation failed")
+
+    # Calculate Scores
+    try:
+        score = calculate_scores(analysis_result, flow)
+    except Exception as e:
+        logger.error(f"Scoring failed for {source_path}: {e}")
+        raise HTTPException(status_code=500, detail="Scoring failed")
+
+    # Generate Recommendations
+    try:
+        recs = generate_recommendations(flow, score)
+    except Exception as e:
+        logger.error(f"Recommendation generation failed for {source_path}: {e}")
+        raise HTTPException(status_code=500, detail="Recommendation generation failed")
+
+    # Phase 5: confidence-aware scoring (#115 coverage + #116 confidence).
+    # Additive — the existing `score` above is unchanged.
+    try:
+        aware = score_with_confidence(analysis_result, flow)
+    except Exception as e:
+        logger.error(f"Confidence-aware scoring failed for {source_path}: {e}")
+        raise HTTPException(status_code=500, detail="Confidence-aware scoring failed")
+
+    return ModernizationPipelineResponse(
+        flow=FlowResponse(**flow.to_dict()),
+        score=ModernizationScoreResponse(**score.to_dict()),
+        recommendations=[RecommendationResponse(**r.to_dict()) for r in recs],
+        analysis_confidence=aware.analysis_confidence,
+        analysis_coverage=aware.analysis_coverage,
+        readiness=aware.readiness,
+        insufficient_data=aware.insufficient_data,
+        interpretation=aware.interpretation,
+        coverage=aware.coverage_report.to_dict(),
+        confidence=aware.confidence.to_dict(),
+    )
+
+
+@router.post("/intelligence", response_model=ModernizationIntelligenceResponse)
+def execute_modernization_intelligence(
+    workspace_id: uuid.UUID,
+    request: ModernizationRequest,
+    analysis_service: AnalysisService = Depends(get_analysis_service),
+    workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+):
+    """
+    Phase 4 Modernization Intelligence: deterministic business rules (#112),
+    modernization risks (#113), and strategy recommendations (#114).
+
+    Reuses the same Phase 1-3 analysis and CFG as ``/pipeline``; it does
+    not run any LLM. Output ordering and identifiers are stable for a
+    given source.
+    """
+    from app.core.logging import logger
+
+    source_path = resolve_workspace_source(
+        workspace_id, request.filename, workspace_manager
+    )
+
+    try:
+        analysis_result = analysis_service.analyze_file(source_path)
+    except Exception as e:
+        logger.error(f"Analysis failed for {source_path}: {e}")
+        raise HTTPException(status_code=500, detail="Analysis failed")
+
+    try:
+        result = analyze_modernization_intelligence(analysis_result)
+    except Exception as e:
+        logger.error(f"Modernization intelligence failed for {source_path}: {e}")
+        raise HTTPException(status_code=500, detail="Modernization intelligence failed")
+
+    payload = result.to_dict()
+    return ModernizationIntelligenceResponse(**payload)

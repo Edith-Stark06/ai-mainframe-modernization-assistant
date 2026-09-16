@@ -1,4 +1,14 @@
-# TASK-042 — Java Compilation Tests
+# TASK-042 — Java Compilation Tests & Production Analysis Service
+
+## Overview
+
+Task 042 covers:
+1. **Java Compilation Testing**: Automated tests that compile generated Java source with `javac`.
+2. **Production Analysis Service**: Extracting COBOL compilation/analysis orchestration into `app/analysis/`.
+
+---
+
+# Part 1: Java Compilation Tests
 
 ## Objective
 
@@ -19,7 +29,7 @@ This task adds one more level of confidence by ensuring the generated Java code 
 
 ---
 
-# Scope
+## Scope
 
 Create a Java compilation test suite that:
 
@@ -37,9 +47,9 @@ Compilation Result
 
 ---
 
-# Functional Requirements
+## Functional Requirements
 
-## 1. Create Compilation Test Structure
+### 1. Create Compilation Test Structure
 
 Create:
 
@@ -49,7 +59,7 @@ tests/compilation/
 
 ---
 
-## 2. Fixture Discovery
+### 2. Fixture Discovery
 
 Reuse existing COBOL fixtures where practical (for example, from `tests/golden/` or `tests/integration/`) instead of duplicating them.
 
@@ -57,7 +67,7 @@ Automatically discover fixtures.
 
 ---
 
-## 3. Generate Java
+### 3. Generate Java
 
 For each fixture:
 
@@ -69,7 +79,7 @@ Do not modify repository files.
 
 ---
 
-## 4. Compile Generated Java
+### 4. Compile Generated Java
 
 Invoke the Java compiler (`javac`) on the generated source.
 
@@ -77,7 +87,7 @@ If Java is unavailable, skip the test with a clear pytest skip message rather th
 
 ---
 
-## 5. Assertions
+### 5. Assertions
 
 For successful fixtures:
 
@@ -92,7 +102,7 @@ For invalid COBOL fixtures:
 
 ---
 
-## 6. Temporary Files
+### 6. Temporary Files
 
 Use pytest temporary directories (`tmp_path` or equivalent).
 
@@ -100,7 +110,7 @@ Clean up automatically after execution.
 
 ---
 
-## 7. Failure Reporting
+### 7. Failure Reporting
 
 On compilation failure, report:
 
@@ -111,13 +121,13 @@ On compilation failure, report:
 
 ---
 
-## 8. Deterministic Execution
+### 8. Deterministic Execution
 
 Running the tests multiple times should produce identical compilation results.
 
 ---
 
-# Testing
+## Testing
 
 Run:
 
@@ -131,7 +141,7 @@ pytest tests/compilation -v
 
 ---
 
-# Documentation
+## Documentation
 
 Update:
 
@@ -148,7 +158,7 @@ Document:
 
 ---
 
-# Acceptance Criteria
+## Acceptance Criteria
 
 - `tests/compilation/` created
 - automatic fixture discovery
@@ -164,7 +174,7 @@ Document:
 
 ---
 
-# Non-goals
+## Non-goals
 
 Do **not** implement:
 
@@ -174,7 +184,7 @@ Do **not** implement:
 
 ---
 
-# Branch
+## Branch
 
 ```
 feat/task-042
@@ -182,7 +192,7 @@ feat/task-042
 
 ---
 
-# Files to Add
+## Files to Add
 
 ```
 tests/compilation/
@@ -191,10 +201,63 @@ docs/testing.md
 
 ---
 
-# Deliverables
+## Deliverables
 
 - Java compilation test framework
 - Automatic fixture discovery
 - Temporary compilation workspace
 - `javac` integration
 - Updated testing documentation
+
+---
+
+# Part 2: Production Analysis Service
+
+## Objective
+
+Extract the existing COBOL compilation/analysis orchestration from
+`tests/integration/helpers.py` into production code under `app/analysis/`.
+
+The goal is to create one reusable production service that the future
+FastAPI API layer can call.
+
+This task is an architectural extraction only.
+
+**Do not change the behavior of the lexer, parser, semantic analyzer,
+IR builder, or Java generator.**
+
+---
+
+## Existing Pipeline
+
+The existing integration pipeline is:
+
+COBOL Source
+    ↓
+CobolLexer
+    ↓
+ProgramParser
+    ↓
+SemanticAnalyzer
+    ↓
+IRBuilder
+    ↓
+Java Backend
+    ↓
+Java Source + Diagnostics
+
+The production service must preserve this exact order.
+
+---
+
+## Files to Create
+
+Create:
+
+```text
+app/
+└── analysis/
+    ├── __init__.py
+    ├── models.py
+    └── service.py
+```

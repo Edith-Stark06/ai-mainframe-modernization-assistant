@@ -27,7 +27,6 @@ Responsibilities:
 
 Non-responsibilities:
     - Semantic diagnostics (type mismatches, undefined names, etc.).
-    - Warning-level diagnostics.
     - Automatic source correction or code completion.
     - IDE / LSP integration.
 
@@ -65,6 +64,7 @@ from dataclasses import dataclass
 from enum import Enum, unique
 from typing import TYPE_CHECKING
 
+from app.parser.grammar_words import matches_grammar_word
 from app.parser.lexer.token_types import TokenType
 
 if TYPE_CHECKING:
@@ -72,10 +72,14 @@ if TYPE_CHECKING:
     from app.parser.syntax.token_stream import TokenStream
 
 __all__ = [
+    "SYNTAX_DIAGNOSTIC_CODES",
     "RecoveryContext",
     "RecoveryManager",
     "SynchronisationPoint",
+    "SyntaxCategory",
+    "SyntaxCodeSpec",
     "SyntaxDiagnostic",
+    "SyntaxSeverity",
     "synchronise",
 ]
 
@@ -102,7 +106,10 @@ _DIVISION_KEYWORDS: frozenset[str] = frozenset(
     }
 )
 
-#: Keyword lexemes that mark a section within a division.
+#: Lexemes that mark a section within a division.  Only WORKING-STORAGE
+#: is a reserved word; the rest reach the parser as IDENTIFIER, so these
+#: are matched with :func:`~app.parser.grammar_words.matches_grammar_word`
+#: rather than a TokenType.KEYWORD test.
 _SECTION_KEYWORDS: frozenset[str] = frozenset(
     {
         "WORKING-STORAGE",
@@ -114,6 +121,10 @@ _SECTION_KEYWORDS: frozenset[str] = frozenset(
         "COMMUNICATION",
     }
 )
+
+#: The literal word that must follow a section name to confirm a section
+#: header.  ``SECTION`` is not a reserved word either.
+_SECTION_WORD: frozenset[str] = frozenset({"SECTION"})
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +173,8 @@ class RecoveryContext(Enum):
     Members:
         IDENTIFICATION_DIVISION:
             Error occurred inside the IDENTIFICATION DIVISION parser.
+        ENVIRONMENT_DIVISION:
+            Error occurred inside the ENVIRONMENT DIVISION parser.
         DATA_DIVISION:
             Error occurred inside the DATA DIVISION parser.
         PROCEDURE_DIVISION:
@@ -181,12 +194,182 @@ class RecoveryContext(Enum):
     """
 
     IDENTIFICATION_DIVISION = "identification_division"
+    ENVIRONMENT_DIVISION = "environment_division"
     DATA_DIVISION = "data_division"
     PROCEDURE_DIVISION = "procedure_division"
     WORKING_STORAGE_SECTION = "working_storage_section"
     PARAGRAPH = "paragraph"
     STATEMENT = "statement"
     UNKNOWN = "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Severity, category and the diagnostic-code registry
+#
+# Mirrors the established design of
+# :mod:`app.parser.semantic.diagnostics`, so that syntax, semantic and
+# backend diagnostics can be consumed uniformly.  Structured fields are
+# authoritative: consumers must classify on ``code``/``severity``/
+# ``category`` and never by matching the English ``message``.
+# ---------------------------------------------------------------------------
+
+
+@unique
+class SyntaxSeverity(Enum):
+    """
+    Severity level of a :class:`SyntaxDiagnostic`.
+
+    Members:
+        ERROR:
+            The source is malformed, or a construct was abandoned, so the
+            AST is known to be incomplete at this point.
+        WARNING:
+            The source is valid COBOL that this parser cannot represent.
+            Nothing is wrong with the program; the analysis of it is
+            incomplete.
+
+    Examples:
+        >>> SyntaxSeverity.ERROR.value
+        'error'
+    """
+
+    ERROR = "error"
+    WARNING = "warning"
+
+
+@unique
+class SyntaxCategory(Enum):
+    """
+    The kind of problem a :class:`SyntaxDiagnostic` reports.
+
+    Members:
+        SYNTAX_ERROR:
+            The source does not conform to COBOL grammar.
+        UNSUPPORTED:
+            Valid COBOL whose construct this parser does not implement.
+        UNMODELLED:
+            Valid COBOL that was parsed and understood, but which the AST
+            has no field to represent, so the detail was dropped.
+        ABANDONED:
+            The parser stopped early; a region of the source was never
+            analysed at all.
+
+    Examples:
+        >>> SyntaxCategory.UNSUPPORTED.value
+        'unsupported'
+    """
+
+    SYNTAX_ERROR = "syntax_error"
+    UNSUPPORTED = "unsupported"
+    UNMODELLED = "unmodelled"
+    ABANDONED = "abandoned"
+
+
+@dataclass(frozen=True, slots=True)
+class SyntaxCodeSpec:
+    """
+    The registered meaning of one syntax diagnostic code.
+
+    Attributes:
+        description: Short human-readable description of the rule.
+        category:    The :class:`SyntaxCategory` the code belongs to.
+        severity:    The :class:`SyntaxSeverity` normally emitted.
+    """
+
+    description: str
+    category: SyntaxCategory
+    severity: SyntaxSeverity
+
+
+#: Registered syntax diagnostic codes.  Extend this mapping as new rules
+#: are added; every emission site must pass a code registered here.
+#:
+#: Numbering convention:
+#:   ``SYN0xx`` — syntax errors (malformed source)
+#:   ``SYN1xx`` — unsupported constructs (valid COBOL, not implemented)
+#:   ``SYN2xx`` — unmodelled constructs (parsed, but not representable)
+#:   ``SYN3xx`` — abandonment (parsing stopped early)
+SYNTAX_DIAGNOSTIC_CODES: dict[str, SyntaxCodeSpec] = {
+    # -- Syntax errors ----------------------------------------------------
+    "SYN001": SyntaxCodeSpec(
+        "Unexpected token",
+        SyntaxCategory.SYNTAX_ERROR,
+        SyntaxSeverity.ERROR,
+    ),
+    "SYN002": SyntaxCodeSpec(
+        "Missing period",
+        SyntaxCategory.SYNTAX_ERROR,
+        SyntaxSeverity.ERROR,
+    ),
+    "SYN003": SyntaxCodeSpec(
+        "Expected a clause keyword",
+        SyntaxCategory.SYNTAX_ERROR,
+        SyntaxSeverity.ERROR,
+    ),
+    "SYN004": SyntaxCodeSpec(
+        "Invalid or orphaned level number",
+        SyntaxCategory.SYNTAX_ERROR,
+        SyntaxSeverity.ERROR,
+    ),
+    "SYN005": SyntaxCodeSpec(
+        "Malformed statement",
+        SyntaxCategory.SYNTAX_ERROR,
+        SyntaxSeverity.ERROR,
+    ),
+    # -- Unsupported constructs -------------------------------------------
+    "SYN100": SyntaxCodeSpec(
+        "Unsupported statement",
+        SyntaxCategory.UNSUPPORTED,
+        SyntaxSeverity.WARNING,
+    ),
+    "SYN101": SyntaxCodeSpec(
+        "Unsupported DATA DIVISION section",
+        SyntaxCategory.UNSUPPORTED,
+        SyntaxSeverity.WARNING,
+    ),
+    "SYN102": SyntaxCodeSpec(
+        "Unsupported ENVIRONMENT DIVISION section",
+        SyntaxCategory.UNSUPPORTED,
+        SyntaxSeverity.WARNING,
+    ),
+    # -- Unmodelled constructs --------------------------------------------
+    "SYN200": SyntaxCodeSpec(
+        "Data-item clause not represented in the AST",
+        SyntaxCategory.UNMODELLED,
+        SyntaxSeverity.WARNING,
+    ),
+    # -- Abandonment -------------------------------------------------------
+    "SYN300": SyntaxCodeSpec(
+        "PROCEDURE DIVISION parsing abandoned",
+        SyntaxCategory.ABANDONED,
+        SyntaxSeverity.ERROR,
+    ),
+    "SYN301": SyntaxCodeSpec(
+        "Paragraph statement list abandoned",
+        SyntaxCategory.ABANDONED,
+        SyntaxSeverity.ERROR,
+    ),
+    "SYN302": SyntaxCodeSpec(
+        "DATA DIVISION parsing abandoned",
+        SyntaxCategory.ABANDONED,
+        SyntaxSeverity.ERROR,
+    ),
+}
+
+
+def _severity_for(code: str) -> SyntaxSeverity:
+    """
+    Return the registered severity for *code*.
+
+    Args:
+        code: A key of :data:`SYNTAX_DIAGNOSTIC_CODES`.
+
+    Returns:
+        The registered :class:`SyntaxSeverity`, or
+        :attr:`SyntaxSeverity.ERROR` if the code is not registered.
+    """
+    spec = SYNTAX_DIAGNOSTIC_CODES.get(code)
+    return spec.severity if spec else SyntaxSeverity.ERROR
 
 
 # ---------------------------------------------------------------------------
@@ -251,16 +434,38 @@ class SyntaxDiagnostic:
     context: RecoveryContext
     sync_point: SynchronisationPoint | None
     tokens_skipped: int
+    severity: SyntaxSeverity = SyntaxSeverity.ERROR
+    code: str = "SYN001"
+
+    @property
+    def category(self) -> SyntaxCategory:
+        """
+        The :class:`SyntaxCategory` this diagnostic's code belongs to.
+
+        Derived from :data:`SYNTAX_DIAGNOSTIC_CODES` so that the registry
+        remains the single source of truth.  An unregistered code falls
+        back to :attr:`SyntaxCategory.SYNTAX_ERROR`.
+
+        Returns:
+            The category of :attr:`code`.
+        """
+        spec = SYNTAX_DIAGNOSTIC_CODES.get(self.code)
+        return spec.category if spec else SyntaxCategory.SYNTAX_ERROR
 
     def __str__(self) -> str:
         """
         Return a human-readable one-line representation.
 
+        Format matches :class:`~app.parser.semantic.diagnostics.SemanticDiagnostic`::
+
+            <filename>:<line>:<column> [<SEVERITY> <code>] <message>
+
         Returns:
-            A string in the form ``"<filename>:<line>:<column>: <message>"``.
+            A formatted diagnostic string.
         """
         location = f"{self.filename}:{self.line}:{self.column}"
-        return f"{location}: {self.message}"
+        sev = self.severity.value.upper()
+        return f"{location} [{sev} {self.code}] {self.message}"
 
 
 # ---------------------------------------------------------------------------
@@ -317,22 +522,32 @@ def synchronise(stream: TokenStream) -> tuple[SynchronisationPoint, int]:
             skipped += 1
             return SynchronisationPoint.PERIOD, skipped
 
-        # ---- Division keyword (do NOT consume) ----------------------
-        if tok.type is TokenType.KEYWORD:
-            upper = tok.lexeme.upper()
+        # ---- Division boundary (do NOT consume) ---------------------
+        # Every COBOL division name is in the lexer's reserved-word set,
+        # so requiring TokenType.KEYWORD here is correct and is kept
+        # deliberately strict.
+        if tok.type is TokenType.KEYWORD and tok.lexeme.upper() in _DIVISION_KEYWORDS:
+            next_tok = stream.peek()
+            if (
+                next_tok.type is TokenType.KEYWORD
+                and next_tok.lexeme.upper() == "DIVISION"
+            ):
+                return SynchronisationPoint.DIVISION, skipped
 
-            # Division boundary — peek ahead to confirm "X DIVISION"
-            if upper in _DIVISION_KEYWORDS:
-                next_tok = stream.peek()
-                if (
-                    next_tok.type is TokenType.KEYWORD
-                    and next_tok.lexeme.upper() == "DIVISION"
-                ):
-                    return SynchronisationPoint.DIVISION, skipped
-
-            # Section boundary
-            if upper in _SECTION_KEYWORDS:
-                return SynchronisationPoint.SECTION, skipped
+        # ---- Section boundary (do NOT consume) ----------------------
+        # Section names are NOT all reserved words: only WORKING-STORAGE
+        # is in the lexer keyword set, so FILE, LINKAGE, LOCAL-STORAGE,
+        # SCREEN, REPORT and COMMUNICATION arrive as IDENTIFIER.  Gating
+        # this on TokenType.KEYWORD made six of the seven anchors
+        # unreachable, so recovery ran past unsupported sections and
+        # discarded the valid content behind them (task #104, F-06).
+        #
+        # The following word must be SECTION.  That keeps the check
+        # strict: a data item merely *named* FILE is not a boundary.
+        if matches_grammar_word(tok, _SECTION_KEYWORDS) and matches_grammar_word(
+            stream.peek(), _SECTION_WORD
+        ):
+            return SynchronisationPoint.SECTION, skipped
 
         # ---- Paragraph label heuristic --------------------------------
         # A paragraph label is an IDENTIFIER or KEYWORD whose *next*
@@ -472,6 +687,7 @@ class RecoveryManager:
         message: str,
         error_token: Token,
         context: RecoveryContext = RecoveryContext.UNKNOWN,
+        code: str = "SYN001",
     ) -> SyntaxDiagnostic:
         """
         Record a syntax error and advance the stream to a safe point.
@@ -526,6 +742,8 @@ class RecoveryManager:
                 context=context,
                 sync_point=None,
                 tokens_skipped=0,
+                severity=_severity_for(code),
+                code=code,
             )
             self._diagnostics.append(diag)
             return diag
@@ -545,6 +763,8 @@ class RecoveryManager:
             context=context,
             sync_point=sync_point,
             tokens_skipped=tokens_skipped,
+            severity=_severity_for(code),
+            code=code,
         )
         self._diagnostics.append(diag)
         return diag
@@ -556,6 +776,7 @@ class RecoveryManager:
         context: RecoveryContext = RecoveryContext.UNKNOWN,
         sync_point: SynchronisationPoint | None = None,
         tokens_skipped: int = 0,
+        code: str = "SYN001",
     ) -> SyntaxDiagnostic:
         """
         Record a syntax error *without* consuming any tokens.
@@ -603,6 +824,8 @@ class RecoveryManager:
             context=context,
             sync_point=sync_point,
             tokens_skipped=tokens_skipped,
+            severity=_severity_for(code),
+            code=code,
         )
         self._diagnostics.append(diag)
         return diag

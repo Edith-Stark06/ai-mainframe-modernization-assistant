@@ -1,0 +1,17 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. STOCKALRT.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 WS-CHANGE-PCT  PIC 9(4) VALUE 0.
+       01 WS-ALERT       PIC X(6) VALUE SPACE.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           PERFORM SET-ALERT.
+           DISPLAY WS-ALERT.
+           STOP RUN.
+       SET-ALERT.
+           IF WS-CHANGE-PCT > 10
+               MOVE 'MOVED' TO WS-ALERT
+           ELSE
+               MOVE 'FLAT' TO WS-ALERT
+           END-IF.

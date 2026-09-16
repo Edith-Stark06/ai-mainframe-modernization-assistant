@@ -1,0 +1,93 @@
+{
+  "analysis_version": "deterministic-analysis-phases-1-5",
+  "benchmark_version": "benchmark-v1",
+  "overall_conclusion": "No task shows clear fine-tuning evidence in this run. Prompting + deterministic analysis is the higher-leverage next step. Re-evaluate #121 only after a live-provider baseline confirms the pattern.",
+  "per_task": [
+    {
+      "analysis_pass_rate": 0.8,
+      "context_lift": 0.8,
+      "dominant_failure": "hallucination",
+      "fine_tuning_evidence": "no fine-tuning evidence \u2014 deterministic analysis closes the gap",
+      "likely_cause": "raw model lacks structured evidence; analysis supplies it",
+      "raw_pass_rate": 0.0,
+      "retrieval_pass_rate": 0.8,
+      "task": "business_rule_extraction"
+    },
+    {
+      "analysis_pass_rate": 1.0,
+      "context_lift": 0.0,
+      "dominant_failure": "none",
+      "fine_tuning_evidence": "no fine-tuning evidence \u2014 already strong",
+      "likely_cause": "task is within base capability",
+      "raw_pass_rate": 1.0,
+      "retrieval_pass_rate": 1.0,
+      "task": "cobol_explanation"
+    },
+    {
+      "analysis_pass_rate": 1.0,
+      "context_lift": 0.0,
+      "dominant_failure": "none",
+      "fine_tuning_evidence": "no fine-tuning evidence \u2014 already strong",
+      "likely_cause": "task is within base capability",
+      "raw_pass_rate": 1.0,
+      "retrieval_pass_rate": 1.0,
+      "task": "cobol_to_java"
+    },
+    {
+      "analysis_pass_rate": 1.0,
+      "context_lift": 0.0,
+      "dominant_failure": "none",
+      "fine_tuning_evidence": "no fine-tuning evidence \u2014 already strong",
+      "likely_cause": "task is within base capability",
+      "raw_pass_rate": 1.0,
+      "retrieval_pass_rate": 1.0,
+      "task": "cobol_to_structured"
+    },
+    {
+      "analysis_pass_rate": 0.5,
+      "context_lift": 0.5,
+      "dominant_failure": "hallucination",
+      "fine_tuning_evidence": "collect more evidence \u2014 partial improvement from context; not yet a clear fine-tuning case",
+      "likely_cause": "mixed",
+      "raw_pass_rate": 0.0,
+      "retrieval_pass_rate": 0.5,
+      "task": "modernization_qa"
+    },
+    {
+      "analysis_pass_rate": 1.0,
+      "context_lift": 0.5,
+      "dominant_failure": "none",
+      "fine_tuning_evidence": "no fine-tuning evidence \u2014 deterministic analysis closes the gap",
+      "likely_cause": "raw model lacks structured evidence; analysis supplies it",
+      "raw_pass_rate": 0.5,
+      "retrieval_pass_rate": 1.0,
+      "task": "modernization_recommendation"
+    },
+    {
+      "analysis_pass_rate": 1.0,
+      "context_lift": 0.5,
+      "dominant_failure": "none",
+      "fine_tuning_evidence": "no fine-tuning evidence \u2014 deterministic analysis closes the gap",
+      "likely_cause": "raw model lacks structured evidence; analysis supplies it",
+      "raw_pass_rate": 0.5,
+      "retrieval_pass_rate": 1.0,
+      "task": "risk_identification"
+    },
+    {
+      "analysis_pass_rate": 0.0,
+      "context_lift": 0.0,
+      "dominant_failure": "hallucination",
+      "fine_tuning_evidence": "collect more evidence \u2014 partial improvement from context; not yet a clear fine-tuning case",
+      "likely_cause": "mixed",
+      "raw_pass_rate": 0.0,
+      "retrieval_pass_rate": 0.0,
+      "task": "source_grounded_qa"
+    }
+  ],
+  "prompt_version": "p6-prompt-v1",
+  "providers": {
+    "analysis": "HeuristicDemoProvider",
+    "raw": "HeuristicDemoProvider",
+    "retrieval": "HeuristicDemoProvider"
+  }
+}

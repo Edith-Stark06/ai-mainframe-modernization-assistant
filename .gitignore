@@ -76,3 +76,15 @@ htmlcov/
 
 # Patch exports
 *.patch
+# Phase 6 — regenerable dataset splits (derive from all.jsonl + split_manifest.json)
+data/dataset/*/train.jsonl
+data/dataset/*/validation.jsonl
+
+# Phase 6 — live evaluation run outputs (baseline demo report IS committed)
+reports/baseline-eval/live-*/
+reports/**/*.live.json
+data/dataset/*/*.validation.json
+
+# Phase 7 / #121 — per-run training artifacts (manifest + records written
+# under each run dir; not committed). The model registry IS committed.
+reports/training-runs/

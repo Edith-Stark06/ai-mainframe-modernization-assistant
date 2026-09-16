@@ -86,7 +86,7 @@ def test_java_compilation(cbl_path: Path, tmp_path: Path) -> None:
 
     # Invoke javac
     try:
-        process = subprocess.run(
+        subprocess.run(
             ["javac", str(java_file)], capture_output=True, text=True, check=True
         )
     except subprocess.CalledProcessError as e:

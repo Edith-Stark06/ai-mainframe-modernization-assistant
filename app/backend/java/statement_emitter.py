@@ -25,6 +25,10 @@ Purpose:
     :func:`~app.backend.java.generator._collect_statements` calls
     :func:`~app.backend.java.control_flow_emitter.emit_if` directly.
 
+    Post-#111 review fix adds translation for
+    :class:`~app.ir.instructions.IRReturn` (COBOL ``STOP RUN`` / ``GOBACK``,
+    task #109) → a bare ``return;`` — see :func:`emit_return`.
+
     All other instruction types produce a ``// TODO:`` stub and a ``BE005``
     WARNING diagnostic so generation continues gracefully.
 
@@ -68,6 +72,7 @@ Responsibilities:
     - :func:`emit_subtract`   — SUBTRACT → ``-=`` compound assignment.
     - :func:`emit_multiply`   — MULTIPLY → ``*=`` compound assignment.
     - :func:`emit_divide`     — DIVIDE → ``/=`` compound assignment.
+    - :func:`emit_return`     — STOP RUN / GOBACK (``IRReturn``) → ``return;``.
     - Produce :class:`~app.backend.java.generator.BackendDiagnostic` records
       for unsupported instructions or malformed operands.
 
@@ -138,6 +143,7 @@ from app.ir.instructions import (
     IRMove,
     IRMultiply,
     IRPerformUntil,
+    IRReturn,
     IRSubtract,
 )
 
@@ -153,6 +159,7 @@ __all__ = [
     "emit_move",
     "emit_multiply",
     "emit_perform_until",
+    "emit_return",
     "emit_statement",
     "emit_subtract",
 ]
@@ -180,6 +187,7 @@ def emit_statement(
     * :class:`~app.ir.instructions.IRMultiply` → ``*=`` compound assignment.
     * :class:`~app.ir.instructions.IRDivide`   → ``/=`` compound assignment.
     * :class:`~app.ir.instructions.IRCall`     → ``target(args);`` (or ``result = target(args);``).
+    * :class:`~app.ir.instructions.IRReturn`   → ``return;``.
     * :class:`~app.ir.instructions.IRIf`       → ``if (<cond>) {`` (at *depth*).
     * :class:`~app.ir.instructions.IRElse`     → ``} else {`` (at *depth*).
     * :class:`~app.ir.instructions.IREndIf`    → ``}`` (at *depth*).
@@ -238,6 +246,9 @@ def emit_statement(
 
     if isinstance(instruction, IRCall):
         return emit_call(instruction, diagnostics)
+
+    if isinstance(instruction, IRReturn):
+        return emit_return(instruction, diagnostics)
 
     if isinstance(instruction, IRIf):
         return _emit_if(instruction, depth, diagnostics)
@@ -663,6 +674,68 @@ def emit_call(
         return [f"{java_result} = {java_target}({args_str});"]
 
     return [f"{java_target}({args_str});"]
+
+
+# ---------------------------------------------------------------------------
+# IRReturn → Java return statement
+# ---------------------------------------------------------------------------
+
+
+def emit_return(
+    instruction: IRReturn,
+    diagnostics: list[BackendDiagnostic],
+) -> list[str]:
+    """
+    Translate an :class:`~app.ir.instructions.IRReturn` into a Java
+    ``return;`` statement.
+
+    :class:`~app.ir.instructions.IRReturn` corresponds to a COBOL
+    ``STOP RUN`` or ``GOBACK`` statement (distinguished, where needed by
+    other passes, via ``instruction.comment``). Both currently lower to
+    the same bare ``return;`` here: the generator emits exactly one
+    non-stub method — the instance ``run()`` method invoked from
+    ``main`` (see :func:`~app.backend.java.generator._render_class`) —
+    since paragraph bodies are not split into separate Java methods
+    (:mod:`app.ir.builder`'s documented architectural decision). With
+    only one real method to return from, a program-terminating
+    ``STOP RUN`` and a caller-returning ``GOBACK`` have no distinguishable
+    Java rendering today; both simply end the enclosing ``run()`` call.
+
+    ``run()`` is declared ``void``. ``instruction.operand`` (a value to
+    return) can therefore never be honoured in valid Java — the current
+    producers (``build_stop_run_instruction``/``build_goback_instruction``
+    in :mod:`app.ir.builder`) always leave it empty, but a ``BE010``
+    WARNING is raised rather than silently emitting ``return <value>;``
+    inside a void method if a future producer ever sets it.
+
+    Rules:
+        - ``STOP RUN`` / ``GOBACK`` (``operand == ""``) → ``return;``
+        - Non-empty ``operand`` → ``return;`` plus a ``BE010`` WARNING
+          noting the value could not be returned from a void method.
+
+    Args:
+        instruction:
+            The :class:`~app.ir.instructions.IRReturn` to lower.
+        diagnostics:
+            Mutable list; a ``BE010`` WARNING is appended if ``operand``
+            is non-empty.
+
+    Returns:
+        A list containing exactly one ``"return;"`` string.
+    """
+    if instruction.operand:
+        diagnostics.append(
+            BackendDiagnostic(
+                severity=BackendSeverity.WARNING,
+                message=(
+                    f"IRReturn carries operand '{instruction.operand}', but "
+                    "the generated run() method is void and cannot return a "
+                    "value; operand is ignored."
+                ),
+                code="BE010",
+            )
+        )
+    return ["return;"]
 
 
 def _translate_operand(operand: str) -> str:

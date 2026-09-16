@@ -1,0 +1,427 @@
+"""
+Production Analysis Service.
+
+Purpose:
+    Provide :class:`AnalysisService` — the production entry point for executing
+    the complete COBOL analysis pipeline.  The service orchestrates:
+
+    1. Source reading
+    2. Lexical analysis (``CobolLexer``)
+    3. Parsing (``ProgramParser``)
+    4. Semantic analysis (``SemanticAnalyzer``)
+    5. IR construction (``IRBuilder``)
+    6. Java field construction (``build_fields_from_symbols``)
+    7. Java code generation (``generate_with_diagnostics``)
+
+    The service returns an :class:`~app.analysis.models.AnalysisResult` that
+    bundles the generated Java source with all collected diagnostics.
+
+Responsibilities:
+    - Accept a COBOL source file path.
+    - Execute every compiler stage in the exact order listed above.
+    - Collect semantic and backend diagnostics.
+    - Return a structured :class:`~app.analysis.models.AnalysisResult`.
+    - Catch unexpected exceptions and report them in the result.
+
+Non-responsibilities:
+    - FastAPI endpoints or REST exposure.
+    - AST / IR / Java source serialization to JSON.
+    - Database persistence or artifact storage.
+    - Parser, lexer, semantic analyser, IR builder, or Java generator
+      implementation changes.
+
+Dependencies:
+    - :mod:`app.analysis.models`               — ``AnalysisResult``.
+    - :mod:`app.backend.java.generator`        — ``build_fields_from_symbols``,
+                                                 ``generate_with_diagnostics``.
+    - :mod:`app.ir.builder`                    — ``IRBuilder``.
+    - :mod:`app.parser.lexer.lexer`            — ``CobolLexer``.
+    - :mod:`app.parser.semantic.analyzer`       — ``SemanticAnalyzer``.
+    - :mod:`app.parser.semantic.symbols`        — ``VariableSymbol``.
+    - :mod:`app.parser.syntax.program_parser`   — ``ProgramParser``.
+    - Loguru for structured logging.
+    - Python standard library (``pathlib``).
+
+Examples:
+    Analyzing a COBOL source file::
+
+        from app.analysis.service import AnalysisService
+
+        service = AnalysisService()
+        result = service.analyze_file("examples/hello.cbl")
+        result.success        # True
+        result.java_source    # "public class Hello { ... }"
+        result.semantic_diagnostics  # []
+
+Author:
+    Edith Stark
+
+Project:
+    AI-Powered Mainframe Modernization Assistant
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from loguru import logger
+
+from app.analysis.models import AnalysisCoverage, AnalysisResult
+from app.parser.ast.program import ProgramNode
+from app.parser.diagnostics.recovery import SyntaxCategory
+from app.parser.syntax.program_parser import ParseResult
+from app.backend.java.generator import (
+    build_fields_from_symbols,
+    generate_with_diagnostics,
+)
+from app.ir.builder import IRBuilder
+from app.parser.lexer.lexer import CobolLexer
+from app.parser.semantic.analyzer import SemanticAnalyzer
+from app.parser.semantic.symbols import VariableSymbol
+from app.parser.syntax.program_parser import ProgramParser
+from app.analysis.dependencies.models import Dependency
+
+__all__ = ["AnalysisService"]
+
+
+def _build_coverage(
+    ast: ProgramNode,
+    parse_result: ParseResult,
+    tokens: list[Any] | None = None,
+) -> AnalysisCoverage:
+    """
+    Compute an :class:`~app.analysis.models.AnalysisCoverage` snapshot.
+
+    Uses only signals the parser already produces (token positions and
+    diagnostic categories) rather than re-scanning the source with a
+    second, independently-maintained heuristic — see the "Note" in
+    :class:`~app.analysis.models.AnalysisCoverage` for why that trade-off
+    was made deliberately.
+
+    Args:
+        ast: The parsed :class:`~app.parser.ast.program.ProgramNode`.
+        parse_result: The result of ``ProgramParser.parse_with_diagnostics``.
+        tokens: The lexer's token list, used only to count ``UNKNOWN``
+            tokens for Phase 5 lexical coverage. ``None`` leaves the count
+            at ``0``.
+
+    Returns:
+        A populated :class:`~app.analysis.models.AnalysisCoverage`.
+    """
+    paragraphs = ast.procedure_division.paragraphs if ast.procedure_division else ()
+    statements_parsed = sum(len(p.statements) for p in paragraphs)
+
+    unsupported_count = 0
+    abandoned_count = 0
+    for diag in parse_result.diagnostics:
+        if diag.category in (SyntaxCategory.UNSUPPORTED, SyntaxCategory.UNMODELLED):
+            unsupported_count += 1
+        elif diag.category is SyntaxCategory.ABANDONED:
+            abandoned_count += 1
+
+    unknown_token_count = 0
+    if tokens is not None:
+        unknown_token_count = sum(
+            1
+            for t in tokens
+            if getattr(getattr(t, "type", None), "name", "") == "UNKNOWN"
+        )
+
+    return AnalysisCoverage(
+        tokens_total=parse_result.tokens_total,
+        tokens_consumed=parse_result.tokens_consumed,
+        paragraphs_parsed=len(paragraphs),
+        statements_parsed=statements_parsed,
+        unsupported_construct_count=unsupported_count,
+        abandoned_construct_count=abandoned_count,
+        unknown_token_count=unknown_token_count,
+    )
+
+
+class AnalysisService:
+    """
+    Production service that orchestrates the COBOL analysis pipeline.
+
+    The service is stateless and may be instantiated once and reused for
+    multiple analyses, or instantiated per analysis call.
+    """
+
+    def analyze_file(self, source_path: str | Path) -> AnalysisResult:
+        """
+        Execute the full COBOL analysis pipeline on *source_path*.
+
+        Args:
+            source_path:
+                Absolute or relative path to the COBOL source file.
+
+        Returns:
+            An :class:`~app.analysis.models.AnalysisResult` carrying the
+            generated Java source, diagnostics, and success status.
+        """
+        path = Path(source_path)
+
+        # ------------------------------------------------------------------
+        # Stage 0 — read source
+        # ------------------------------------------------------------------
+        logger.debug("AnalysisService: reading source file '{}'.", path)
+
+        try:
+            source = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            logger.error("AnalysisService: source file not found: {}.", path)
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[],
+                semantic_diagnostics=[],
+                success=False,
+                error=FileNotFoundError(f"file not found: {path}"),
+                dependencies=[],
+                ast=None,
+                ir=None,
+            )
+        except OSError as exc:
+            logger.error("AnalysisService: cannot read '{}': {}.", path, exc)
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[],
+                semantic_diagnostics=[],
+                success=False,
+                error=exc,
+                dependencies=[],
+                ast=None,
+                ir=None,
+            )
+
+        # ------------------------------------------------------------------
+        # Stage 1 — lex
+        # ------------------------------------------------------------------
+        logger.debug("AnalysisService: lexing source.")
+        lexer = CobolLexer()
+
+        try:
+            tokens = lexer.tokenize(source, filename=str(path))
+        except Exception as exc:
+            logger.error("AnalysisService: lex error in '{}': {}.", path, exc)
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[],
+                semantic_diagnostics=[],
+                success=False,
+                error=exc,
+                dependencies=[],
+                ast=None,
+                ir=None,
+            )
+        logger.debug("AnalysisService: lexer produced {} token(s).", len(tokens))
+
+        # ------------------------------------------------------------------
+        # Stage 2 — parse
+        # ------------------------------------------------------------------
+        logger.debug("AnalysisService: parsing token stream.")
+        parser = ProgramParser()
+
+        try:
+            parse_result = parser.parse_with_diagnostics(tokens)
+        except Exception as exc:
+            logger.error("AnalysisService: parse error in '{}': {}.", path, exc)
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[],
+                semantic_diagnostics=[],
+                success=False,
+                error=exc,
+                dependencies=[],
+                ast=None,
+                ir=None,
+                syntax_diagnostics=[],
+                coverage=None,
+            )
+        ast = parse_result.program
+        syntax_diagnostics: list[Any] = list(parse_result.diagnostics)
+        coverage = _build_coverage(ast, parse_result, tokens)
+        logger.debug(
+            "AnalysisService: parsing complete. {} syntax diagnostic(s), "
+            "parse_complete={} (parser coverage, not AST completeness).",
+            len(syntax_diagnostics),
+            coverage.parse_complete,
+        )
+
+        # ------------------------------------------------------------------
+        # Stage 2.5 — dependency extraction
+        # ------------------------------------------------------------------
+        logger.debug("AnalysisService: running dependency extraction.")
+        extracted_dependencies: list[Dependency] = []
+        try:
+            from app.analysis.dependencies.analyzer import DependencyAnalyzer
+
+            deps_analyzer = DependencyAnalyzer()
+            extracted_dependencies = deps_analyzer.analyze(ast)
+        except Exception as exc:
+            logger.error(
+                "AnalysisService: dependency extraction error in '{}': {}.", path, exc
+            )
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[],
+                semantic_diagnostics=[],
+                success=False,
+                error=exc,
+                dependencies=extracted_dependencies,
+                ast=ast,
+                ir=None,
+                syntax_diagnostics=syntax_diagnostics,
+                coverage=coverage,
+            )
+        logger.debug(
+            "AnalysisService: found {} dependencies.", len(extracted_dependencies)
+        )
+
+        # ------------------------------------------------------------------
+        # Stage 3 — semantic analysis
+        # ------------------------------------------------------------------
+        logger.debug("AnalysisService: running semantic analysis.")
+        analyzer = SemanticAnalyzer()
+
+        try:
+            semantic_ctx = analyzer.analyse(ast)
+        except Exception as exc:
+            logger.error("AnalysisService: semantic error in '{}': {}.", path, exc)
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[],
+                semantic_diagnostics=[],
+                success=False,
+                error=exc,
+                dependencies=extracted_dependencies,
+                ast=ast,
+                ir=None,
+                syntax_diagnostics=syntax_diagnostics,
+                coverage=coverage,
+            )
+        logger.debug(
+            "AnalysisService: semantic analysis complete. errors={}.",
+            semantic_ctx.error_count,
+        )
+
+        # ------------------------------------------------------------------
+        # Stage 4 — IR construction
+        # ------------------------------------------------------------------
+        logger.debug("AnalysisService: building IR.")
+        builder = IRBuilder(context=semantic_ctx)
+
+        try:
+            ir_program = builder.build(ast)
+        except Exception as exc:
+            logger.error("AnalysisService: IR error in '{}': {}.", path, exc)
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[],
+                semantic_diagnostics=semantic_ctx.diagnostics,
+                success=False,
+                error=exc,
+                dependencies=extracted_dependencies,
+                ast=ast,
+                ir=None,
+                syntax_diagnostics=syntax_diagnostics,
+                coverage=coverage,
+            )
+        logger.debug("AnalysisService: IR build complete.")
+
+        # ------------------------------------------------------------------
+        # Stage 5 — Java field construction
+        # ------------------------------------------------------------------
+        logger.debug("AnalysisService: building Java fields.")
+        vars = [
+            s
+            for s in semantic_ctx.symbol_table.all_symbols()
+            if isinstance(s, VariableSymbol)
+        ]
+        diags: list[Any] = []
+
+        try:
+            fields = build_fields_from_symbols(vars, diags)
+        except Exception as exc:
+            logger.error(
+                "AnalysisService: field construction error in '{}': {}.",
+                path,
+                exc,
+            )
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=diags,
+                semantic_diagnostics=semantic_ctx.diagnostics,
+                success=False,
+                error=exc,
+                dependencies=extracted_dependencies,
+                ast=ast,
+                ir=ir_program,
+                syntax_diagnostics=syntax_diagnostics,
+                coverage=coverage,
+            )
+        logger.debug("AnalysisService: built {} Java field(s).", len(fields))
+
+        # ------------------------------------------------------------------
+        # Stage 6 — Java code generation
+        # ------------------------------------------------------------------
+        logger.debug("AnalysisService: generating Java source.")
+        try:
+            gen_result = generate_with_diagnostics(ir_program, fields)
+        except Exception as exc:
+            logger.error("AnalysisService: generation error in '{}': {}.", path, exc)
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=diags,
+                semantic_diagnostics=semantic_ctx.diagnostics,
+                success=False,
+                error=exc,
+                dependencies=extracted_dependencies,
+                ast=ast,
+                ir=ir_program,
+                syntax_diagnostics=syntax_diagnostics,
+                coverage=coverage,
+            )
+        logger.debug(
+            "AnalysisService: Java generation complete ({} diagnostics).",
+            len(gen_result.diagnostics),
+        )
+
+        # `success` requires both a clean semantic pass and that the
+        # parser did not abandon any region of the source
+        # (coverage.parse_complete -- parser coverage, not AST
+        # completeness; see AnalysisCoverage's docstring).  A file whose
+        # parser gave up on a substantial region of PROCEDURE DIVISION
+        # source is not reported as a clean result just because the
+        # portion it did reach type-checked (task #108) -- the original
+        # "Insufficient data... Overall Readiness: 0.99" symptom was
+        # exactly this: a clean-looking result built from a
+        # mostly-unparsed file.  Explicitly diagnosed unsupported or
+        # unmodelled constructs do NOT flip this flag on their own: the
+        # parser did not abandon anything to produce them, it recognised
+        # and reported a gap while continuing -- whether the AST is a
+        # *complete* representation of the file is a separate #109
+        # (AST/IR completeness) question success does not answer.
+        result = AnalysisResult(
+            java_source=gen_result.source,
+            backend_diagnostics=gen_result.diagnostics + diags,
+            semantic_diagnostics=semantic_ctx.diagnostics,
+            success=not semantic_ctx.has_errors and coverage.parse_complete,
+            error=None,
+            dependencies=extracted_dependencies,
+            ast=ast,
+            ir=ir_program,
+            syntax_diagnostics=syntax_diagnostics,
+            coverage=coverage,
+        )
+        # Phase 5 (#115): attach the multi-dimensional coverage report.
+        # Computed without a CFG here (AnalysisService does not build one);
+        # the modernization pipeline recomputes it with a CFG for the
+        # control_flow dimension. Best-effort — a failure here must not
+        # break analysis.
+        try:
+            from app.analysis.coverage import compute_coverage
+
+            result.coverage_report = compute_coverage(result)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("AnalysisService: coverage report failed: {}.", exc)
+        return result

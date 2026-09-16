@@ -210,6 +210,106 @@ class TestInventoryEndpointErrors:
 
 
 # ---------------------------------------------------------------------------
+# Inventory endpoint — path traversal
+# ---------------------------------------------------------------------------
+
+
+class TestInventoryEndpointPathTraversal:
+    """
+    Regression tests: workspace_id was joined into the workspace root with
+    no traversal guard (unlike the sibling files.py/modernization.py
+    endpoints, which correctly resolve() + relative_to()). A URL-encoded
+    ".." workspace_id let a caller point the scan at directories outside
+    the workspace root entirely, e.g. the whole repository root -- returning
+    a full recursive file listing (paths, sizes, SHA-256 hashes) of
+    whatever it landed on, and potentially hanging the server hashing an
+    unbounded directory tree (e.g. a virtualenv with tens of thousands of
+    files).
+    """
+
+    def test_inventory_encoded_dotdot_is_rejected(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """A URL-encoded '..' workspace_id must not escape the workspace root."""
+        # Sentinel file one level above the workspace root -- must never be
+        # reachable through the inventory endpoint.
+        (workspace_root.parent / "secret.txt").write_bytes(b"outside the workspace")
+
+        response = client.get("/api/v1/workspaces/%2e%2e/inventory")
+
+        assert response.status_code == 422
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_inventory_traversal_does_not_leak_parent_directory_contents(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """The rejected response must never contain the sentinel file's data."""
+        (workspace_root.parent / "secret.txt").write_bytes(b"outside the workspace")
+
+        response = client.get("/api/v1/workspaces/%2e%2e/inventory")
+
+        assert "secret.txt" not in response.text
+
+    def test_summary_encoded_dotdot_is_rejected(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """The summary endpoint shares the same guard and must reject it too."""
+        response = client.get("/api/v1/workspaces/%2e%2e/summary")
+
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_inventory_encoded_single_dot_does_not_collapse_to_root(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """
+        A URL-encoded '.' resolves to the workspace root itself, not outside
+        it -- relative_to() alone accepts this (a path is trivially relative
+        to itself), which would otherwise scan every workspace combined and
+        return a cross-workspace file listing. Must be rejected too.
+        """
+        ws_a = _create_workspace(workspace_root, {"a.cbl": _COBOL})
+        ws_b = _create_workspace(workspace_root, {"b.cbl": _COBOL})
+
+        response = client.get("/api/v1/workspaces/%2e/inventory")
+
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+        assert ws_a not in response.text
+        assert ws_b not in response.text
+
+    def test_summary_encoded_single_dot_does_not_collapse_to_root(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """The summary endpoint shares the same root-collapse guard."""
+        response = client.get("/api/v1/workspaces/%2e/summary")
+
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_inventory_legitimate_workspace_id_still_works(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """The traversal guard must not reject ordinary, well-formed IDs."""
+        ws_id = _create_workspace(workspace_root, {"prog.cbl": _COBOL})
+        response = client.get(f"/api/v1/workspaces/{ws_id}/inventory")
+
+        assert response.status_code == 200
+
+    def test_inventory_nonexistent_but_well_formed_id_still_404s(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """The traversal guard must not turn a normal not-found into a 422."""
+        response = client.get(
+            "/api/v1/workspaces/00000000-0000-0000-0000-000000000000/inventory"
+        )
+
+        assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # Summary endpoint — nominal
 # ---------------------------------------------------------------------------
 

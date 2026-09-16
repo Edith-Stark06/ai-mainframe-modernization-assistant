@@ -98,6 +98,7 @@ from app.parser.ast.statements import (
     PerformStatementNode,
 )
 from app.parser.diagnostics.recovery import RecoveryContext
+from app.parser.grammar_words import matches_grammar_word
 from app.parser.lexer.position import Position
 from app.parser.lexer.token import Token
 from app.parser.lexer.token_types import TokenType
@@ -129,7 +130,6 @@ _STATEMENT_LEXEMES: frozenset[str] = frozenset(
         "MOVE",
         "STOP",
         "GOBACK",
-        "ACCEPT",
         "ADD",
         "SUBTRACT",
         "MULTIPLY",
@@ -139,6 +139,134 @@ _STATEMENT_LEXEMES: frozenset[str] = frozenset(
         "PERFORM",
     }
 )
+
+# ---------------------------------------------------------------------------
+# Verbs that are real COBOL statements but have no parser and no AST node
+# yet.  They are recognised only so that encountering one produces an
+# explicit diagnostic and skips that single statement, instead of
+# silently abandoning the rest of the paragraph.  Most reach the parser
+# as IDENTIFIER (only COMPUTE is a reserved lexer word), so they are
+# matched by lexeme.
+#
+# This list is deliberately explicit: an identifier that is not named
+# here is still treated as it was before (a paragraph label, or the end
+# of the statement list), so arbitrary data names are never mistaken for
+# statements.
+# ---------------------------------------------------------------------------
+_UNSUPPORTED_STATEMENT_LEXEMES: frozenset[str] = frozenset(
+    {
+        "OPEN",
+        "CLOSE",
+        "READ",
+        "WRITE",
+        "REWRITE",
+        "DELETE",
+        "START",
+        "EVALUATE",
+        "COMPUTE",
+        "STRING",
+        "UNSTRING",
+        "INSPECT",
+        "INITIALIZE",
+        "SEARCH",
+        "SET",
+        "SORT",
+        "MERGE",
+        "RETURN",
+        "RELEASE",
+        "GO",
+        # ACCEPT already has an AST node (AcceptStatementNode) and an IR
+        # builder (build_accept_instruction), but no parser dispatch
+        # path.  Task #108 explicitly asks that it be reported as
+        # unsupported rather than implemented, so it moved here from
+        # _STATEMENT_LEXEMES: routing it through the same
+        # _skip_unsupported_statement mechanism as OPEN/READ/etc. gives
+        # it a SYN100 "unsupported" diagnostic instead of the syntax-error
+        # path _parse_statement's fallback used to raise (#108-10).
+        "ACCEPT",
+        # CONTINUE and EXIT are valid no-op statements this parser does
+        # not model.  Both are almost always written as a single bare
+        # word before the period ("CONTINUE." / "EXIT."), which is
+        # exactly the shape the paragraph-label heuristic below also
+        # matches -- so without being listed here they were silently
+        # mistaken for the start of a new paragraph (#108-06).
+        "CONTINUE",
+        "EXIT",
+    }
+)
+
+
+# ---------------------------------------------------------------------------
+# Lexemes that close an enclosing scope.  An operand list ends here just as
+# surely as it does at the start of the next statement.
+# ---------------------------------------------------------------------------
+_SCOPE_TERMINATOR_LEXEMES: frozenset[str] = frozenset(
+    {
+        "ELSE",
+        "END-IF",
+        "END-PERFORM",
+        "WHEN",
+        "END-EVALUATE",
+    }
+)
+
+# ---------------------------------------------------------------------------
+# Every lexeme that ends a statement's operand list.
+#
+# _UNSUPPORTED_STATEMENT_LEXEMES is included deliberately.  Operand
+# accumulators used to stop only at _STATEMENT_LEXEMES, so a statement
+# written without a period terminator absorbed the *unsupported* verb that
+# followed it straight into its own operand:
+#
+#     MOVE 'X' TO WS-A
+#     OPEN INPUT F1
+#
+# produced MoveStatementNode(target="WS-A OPEN INPUT F1") with no diagnostic
+# at all -- a corrupt AST that looked like a clean parse (finding F-107-01).
+# A statement never continues past the start of the next one, whether or not
+# this parser can build an AST node for that next statement.
+# ---------------------------------------------------------------------------
+_OPERAND_BOUNDARY_LEXEMES: frozenset[str] = (
+    _STATEMENT_LEXEMES | _UNSUPPORTED_STATEMENT_LEXEMES | _SCOPE_TERMINATOR_LEXEMES
+)
+
+# ---------------------------------------------------------------------------
+# Unsupported verbs that open a scope terminated by an END-xxx word.  Their
+# bodies legitimately contain other statements, so when one is skipped the
+# skip must run to the statement's period rather than stopping at the first
+# statement verb inside the body.
+# ---------------------------------------------------------------------------
+_SCOPE_OPENING_LEXEMES: frozenset[str] = frozenset(
+    {
+        "EVALUATE",
+        "SEARCH",
+    }
+)
+
+
+def _at_operand_boundary(token: Token) -> bool:
+    """
+    Return ``True`` if *token* ends the operand list of a statement.
+
+    An operand list is terminated by the sentence-ending period, by the
+    start of the next statement (supported or not), or by the close of an
+    enclosing scope.
+
+    Matching goes through
+    :func:`~app.parser.grammar_words.matches_grammar_word`, so only
+    ``KEYWORD`` and ``IDENTIFIER`` tokens can be boundaries.  A quoted
+    literal such as ``'OPEN ERROR: '`` is a ``STRING`` token and is
+    therefore operand text, never a boundary.
+
+    Args:
+        token: The token currently under the cursor.
+
+    Returns:
+        ``True`` if the operand list ends at *token*.
+    """
+    if token.type is TokenType.PERIOD:
+        return True
+    return matches_grammar_word(token, _OPERAND_BOUNDARY_LEXEMES)
 
 
 class ProcedureDivisionParser:
@@ -284,7 +412,10 @@ class ProcedureDivisionParser:
             # Attempt to parse it as a paragraph; recover on error.
             if tok.type in (TokenType.IDENTIFIER, TokenType.KEYWORD):
                 upper = tok.lexeme.upper()
-                if upper not in _STATEMENT_LEXEMES:
+                if (
+                    upper not in _STATEMENT_LEXEMES
+                    and upper not in _UNSUPPORTED_STATEMENT_LEXEMES
+                ):
                     try:
                         para = self._parse_paragraph(state)
                         paragraphs.append(para)
@@ -294,19 +425,49 @@ class ProcedureDivisionParser:
                             "error: {}",
                             exc.message,
                         )
+                        before = stream.position
                         state.record_and_synchronise(
                             message=exc.message,
                             error_token=stream.current(),
                             context=RecoveryContext.PROCEDURE_DIVISION,
+                            code="SYN005",
                         )
+                        # Guarantee forward progress (#108-12):
+                        # synchronise() can anchor without consuming.
+                        if stream.position == before:
+                            stream.advance()
                     continue
 
-            # Log and break on anything unexpected at paragraph level
-            logger.debug(
-                "ProcedureDivisionParser: stopping paragraph loop at token {!r}.",
-                tok.lexeme,
+            # A lone PERIOD is a stray sentence terminator (the same
+            # situation data_parser already handles for the DATA
+            # DIVISION); consume it and keep looking for the next
+            # paragraph rather than treating it as a problem.
+            if tok.type is TokenType.PERIOD:
+                stream.advance()
+                continue
+
+            # An unrecognised token at paragraph level.  Previously this
+            # silently abandoned every remaining paragraph in the
+            # PROCEDURE DIVISION with only a DEBUG log (#108-01).
+            # Diagnose it explicitly, then try to recover to the next
+            # paragraph or division boundary instead of stopping
+            # outright, so paragraphs further in the file are not lost
+            # needlessly.
+            before = stream.position
+            state.record_and_synchronise(
+                message=(
+                    f"unexpected token {tok.lexeme!r} at PROCEDURE DIVISION "
+                    "paragraph level; attempting to resume at the next "
+                    "paragraph"
+                ),
+                error_token=tok,
+                context=RecoveryContext.PROCEDURE_DIVISION,
+                code="SYN001",
             )
-            break
+            # Guarantee forward progress: synchronise() can anchor on a
+            # section/division header without consuming it (#108-12).
+            if stream.position == before:
+                stream.advance()
 
         return paragraphs
 
@@ -418,14 +579,37 @@ class ProcedureDivisionParser:
                 ):
                     break
 
+            # NEXT SENTENCE is two words, so it cannot be recognised by
+            # the single-lexeme matching every other statement uses.
+            # Checked before the paragraph-label heuristic below because
+            # "NEXT" followed by "SENTENCE" would otherwise reach that
+            # heuristic's peek() and (SENTENCE is not a period) simply
+            # fall through as an unrecognised token (#108-06).
+            if (
+                tok.type is TokenType.IDENTIFIER
+                and tok.lexeme.upper() == "NEXT"
+                and stream.peek().type is TokenType.IDENTIFIER
+                and stream.peek().lexeme.upper() == "SENTENCE"
+            ):
+                self._skip_unsupported_statement(state, word_count=2)
+                continue
+
             # Detect a paragraph label (name followed by period where the
-            # name is not a recognised statement lexeme)
+            # name is not a recognised statement lexeme).  An
+            # UNSUPPORTED_STATEMENT_LEXEMES verb must be excluded here
+            # too: CONTINUE and EXIT are almost always written as a bare
+            # word before the period ("CONTINUE." / "EXIT."), which is
+            # exactly this shape, so without this check they were
+            # silently mistaken for the start of a new paragraph
+            # (#108-06) instead of reaching the unsupported-statement
+            # handling below.
             if tok.type in (TokenType.IDENTIFIER, TokenType.KEYWORD):
                 upper = tok.lexeme.upper()
                 next_tok = stream.peek()
                 if (
                     next_tok.type is TokenType.PERIOD
                     and upper not in _STATEMENT_LEXEMES
+                    and upper not in _UNSUPPORTED_STATEMENT_LEXEMES
                 ):
                     # Next paragraph starts — stop collecting statements
                     break
@@ -440,21 +624,142 @@ class ProcedureDivisionParser:
                             "error: {}",
                             exc.message,
                         )
+                        before = stream.position
                         state.record_and_synchronise(
                             message=exc.message,
                             error_token=stream.current(),
                             context=RecoveryContext.STATEMENT,
+                            code="SYN005",
                         )
+                        # Guarantee forward progress (#108-12):
+                        # synchronise() can anchor without consuming.
+                        if stream.position == before:
+                            stream.advance()
                     continue
 
-            # Anything else at statement level — unexpected; stop
-            logger.debug(
-                "ProcedureDivisionParser: stopping statement loop at token {!r}.",
-                tok.lexeme,
+                # A COBOL verb this parser does not implement yet.
+                # Previously the loop simply broke here with no
+                # diagnostic, silently discarding every remaining
+                # statement in the paragraph (task #104, §11).  Report it
+                # and skip just that statement so the ones after it are
+                # still parsed.
+                if upper in _UNSUPPORTED_STATEMENT_LEXEMES:
+                    self._skip_unsupported_statement(state)
+                    continue
+
+            # A lone PERIOD here is a stray sentence terminator -- the
+            # same situation data_parser already handles for the DATA
+            # DIVISION ("Silently consume stray PERIOD tokens left
+            # behind by panic-mode recovery").  It is not itself a
+            # problem to diagnose; consuming it lets the loop reach the
+            # statement or paragraph that follows.
+            if tok.type is TokenType.PERIOD:
+                stream.advance()
+                continue
+
+            # An unrecognised token at statement level.  Previously this
+            # silently discarded every remaining statement in the
+            # paragraph with only a DEBUG log (#108-05).  Diagnose it
+            # explicitly, then try to recover to the next statement or
+            # paragraph boundary instead of abandoning outright, so
+            # valid content further in the paragraph is not lost
+            # needlessly.
+            before = stream.position
+            state.record_and_synchronise(
+                message=(
+                    f"unexpected token {tok.lexeme!r} at statement level; "
+                    "attempting to resume at the next statement or "
+                    "paragraph"
+                ),
+                error_token=tok,
+                context=RecoveryContext.STATEMENT,
+                code="SYN001",
             )
-            break
+            # Guarantee forward progress: synchronise() can anchor on a
+            # section/division header without consuming it (#108-12).
+            if stream.position == before:
+                stream.advance()
 
         return statements
+
+    # ------------------------------------------------------------------
+    # Unsupported statement handling
+    # ------------------------------------------------------------------
+
+    def _skip_unsupported_statement(
+        self, state: ParserState, word_count: int = 1
+    ) -> None:
+        """
+        Record and skip one statement whose verb has no parser yet.
+
+        The cursor must be on the verb's first token.  Everything up to
+        and including the statement's terminating period is consumed, so
+        a scope-delimited construct such as ``EVALUATE ... END-EVALUATE.``
+        is skipped whole.  The scan stops short at EOF or at the next
+        division header so it can never run past the procedure division.
+
+        An unsupported statement written *without* a period terminator
+        also stops at the start of the next statement, so that the
+        statements after it are still parsed rather than swallowed along
+        with it (finding F-107-01)::
+
+            MOVE 'X' TO WS-A
+            OPEN INPUT F1
+            STOP RUN.
+
+        Here the skip ends at ``STOP`` instead of running on to the
+        period that terminates ``STOP RUN``.  Scope-opening verbs are
+        excluded from that rule: their bodies legitimately contain
+        statements, so they are still skipped to their period.
+
+        Args:
+            state: Active parser state, positioned on the verb.
+            word_count:
+                Number of leading tokens that make up the verb, for
+                multi-word statements this parser has no single lexeme
+                for (``NEXT SENTENCE`` is two tokens).  Defaults to 1.
+        """
+        stream = state.stream
+        verb_token = stream.advance()
+        words = [verb_token.lexeme]
+        for _ in range(word_count - 1):
+            words.append(stream.advance().lexeme)
+        verb_text = " ".join(words).upper()
+        opens_scope = verb_token.lexeme.upper() in _SCOPE_OPENING_LEXEMES
+
+        logger.debug(
+            "ProcedureDivisionParser: skipping unsupported statement {!r}.",
+            verb_text,
+        )
+        state.recovery_manager.record_error(
+            message=(
+                f"unsupported statement {verb_text!r}; skipped to the "
+                "end of the statement"
+            ),
+            error_token=verb_token,
+            context=RecoveryContext.STATEMENT,
+            code="SYN100",
+        )
+
+        while not stream.eof():
+            tok = stream.current()
+            if tok.type is TokenType.EOF:
+                break
+            if tok.type is TokenType.PERIOD:
+                stream.advance()  # consume the terminator
+                break
+            if not opens_scope and _at_operand_boundary(tok):
+                # The unsupported statement had no period; the next
+                # statement starts here and must not be consumed too.
+                break
+            if (
+                tok.type is TokenType.KEYWORD
+                and tok.lexeme.upper() in _DIVISION_KEYWORDS
+                and stream.peek().type is TokenType.KEYWORD
+                and stream.peek().lexeme.upper() == "DIVISION"
+            ):
+                break
+            stream.advance()
 
     # ------------------------------------------------------------------
     # Statement dispatcher
@@ -545,12 +850,7 @@ class ProcedureDivisionParser:
         operand_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if (
-                tok.type is TokenType.PERIOD
-                or tok.lexeme.upper() in _STATEMENT_LEXEMES
-                or tok.lexeme.upper()
-                in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
-            ):
+            if _at_operand_boundary(tok):
                 break
             operand_parts.append(tok.lexeme)
             stream.advance()
@@ -607,12 +907,7 @@ class ProcedureDivisionParser:
         source_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if (
-                tok.type is TokenType.PERIOD
-                or tok.lexeme.upper() in _STATEMENT_LEXEMES
-                or tok.lexeme.upper()
-                in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
-            ):
+            if _at_operand_boundary(tok):
                 break
             if tok.lexeme.upper() == "TO":
                 break
@@ -644,12 +939,7 @@ class ProcedureDivisionParser:
         target_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if (
-                tok.type is TokenType.PERIOD
-                or tok.lexeme.upper() in _STATEMENT_LEXEMES
-                or tok.lexeme.upper()
-                in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
-            ):
+            if _at_operand_boundary(tok):
                 break
             target_parts.append(tok.lexeme)
             stream.advance()
@@ -758,7 +1048,7 @@ class ProcedureDivisionParser:
         left_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if tok.type is TokenType.PERIOD or tok.lexeme.upper() == "TO":
+            if _at_operand_boundary(tok) or tok.lexeme.upper() == "TO":
                 break
             left_parts.append(tok.lexeme)
             stream.advance()
@@ -785,12 +1075,7 @@ class ProcedureDivisionParser:
         right_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if (
-                tok.type is TokenType.PERIOD
-                or tok.lexeme.upper() in _STATEMENT_LEXEMES
-                or tok.lexeme.upper()
-                in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
-            ):
+            if _at_operand_boundary(tok):
                 break
             right_parts.append(tok.lexeme)
             stream.advance()
@@ -821,7 +1106,7 @@ class ProcedureDivisionParser:
         left_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if tok.type is TokenType.PERIOD or tok.lexeme.upper() == "FROM":
+            if _at_operand_boundary(tok) or tok.lexeme.upper() == "FROM":
                 break
             left_parts.append(tok.lexeme)
             stream.advance()
@@ -848,12 +1133,7 @@ class ProcedureDivisionParser:
         right_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if (
-                tok.type is TokenType.PERIOD
-                or tok.lexeme.upper() in _STATEMENT_LEXEMES
-                or tok.lexeme.upper()
-                in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
-            ):
+            if _at_operand_boundary(tok):
                 break
             right_parts.append(tok.lexeme)
             stream.advance()
@@ -884,7 +1164,7 @@ class ProcedureDivisionParser:
         left_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if tok.type is TokenType.PERIOD or tok.lexeme.upper() == "BY":
+            if _at_operand_boundary(tok) or tok.lexeme.upper() == "BY":
                 break
             left_parts.append(tok.lexeme)
             stream.advance()
@@ -911,12 +1191,7 @@ class ProcedureDivisionParser:
         right_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if (
-                tok.type is TokenType.PERIOD
-                or tok.lexeme.upper() in _STATEMENT_LEXEMES
-                or tok.lexeme.upper()
-                in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
-            ):
+            if _at_operand_boundary(tok):
                 break
             right_parts.append(tok.lexeme)
             stream.advance()
@@ -947,7 +1222,7 @@ class ProcedureDivisionParser:
         left_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if tok.type is TokenType.PERIOD or tok.lexeme.upper() == "INTO":
+            if _at_operand_boundary(tok) or tok.lexeme.upper() == "INTO":
                 break
             left_parts.append(tok.lexeme)
             stream.advance()
@@ -974,12 +1249,7 @@ class ProcedureDivisionParser:
         right_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if (
-                tok.type is TokenType.PERIOD
-                or tok.lexeme.upper() in _STATEMENT_LEXEMES
-                or tok.lexeme.upper()
-                in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
-            ):
+            if _at_operand_boundary(tok):
                 break
             right_parts.append(tok.lexeme)
             stream.advance()
@@ -1010,13 +1280,7 @@ class ProcedureDivisionParser:
         target_parts: list[str] = []
         while not stream.eof():
             tok = stream.current()
-            if (
-                tok.type is TokenType.PERIOD
-                or tok.lexeme.upper() == "USING"
-                or tok.lexeme.upper() in _STATEMENT_LEXEMES
-                or tok.lexeme.upper()
-                in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
-            ):
+            if _at_operand_boundary(tok) or tok.lexeme.upper() == "USING":
                 break
             target_parts.append(tok.lexeme)
             stream.advance()
@@ -1038,12 +1302,7 @@ class ProcedureDivisionParser:
             stream.advance()  # consume USING
             while not stream.eof():
                 tok = stream.current()
-                if (
-                    tok.type is TokenType.PERIOD
-                    or tok.lexeme.upper() in _STATEMENT_LEXEMES
-                    or tok.lexeme.upper()
-                    in ("ELSE", "END-IF", "END-PERFORM", "WHEN", "END-EVALUATE")
-                ):
+                if _at_operand_boundary(tok):
                     break
                 arguments.append(tok.lexeme)
                 stream.advance()
@@ -1214,6 +1473,16 @@ class ProcedureDivisionParser:
                 offset=tok.position.offset,
             )
 
+        # Every other statement parser consumes its own trailing period
+        # via _consume_optional_period; this one did not, leaving a
+        # stray PERIOD for the caller.  _parse_statements has no
+        # "skip a lone period" case, so that stray token fell into the
+        # silent "anything else -- unexpected; stop" abandonment path
+        # (#108-05): a single well-formed `IF ... END-IF.` followed by
+        # any further statement discarded that statement and everything
+        # after it, with zero diagnostics.
+        self._consume_optional_period(state)
+
         return IfStatementNode(
             start_position=start,
             end_position=stream.current().position,
@@ -1271,6 +1540,13 @@ class ProcedureDivisionParser:
                     column=tok.position.column,
                     offset=tok.position.offset,
                 )
+
+            # Consume the same stray trailing period _parse_if_statement
+            # was fixed to consume (#108-05): every other statement
+            # parser calls _consume_optional_period, and without it here
+            # a lone PERIOD after END-PERFORM fell into the silent
+            # statement-loop abandonment path.
+            self._consume_optional_period(state)
 
             from app.parser.ast.statements import PerformUntilStatementNode
 

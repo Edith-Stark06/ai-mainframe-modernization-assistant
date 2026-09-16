@@ -301,6 +301,43 @@ class TestSymbols:
         result = types("< >")
         assert all(t is TokenType.UNKNOWN for t in result)
 
+    def test_currency_symbol(self) -> None:
+        """
+        Regression test: '$' was entirely absent from the lexer's symbol
+        table, so CobolLexer.tokenize() raised an unrecoverable LexerError
+        ("unexpected character '$'") the moment it encountered one --
+        aborting the whole tokenize() call rather than degrading gracefully.
+        '$' is a standard COBOL PICTURE-clause currency-editing character
+        (e.g. PIC $$$9.99) and must be tolerated the same way other
+        not-yet-promoted symbols (":", "+", "-", "*", "/") already are.
+        """
+        assert types("$") == [TokenType.UNKNOWN]
+        assert lexemes("$") == ["$"]
+
+    def test_picture_clause_with_currency_symbols(self) -> None:
+        """
+        Regression test: the exact real-world construct that previously
+        raised LexerError: unexpected character '$' at 120:39 while
+        analyzing complex_acctbatch.cbl -- a floating currency-symbol
+        edited numeric PICTURE clause. Must lex to completion (no raise)
+        with every '$' classified as UNKNOWN, matching test_currency_symbol.
+        """
+        line = "05 WS-EDIT-AMOUNT PIC $$$,$$$,$$$,$$9.99."
+
+        result_types = types(line)
+        result_lexemes = lexemes(line)
+
+        assert TokenType.UNKNOWN in result_types
+        currency_count = sum(
+            1
+            for t, lx in zip(result_types, result_lexemes)
+            if t is TokenType.UNKNOWN and lx == "$"
+        )
+        assert currency_count == 11  # eleven '$' characters in the clause above
+        assert TokenType.COMMA in result_types
+        assert TokenType.NUMBER in result_types
+        assert TokenType.PERIOD in result_types
+
 
 # ---------------------------------------------------------------------------
 # Comments

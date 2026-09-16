@@ -1,0 +1,34 @@
+{
+  "counts": {
+    "test": 44,
+    "train": 132,
+    "validation": 22
+  },
+  "dataset_version": "phase6-v2",
+  "ratios": {
+    "test": 0.15,
+    "train": 0.7,
+    "validation": 0.15
+  },
+  "seed": 20260906,
+  "source_assignment": {
+    "fx_combined": "train",
+    "fx_perform_until": "test",
+    "fx_simple_proc": "test",
+    "t_account_validate": "test",
+    "t_bonus_calc": "train",
+    "t_credit_limit": "train",
+    "t_discount_tier": "train",
+    "t_grade_letter": "train",
+    "t_interest_accrue": "train",
+    "t_late_fee": "train",
+    "t_loan_balance": "train",
+    "t_overdraft_fee": "validation",
+    "t_payroll_net_pay": "train",
+    "t_reorder_point": "train",
+    "t_shipping_zone": "test",
+    "t_stock_alert": "train",
+    "t_temp_convert": "train",
+    "t_vacation_accrual": "validation"
+  }
+}
