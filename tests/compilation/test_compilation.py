@@ -1,9 +1,11 @@
 """
 Java Compilation Test Runner.
 
-Verifies the complete generated Java output can be successfully compiled by javac.
+Verifies the complete generated Java output can be successfully compiled by javac,
+and verifies that invalid COBOL stops before Java generation and javac invocation.
 """
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -17,25 +19,26 @@ from app.backend.java.generator import (
 from app.ir.builder import IRBuilder
 from app.parser.lexer.lexer import CobolLexer
 from app.parser.semantic.analyzer import SemanticAnalyzer
-from app.parser.syntax.program_parser import ProgramParser
 from app.parser.semantic.symbols import SymbolKind
+from app.parser.syntax.program_parser import ProgramParser
 
 
 def discover_fixtures() -> list[Path]:
-    """Discover .cbl fixtures from golden and regression/invalid directories."""
+    """Discover valid .cbl fixtures from golden directory."""
     base_dir = Path(__file__).parent.parent
-
-    fixtures = []
-
     golden_dir = base_dir / "golden"
     if golden_dir.exists():
-        fixtures.extend(golden_dir.glob("*.cbl"))
+        return sorted(golden_dir.glob("*.cbl"))
+    return []
 
+
+def discover_invalid_fixtures() -> list[Path]:
+    """Discover invalid .cbl fixtures from regression/fixtures/invalid directory."""
+    base_dir = Path(__file__).parent.parent
     invalid_dir = base_dir / "regression" / "fixtures" / "invalid"
     if invalid_dir.exists():
-        fixtures.extend(invalid_dir.glob("*.cbl"))
-
-    return sorted(fixtures)
+        return sorted(invalid_dir.glob("*.cbl"))
+    return []
 
 
 @pytest.mark.parametrize("cbl_path", discover_fixtures(), ids=lambda p: p.name)
@@ -53,10 +56,11 @@ def test_java_compilation(cbl_path: Path, tmp_path: Path) -> None:
     analyzer = SemanticAnalyzer()
     ctx = analyzer.analyse(program_node)
 
-    # If the COBOL is invalid, we shouldn't attempt to generate or compile Java.
-    if ctx.has_errors or program_node is None:
-        # We verified that the invalid fixture did not reach javac.
-        return
+    # Valid fixtures must not produce semantic errors
+    assert program_node is not None, f"Parsing failed for valid fixture {cbl_path.name}"
+    assert (
+        not ctx.has_errors
+    ), f"Semantic analysis failed for valid fixture {cbl_path.name}: {ctx.diagnostics}"
 
     builder = IRBuilder(context=ctx)
     ir_program = builder.build(program_node)
@@ -72,12 +76,7 @@ def test_java_compilation(cbl_path: Path, tmp_path: Path) -> None:
         pytest.skip("javac not found on the system")
 
     # Create temporary file
-    # We must determine the class name from the generated Java or IR program to name the file correctly,
-    # as Java requires the public class name to match the file name.
-    # IRProgram.name has the program ID. The Java generator capitalizes it and converts hyphens,
-    # but let's extract the actual public class name from the generated output.
-    import re
-
+    # Extract public class name from generated output
     class_name_match = re.search(r"public class ([A-Za-z0-9_]+)", generated_java)
     class_name = class_name_match.group(1) if class_name_match else "UnknownClass"
 
@@ -96,3 +95,57 @@ def test_java_compilation(cbl_path: Path, tmp_path: Path) -> None:
             f"STDOUT:\n{e.stdout}\n"
             f"STDERR:\n{e.stderr}\n"
         )
+
+
+@pytest.mark.parametrize("cbl_path", discover_invalid_fixtures(), ids=lambda p: p.name)
+def test_invalid_cobol_stops_before_java_generation(
+    cbl_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify that invalid COBOL fixtures produce errors and stop before Java generation or javac."""
+
+    # Intercept Java generation: must fail if attempted for invalid COBOL
+    def _fail_on_generate(*args: object, **kwargs: object) -> object:
+        pytest.fail(
+            f"Java generation was attempted for invalid fixture '{cbl_path.name}'"
+        )
+
+    monkeypatch.setattr(
+        "tests.compilation.test_compilation.generate_with_diagnostics",
+        _fail_on_generate,
+    )
+
+    # Intercept javac invocation: must fail if javac is called for invalid COBOL
+    def _fail_on_javac(*args: object, **kwargs: object) -> object:
+        pytest.fail(f"javac was invoked for invalid fixture '{cbl_path.name}'")
+
+    monkeypatch.setattr(subprocess, "run", _fail_on_javac)
+
+    source = cbl_path.read_text(encoding="utf-8")
+
+    # Pipeline: lexer -> parser -> semantic analyzer
+    lexer = CobolLexer()
+    tokens = lexer.tokenize(source, filename=str(cbl_path))
+
+    parser = ProgramParser()
+    program_node = parser.parse(tokens)
+
+    is_invalid = False
+    if program_node is None:
+        is_invalid = True
+    else:
+        analyzer = SemanticAnalyzer()
+        ctx = analyzer.analyse(program_node)
+        if ctx.has_errors:
+            is_invalid = True
+
+    # Assert that invalid fixture actually produced compiler errors
+    assert (
+        is_invalid
+    ), f"Expected invalid fixture '{cbl_path.name}' to produce parser or semantic errors"
+
+    # Contract verification: pipeline must stop before IRBuilder and Java generator when input is invalid
+    if not is_invalid:
+        builder = IRBuilder(context=ctx)
+        ir_program = builder.build(program_node)
+        generate_with_diagnostics(ir_program)
+        subprocess.run(["javac", "dummy.java"], check=True)
