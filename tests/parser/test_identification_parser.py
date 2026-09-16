@@ -48,6 +48,7 @@ Project:
 from __future__ import annotations
 
 import dataclasses
+import pathlib
 
 import pytest
 
@@ -62,6 +63,7 @@ from app.parser.ast.clauses import (
 from app.parser.ast.identification import IdentificationDivisionNode
 from app.parser.ast.node import ASTNode
 from app.parser.ast.program import ProgramNode
+from app.parser.lexer.lexer import CobolLexer
 from app.parser.lexer.position import Position
 from app.parser.lexer.token import Token
 from app.parser.lexer.token_types import TokenType
@@ -322,6 +324,145 @@ class TestIdentificationDivisionParserValid:
         node = self._parse(tokens)
         assert node.program_id is not None
         # DATA DIVISION not consumed — no error
+
+
+# ---------------------------------------------------------------------------
+# IdentificationDivisionParser — real production lexer (not hand-built
+# KEYWORD tokens)
+#
+# Regression coverage for a real production bug: AUTHOR, INSTALLATION,
+# DATE-WRITTEN, DATE-COMPILED, and SECURITY are not in CobolLexer's
+# reserved-keyword set (only PROGRAM-ID is), so the real lexer emits them
+# as IDENTIFIER tokens, not KEYWORD tokens. Every test above constructs
+# AUTHOR/DATE-WRITTEN as hand-built KEYWORD tokens via _kw(...), which
+# does not match what the real lexer actually produces -- those tests
+# passed identically whether or not the parser accepted IDENTIFIER-typed
+# clause names, and so never exercised (or could have caught) this bug.
+# These tests drive the real CobolLexer end to end instead.
+# ---------------------------------------------------------------------------
+
+
+class TestIdentificationDivisionParserRealLexer:
+    """
+    AUTHOR/DATE-WRITTEN clauses must be accepted as the real lexer
+    actually tokenises them, not as tests assume they are tokenised.
+    """
+
+    def test_real_lexer_emits_author_and_date_written_as_identifier(self) -> None:
+        """
+        Documents the actual lexer behaviour that caused the production
+        bug: AUTHOR and DATE-WRITTEN come back as IDENTIFIER, not
+        KEYWORD (unlike PROGRAM-ID, which is a real reserved keyword).
+        If this ever changes, the parser-side fix below is still safe
+        (it accepts either token type), but this test protects the
+        premise of the other tests in this class.
+        """
+        tokens = CobolLexer().tokenize(
+            "IDENTIFICATION DIVISION.\n"
+            "PROGRAM-ID. X.\n"
+            "AUTHOR. Y.\n"
+            "DATE-WRITTEN. Z.\n",
+            filename="t.cbl",
+        )
+        by_lexeme = {t.lexeme: t.type for t in tokens}
+        assert by_lexeme["PROGRAM-ID"] is TokenType.KEYWORD
+        assert by_lexeme["AUTHOR"] is TokenType.IDENTIFIER
+        assert by_lexeme["DATE-WRITTEN"] is TokenType.IDENTIFIER
+
+    def test_author_and_date_written_accepted_via_real_lexer(self) -> None:
+        """
+        Regression test: CobolLexer.tokenize() + ProgramParser.parse()
+        together previously recorded 4 diagnostics for exactly this input
+        ("expected a clause keyword, got 'AUTHOR'", "...'AI-MODERNIZATION-
+        TEST'", "...'DATE-WRITTEN'", "...'2026'") and left both clauses
+        unparsed, because the dispatch loop required TokenType.KEYWORD.
+        Must now parse with zero diagnostics and correct clause values.
+        """
+        tokens = CobolLexer().tokenize(
+            "IDENTIFICATION DIVISION.\n"
+            "PROGRAM-ID. ACCTBATCH.\n"
+            "AUTHOR. AI-MODERNIZATION-TEST.\n"
+            "DATE-WRITTEN. 2026-09-02.\n",
+            filename="t.cbl",
+        )
+        state = _make_state(tokens)
+        node = IdentificationDivisionParser().parse(state)
+
+        assert state.error_count == 0
+        assert node.program_id is not None
+        assert node.program_id.value == "ACCTBATCH"
+        assert node.author is not None
+        assert node.author.value == "AI-MODERNIZATION-TEST"
+        assert node.date_written is not None
+        assert "2026" in node.date_written.value
+
+    def test_full_program_with_author_date_written_reaches_procedure_division(
+        self,
+    ) -> None:
+        """
+        Regression test proving the parser proceeds far enough to produce
+        the expected subsequent divisions, AND that AUTHOR/DATE-WRITTEN
+        are themselves actually parsed rather than silently dropped.
+
+        For this specific fixture, the pre-fix parser's error recovery
+        already happened to synchronise past the unparsed AUTHOR/
+        DATE-WRITTEN clauses and still reach data_division and
+        procedure_division -- so reachability alone would not have
+        caught this bug. What recovery could not do was recover the
+        clause *values*: pre-fix, this asserts author is not None and
+        fails, because AUTHOR was recorded as a diagnostic and dropped,
+        not parsed.
+
+        (For the real-world file that exposed this bug,
+        complex_acctbatch.cbl, reachability *is* additionally broken --
+        but for a separate reason: an ENVIRONMENT DIVISION sits between
+        IDENTIFICATION and DATA DIVISION, and ENVIRONMENT DIVISION
+        parsing is unimplemented -- a distinct, pre-existing,
+        out-of-scope limitation; see program_parser.py's own docstring.
+        This fixture deliberately omits an ENVIRONMENT DIVISION so it
+        isolates the identification-division fix from that unrelated
+        gap.)
+        """
+        corpus = (
+            pathlib.Path(__file__).parent
+            / "corpus"
+            / "identification_author_date_written.cbl"
+        )
+        source = corpus.read_text(encoding="utf-8")
+
+        tokens = CobolLexer().tokenize(source, filename=str(corpus))
+        program = ProgramParser().parse(tokens)
+
+        assert program.identification_division is not None
+        assert program.identification_division.author is not None
+        assert program.identification_division.author.value == "AI-MODERNIZATION-TEST"
+        assert program.identification_division.date_written is not None
+        assert program.data_division is not None
+        assert program.procedure_division is not None
+        assert len(program.procedure_division.paragraphs) == 1
+        assert program.procedure_division.paragraphs[0].name == "MAIN-PARA"
+
+    def test_unrecognised_identifier_still_rejected(self) -> None:
+        """
+        The fix must not overly loosen validation: an IDENTIFIER-typed
+        token whose lexeme is genuinely not a known clause name must
+        still be rejected, exactly as an unrecognised KEYWORD already is
+        (test_unknown_clause_recovers_diagnostic, above).
+        """
+        tokens = CobolLexer().tokenize(
+            "IDENTIFICATION DIVISION.\nPROGRAM-ID. X.\nBOGUS-CLAUSE. Y.\n",
+            filename="t.cbl",
+        )
+        state = _make_state(tokens)
+        node = IdentificationDivisionParser().parse(state)
+
+        assert state.has_errors
+        assert any(
+            "BOGUS-CLAUSE" in d.message or "expected a clause keyword" in d.message
+            for d in state.diagnostics
+        )
+        assert node.program_id is not None
+        assert node.program_id.value == "X"
 
 
 # ---------------------------------------------------------------------------

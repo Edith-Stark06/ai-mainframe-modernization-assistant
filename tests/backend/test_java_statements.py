@@ -71,6 +71,7 @@ from app.backend.java.statement_emitter import (
     emit_divide,
     emit_move,
     emit_multiply,
+    emit_return,
     emit_statement,
     emit_subtract,
 )
@@ -530,10 +531,78 @@ class TestEmitStatement:
         assert any(d.code == "BE005" for d in diags)
 
     def test_unsupported_be005_warning(self) -> None:
-        instr = IRReturn()
+        instr = IRJump(target="PROC")
         diags: list[BackendDiagnostic] = []
         emit_statement(instr, diags)
         assert diags[0].severity is BackendSeverity.WARNING
+
+    # IRReturn (post-#111 review fix): STOP RUN / GOBACK -> return;
+    def test_dispatches_return(self) -> None:
+        instr = IRReturn(operand="", comment="STOP RUN")
+        assert emit_statement(instr, []) == ["return;"]
+
+    def test_dispatches_return_goback(self) -> None:
+        instr = IRReturn(operand="", comment="GOBACK")
+        assert emit_statement(instr, []) == ["return;"]
+
+    def test_return_produces_no_be005(self) -> None:
+        diags: list[BackendDiagnostic] = []
+        emit_statement(IRReturn(), diags)
+        assert not any(d.code == "BE005" for d in diags)
+
+    def test_return_produces_no_todo_comment(self) -> None:
+        stmts = emit_statement(IRReturn(), [])
+        assert not any("TODO" in s for s in stmts)
+
+
+# ===========================================================================
+# emit_return() — IRReturn -> Java return statement
+# ===========================================================================
+
+
+class TestEmitReturn:
+    def test_stop_run_returns_bare_return(self) -> None:
+        instr = IRReturn(operand="", comment="STOP RUN")
+        assert emit_return(instr, []) == ["return;"]
+
+    def test_goback_returns_bare_return(self) -> None:
+        instr = IRReturn(operand="", comment="GOBACK")
+        assert emit_return(instr, []) == ["return;"]
+
+    def test_stop_run_and_goback_produce_identical_java(self) -> None:
+        """
+        Both terminate the same (only) generated 'run()' method, so both
+        currently compile to the same Java statement -- the distinction
+        IRReturn's 'comment' field preserves remains available to other
+        passes (e.g. task #110's CFG) but has no distinct Java rendering.
+        """
+        stop_stmts = emit_return(IRReturn(operand="", comment="STOP RUN"), [])
+        goback_stmts = emit_return(IRReturn(operand="", comment="GOBACK"), [])
+        assert stop_stmts == goback_stmts == ["return;"]
+
+    def test_return_exactly_one_statement(self) -> None:
+        assert len(emit_return(IRReturn(), [])) == 1
+
+    def test_return_ends_with_semicolon(self) -> None:
+        assert emit_return(IRReturn(), [])[0].endswith(";")
+
+    def test_return_produces_no_diagnostics_when_operand_empty(self) -> None:
+        diags: list[BackendDiagnostic] = []
+        emit_return(IRReturn(operand=""), diags)
+        assert diags == []
+
+    def test_return_with_operand_emits_be010_warning(self) -> None:
+        """
+        The generated run() method is void; a hypothetical future IRReturn
+        producer that sets a non-empty operand cannot have it honoured.
+        BE010 documents this rather than silently emitting invalid Java
+        (`return <value>;` inside a void method).
+        """
+        diags: list[BackendDiagnostic] = []
+        stmts = emit_return(IRReturn(operand="WS-RESULT"), diags)
+        assert stmts == ["return;"]
+        assert any(d.code == "BE010" for d in diags)
+        assert all(d.severity is BackendSeverity.WARNING for d in diags)
 
 
 # ===========================================================================
@@ -759,7 +828,7 @@ class TestArithmeticDiagnostics:
         assert "wsCount += 10;" in src
 
     def test_generate_with_diagnostics_be005_still_works(self) -> None:
-        prog = _make_program(IRReturn())
+        prog = _make_program(IRJump(target="PROC"))
         result = generate_with_diagnostics(prog)
         assert any(d.code == "BE005" for d in result.diagnostics)
 
@@ -843,7 +912,7 @@ class TestGenerateStatements:
         assert "// TODO:" in src
 
     def test_generate_with_diagnostics_be005(self) -> None:
-        prog = _make_program(IRReturn())
+        prog = _make_program(IRJump(target="PROC"))
         result = generate_with_diagnostics(prog)
         assert any(d.code == "BE005" for d in result.diagnostics)
 
@@ -1248,12 +1317,14 @@ class TestGenerateControlFlow:
             IREndIf(),
         )
         src = generate(prog)
-        header_line = next(ln for ln in src.splitlines() if "if (wsX" in ln)
-        # The closing brace should be at the same indent as the if header
-        close_lines = [ln for ln in src.splitlines() if ln.strip() == "}"]
-        assert close_lines, "No closing brace found"
+        src_lines = src.splitlines()
+        header_idx = next(i for i, ln in enumerate(src_lines) if "if (wsX" in ln)
+        header_line = src_lines[header_idx]
+        # The IF's closing brace is the first bare "}" after the header (not
+        # main()'s or the class's brace, which sit at shallower indents).
+        close_line = next(ln for ln in src_lines[header_idx + 1 :] if ln.strip() == "}")
         header_indent = len(header_line) - len(header_line.lstrip())
-        close_indent = len(close_lines[0]) - len(close_lines[0].lstrip())
+        close_indent = len(close_line) - len(close_line.lstrip())
         assert close_indent == header_indent
 
     # --- variable operands in conditions ---
@@ -1411,10 +1482,12 @@ class TestControlFlowDiagnostics:
     def test_unmatched_end_if_does_not_emit_brace(self) -> None:
         prog = _make_program(IREndIf())
         result = generate_with_diagnostics(prog)
-        # The orphaned } should be skipped — only the class/method braces remain
         brace_count = result.source.count("}")
-        # Normal empty class has exactly 2 closing braces: method + class
-        assert brace_count == 2
+        # The orphaned } must be skipped: the class has exactly the same closing
+        # braces as an empty program (main + run + class), with no extra brace
+        # from the unmatched END-IF.
+        empty = generate_with_diagnostics(_make_program())
+        assert brace_count == empty.source.count("}")
 
     def test_generation_continues_after_unmatched_end_if(self) -> None:
         prog = _make_program(
@@ -1428,7 +1501,7 @@ class TestControlFlowDiagnostics:
         """BE007 and BE005 can coexist in the same diagnostic list."""
         prog = _make_program(
             IRIf(left="", operator=">", right="0"),  # BE007
-            IRReturn(),  # BE005
+            IRJump(target="PROC"),  # BE005
         )
         result = generate_with_diagnostics(prog)
         codes = {d.code for d in result.diagnostics}

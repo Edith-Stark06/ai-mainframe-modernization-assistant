@@ -76,6 +76,7 @@ from app.parser.ast.clauses import (
 )
 from app.parser.ast.identification import IdentificationDivisionNode
 from app.parser.diagnostics.recovery import RecoveryContext
+from app.parser.grammar_words import matches_grammar_word
 from app.parser.lexer.position import Position
 from app.parser.lexer.token import Token
 from app.parser.lexer.token_types import TokenType
@@ -223,8 +224,20 @@ class IdentificationDivisionParser:
                 stream.advance()
                 continue
 
-            # Only KEYWORD tokens can open a clause
-            if tok.type is not TokenType.KEYWORD:
+            # A clause can be opened by a KEYWORD token, or by an
+            # IDENTIFIER token whose lexeme matches a known clause name.
+            # AUTHOR, INSTALLATION, DATE-WRITTEN, DATE-COMPILED, and
+            # SECURITY are not in the lexer's reserved-keyword set (only
+            # PROGRAM-ID is), so the lexer emits them as IDENTIFIER
+            # tokens. The grammar position here only ever expects a
+            # clause name or the next division header, so matching by
+            # uppercased lexeme is unambiguous -- the same approach the
+            # procedure-division parser already uses for GOBACK.
+            upper = tok.lexeme.upper()
+            is_clause_candidate = tok.type is TokenType.KEYWORD or (
+                tok.type is TokenType.IDENTIFIER and upper in _CLAUSE_KEYWORDS
+            )
+            if not is_clause_candidate:
                 logger.debug(
                     "IdentificationDivisionParser: unexpected token {!r}; recovering.",
                     tok.lexeme,
@@ -233,10 +246,11 @@ class IdentificationDivisionParser:
                     message=(f"expected a clause keyword, got {tok.lexeme!r}"),
                     error_token=tok,
                     context=RecoveryContext.IDENTIFICATION_DIVISION,
+                    code="SYN003",
                 )
                 continue
 
-            keyword = tok.lexeme.upper()
+            keyword = upper
 
             if keyword not in _CLAUSE_KEYWORDS:
                 logger.debug(
@@ -247,6 +261,7 @@ class IdentificationDivisionParser:
                     message=(f"unknown IDENTIFICATION DIVISION clause: {tok.lexeme!r}"),
                     error_token=tok,
                     context=RecoveryContext.IDENTIFICATION_DIVISION,
+                    code="SYN003",
                 )
                 continue
 
@@ -272,6 +287,7 @@ class IdentificationDivisionParser:
                     message=exc.message,
                     error_token=stream.current(),
                     context=RecoveryContext.IDENTIFICATION_DIVISION,
+                    code="SYN005",
                 )
 
         end = stream.current().position
@@ -367,16 +383,31 @@ class IdentificationDivisionParser:
             tok = stream.current()
             if tok.type is TokenType.PERIOD:
                 break
-            if tok.type is TokenType.KEYWORD and tok.lexeme.upper() in (
-                _CLAUSE_KEYWORDS | _DIVISION_HEADERS | {"DIVISION"}
+            # A clause name or division header here means the previous
+            # clause was not closed by a period.  Of the clause names
+            # only PROGRAM-ID is a reserved lexer word, so gating this on
+            # TokenType.KEYWORD left AUTHOR, INSTALLATION, DATE-WRITTEN,
+            # DATE-COMPILED and SECURITY undetected: the unterminated
+            # value simply absorbed the next clause name, and that clause
+            # was lost (task #104, F-07).
+            if matches_grammar_word(
+                tok, _CLAUSE_KEYWORDS | _DIVISION_HEADERS | {"DIVISION"}
             ):
-                # Next clause / division started without a closing period
-                raise ParserError(
-                    f"missing period after {clause_name} value",
-                    line=tok.position.line,
-                    column=tok.position.column,
-                    offset=tok.position.offset,
+                # The next clause (or division) began without a closing
+                # period.  Record it and stop *without* consuming the
+                # token: returning the value gathered so far leaves the
+                # dispatcher positioned on the next clause name, so this
+                # clause and the following one both survive.  Raising
+                # here instead sent the dispatcher into panic-mode
+                # recovery, whose paragraph-label heuristic consumed the
+                # following clause name and lost that clause too.
+                state.recovery_manager.record_error(
+                    message=f"missing period after {clause_name} value",
+                    error_token=tok,
+                    context=RecoveryContext.IDENTIFICATION_DIVISION,
+                    code="SYN002",
                 )
+                return " ".join(parts), start, tok.position
             parts.append(tok.lexeme)
             stream.advance()
 

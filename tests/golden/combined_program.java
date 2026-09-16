@@ -1,14 +1,20 @@
 public class CombinedProgram {
 
-    private static int counter;
+    private int counter;
 
     public static void main(String[] args) {
+        new CombinedProgram().run();
+    }
+
+    public void run() {
 
         if (counter > 0) {
             counter += 1;
         } else {
             counter = 0;
         }
+        System.out.println(counter);
+        return;
 
     }
 

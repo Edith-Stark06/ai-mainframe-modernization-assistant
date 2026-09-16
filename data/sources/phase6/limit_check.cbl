@@ -1,0 +1,14 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. LIMITCHK.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 WS-AMOUNT  PIC 9(7) VALUE 0.
+       01 WS-REVIEW  PIC X(10) VALUE SPACE.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           IF WS-AMOUNT > 50000
+               MOVE 'REVIEW' TO WS-REVIEW
+           ELSE
+               MOVE 'AUTO' TO WS-REVIEW
+           END-IF.
+           STOP RUN.
