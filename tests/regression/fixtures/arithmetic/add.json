@@ -2,8 +2,8 @@
   "success": true,
   "expected_java_constructs": [
     "public class AddTest {",
-    "private int numA;",
-    "private int numB;",
+    "private int numA = 10;",
+    "private int numB = 20;",
     "numB += numA;",
     "System.out.println(numB);"
   ],

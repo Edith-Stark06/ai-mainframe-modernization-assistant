@@ -1,0 +1,34 @@
+{
+  "error_count": 0,
+  "hits": [
+    {
+      "detail": "",
+      "example_ids": [
+        "modernization_strategy-392ac361605b",
+        "modernization_strategy-5c0ebe7b4f7c",
+        "modernization_strategy-73aa2ba6cb08",
+        "modernization_strategy-bf7f95a724fa"
+      ],
+      "key": "ba74aab6bc08",
+      "kind": "identical_expected_output",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "test"
+    },
+    {
+      "detail": "",
+      "example_ids": [
+        "modernization_strategy-61d91abb7a11",
+        "modernization_strategy-b5d0124f06e5",
+        "modernization_strategy-f807cf516bdc"
+      ],
+      "key": "7830d1b07be7",
+      "kind": "identical_expected_output",
+      "severity": "warning",
+      "split_a": "train",
+      "split_b": "validation"
+    }
+  ],
+  "ok": true,
+  "warning_count": 2
+}

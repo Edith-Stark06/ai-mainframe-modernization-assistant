@@ -255,15 +255,17 @@ def test_confidence_monotonic_when_content_becomes_unsupported(tmp_path) -> None
         "           ADD WS-A TO WS-B.\n           STOP RUN.\n"
     )
     # same program, but the two data items are now COMP-3 (unmodelled) and
-    # one statement is a GO TO (unsupported).
+    # one statement is an OPEN (unsupported). GO TO was the original
+    # unsupported-statement example here; task #stage17
+    # (docs/MMIM_GO_TO_FIX.md) made it a supported statement, so OPEN
+    # (still unsupported) now exercises this test's actual intent.
     degraded = (
         supported.replace(
             "01 WS-A PIC 9(5) VALUE 0.", "01 WS-A PIC 9(5) COMP-3 VALUE 0."
         )
         .replace("01 WS-B PIC 9(5) VALUE 0.", "01 WS-B PIC 9(5) COMP-3 VALUE 0.")
-        .replace("ADD WS-A TO WS-B.", "GO TO SKIP-PARA.")
+        .replace("ADD WS-A TO WS-B.", "OPEN INPUT SKIP-FILE.")
     )
-    degraded += "       SKIP-PARA.\n           DISPLAY WS-B.\n"
 
     c_supported = score_with_confidence(
         analyze_source(supported, tmp_path, "s.cbl")
@@ -360,15 +362,17 @@ def test_no_dependencies_is_not_confirmed_low_coupling_when_incomplete(
 
     # A program with genuinely zero dependencies but an unsupported
     # statement region: the "no deps" must be reported as unconfirmed.
+    # GO TO was the original unsupported statement here; task #stage17
+    # (docs/MMIM_GO_TO_FIX.md) made it a supported statement, so OPEN
+    # (still unsupported) now exercises this test's actual intent.
     src = (
         "       IDENTIFICATION DIVISION.\n       PROGRAM-ID. Z.\n"
         "       DATA DIVISION.\n       WORKING-STORAGE SECTION.\n"
         "       01 WS-A PIC 9(3) VALUE 0.\n"
         "       PROCEDURE DIVISION.\n       MAIN.\n"
         "           MOVE 1 TO WS-A.\n"
-        "           GO TO SKIP.\n"
+        "           OPEN INPUT SKIP-FILE.\n"
         "           STOP RUN.\n"
-        "       SKIP.\n           DISPLAY WS-A.\n"
     )
     from app.modernization.scoring.confidence_aware import score_with_confidence
 

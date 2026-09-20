@@ -1,0 +1,43 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. GOTOSPAG.
+       AUTHOR. SYNTHETIC-CORPUS.
+      * CATEGORY D: LEGACY ANTI-PATTERNS - UNSTRUCTURED GO TO CONTROL FLOW
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  CONTROL-FLAGS.
+           05  STEP-INDEX          PIC 9(2) VALUE 01.
+           05  ACCUMULATOR         PIC 9(5) VALUE 00000.
+           05  TERMINAL-STATE      PIC X(10) VALUE 'INITIAL'.
+           05  RETRY-COUNTER       PIC 9(2) VALUE 00.
+
+       PROCEDURE DIVISION.
+       1000-ENTRY-POINT.
+           MOVE 'STARTED' TO TERMINAL-STATE
+           IF STEP-INDEX = 1
+               GO TO 2000-STAGE-ALPHA
+           ELSE
+               GO TO 3000-STAGE-BETA
+           END-IF.
+
+       2000-STAGE-ALPHA.
+           ADD 10 TO ACCUMULATOR
+           ADD 1 TO STEP-INDEX
+           IF ACCUMULATOR < 30
+               GO TO 4000-LOOP-BACK
+           END-IF
+           GO TO 5000-FINAL-STAGE.
+
+       3000-STAGE-BETA.
+           ADD 50 TO ACCUMULATOR
+           GO TO 5000-FINAL-STAGE.
+
+       4000-LOOP-BACK.
+           ADD 1 TO RETRY-COUNTER
+           IF RETRY-COUNTER > 5
+               GO TO 5000-FINAL-STAGE
+           END-IF
+           GO TO 2000-STAGE-ALPHA.
+
+       5000-FINAL-STAGE.
+           MOVE 'COMPLETED' TO TERMINAL-STATE
+           GOBACK.

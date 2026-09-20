@@ -205,6 +205,11 @@ class VariableSymbol(Symbol):
             The resolved :class:`~app.parser.semantic.types.CobolType`, or
             ``None`` if pass 4 has not yet run or the PIC clause could not
             be interpreted.
+        value:
+            The raw ``VALUE`` clause literal exactly as the parser captured
+            it (e.g. ``"'INITIAL'"``, ``"01"``, ``"00065000.00"``,
+            ``"SPACES"``), or ``None`` when the item has no ``VALUE`` clause
+            (group items and condition-names never carry one).
 
     Examples:
         >>> from app.parser.lexer.position import Position
@@ -218,11 +223,14 @@ class VariableSymbol(Symbol):
         5
         >>> sym.cobol_type is None
         True
+        >>> sym.value is None
+        True
     """
 
     level: int
     picture: str | None = None
     cobol_type: CobolType | None = None
+    value: str | None = None
 
     @property
     def kind(self) -> SymbolKind:

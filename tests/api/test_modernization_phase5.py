@@ -29,11 +29,14 @@ _UNSUPPORTED = """\
        PROCEDURE DIVISION.
        MAIN-PARA.
            MOVE 1 TO WS-A.
-           GO TO OTHER.
+           OPEN INPUT OTHER-FILE.
            STOP RUN.
        OTHER.
            DISPLAY WS-A.
 """
+# GO TO was the original unsupported statement here; task #stage17
+# (docs/MMIM_GO_TO_FIX.md) made it a supported statement, so OPEN
+# (still unsupported) now exercises this fixture's actual intent.
 
 # Malformed PROCEDURE DIVISION: the parser recovers, produces no
 # statements, and the legacy scorer still reports a high readiness from

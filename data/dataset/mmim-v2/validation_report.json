@@ -1,0 +1,11 @@
+{
+  "dataset_version": "mmim-v2",
+  "error_count": 0,
+  "issues": [],
+  "ok": true,
+  "path": "D:\\Documents\\Projects\\mainframe-modernization-assistant\\data\\dataset\\mmim-v2\\all.jsonl",
+  "secret_findings": [],
+  "total": 351,
+  "valid": 351,
+  "warning_count": 0
+}

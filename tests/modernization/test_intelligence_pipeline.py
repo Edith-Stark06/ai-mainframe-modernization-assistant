@@ -122,9 +122,47 @@ def test_complex_fixture_intelligence_shape(complex_analysis) -> None:
     result = analyze_modernization_intelligence(complex_analysis)
 
     # #112 — business rules
+    # Was 6 before the parser decimal-literal + compound AND/OR IF-condition
+    # fix, then 10 after it (docs/MMIM_PARSER_VALIDATION_FIX.md): 3 genuine
+    # single-line compound conditions (lines 355 `... AND ...`, 368
+    # `... OR ...`, 420 `... AND ...`) that previously raised a ParserError
+    # and — via the parser's own statement-level recovery synchronising to
+    # the next PERIOD — silently discarded the rest of that paragraph,
+    # including further IF statements (TR-CHANNEL, TR-MERCHANT-CODE nested
+    # IF, WS-MONTH, WS-IDX) that are perfectly ordinary single-comparison
+    # conditions with no defect of their own.
+    #
+    # Then 13, after the COMPUTE/EVALUATE-inside-IF-block parser recovery
+    # fix (docs/MMIM_PARSER_VALIDATION_FIX.md §7 follow-up): 3 further
+    # paragraphs contained an IF whose then/else body used COMPUTE or
+    # EVALUATE — previously an unrecognized verb inside an IF block raised
+    # the same class of ParserError as the compound-condition bug, wiping
+    # everything after it in the paragraph. The 3 new rules
+    # (WS-CURRENT-DELTA > WS-CURRENT-LIMIT; WS-ERROR-FLAG = 'N' guarding a
+    # PERFORM sequence; NOT (TR-TXN-TYPE = 'DR')) come from exactly those
+    # recovered paragraphs. All 10 prior rules are unchanged in content,
+    # renumbered only where a new rule now sorts before them.
+    #
+    # Now 18 (task #stage25, docs/MMIM_NEGATED_COMPARISON_FIX.md): the
+    # fixture's 9 `NOT =`/`<>` comparisons used to fail to parse at all
+    # (`SYN005 "expected comparison operator"`) and were dropped by
+    # recovery. 5 are now represented as their own rules, inserted before
+    # every prior rule (renumbering BR-001..010 -> BR-006..018, content
+    # unchanged): BR-001..004 (`WS-CUST-STATUS`/`WS-ACCT-STATUS`/
+    # `WS-TXN-STATUS`/`WS-RPT-STATUS <> '00'`, each guarding its own
+    # error-flag/count/display in `1000-INITIALIZE`) and BR-007 (the
+    # 3-term `TR-CURRENCY <> 'USD'/'EUR'/'GBP'` compound, its own single
+    # rule, matching how every other compound condition here is already
+    # one rule). The 2 remaining `NOT =` occurrences in the fixture still do not
+    # parse, each for its own genuinely different, unrelated, pre-existing
+    # reason this stage does not touch: `WS-CURRENT-ACCOUNT NOT = SPACES`'s
+    # operand is the figurative-constant keyword `SPACES`, which the
+    # comparison grammar's operand check has never accepted (only
+    # STRING/NUMBER/IDENTIFIER); `WA-STATUS(WS-IDX) NOT = 'C'`'s subject is
+    # a subscripted operand, which the same check has also never accepted.
     rules = result.business_rules
-    assert len(rules) == 6
-    assert [r.rule_id for r in rules] == [f"BR-{i:03d}" for i in range(1, 7)]
+    assert len(rules) == 18
+    assert [r.rule_id for r in rules] == [f"BR-{i:03d}" for i in range(1, 19)]
     assert all(r.source_locations for r in rules)
     assert all(0.0 <= r.confidence <= 1.0 for r in rules)
 

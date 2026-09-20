@@ -1,0 +1,83 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. CRDAPP1.
+       AUTHOR. SYNTHETIC-CORPUS.
+      * CATEGORY A: RULE-DENSE BUSINESS LOGIC - CREDIT CARD APPROVAL AND LIMITS
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  CREDIT-INPUTS.
+           05  CREDIT-SCORE        PIC 9(3) VALUE 710.
+           05  MONTHLY-INCOME      PIC 9(6)V99 VALUE 005500.00.
+           05  EXISTING-DEBT-PMTS  PIC 9(5)V99 VALUE 00800.00.
+           05  BANKRUPTCY-FLAG     PIC X(1) VALUE 'N'.
+           05  EMPLOYMENT-MONTHS   PIC 9(3) VALUE 036.
+           05  CARD-TIER-REQUESTED PIC X(8) VALUE 'GOLD'.
+       01  CREDIT-DECISION.
+           05  DECISION-STATUS     PIC X(10) VALUE 'REJECTED'.
+           05  ASSIGNED-CREDIT-LMT PIC 9(6)V99 VALUE 000000.00.
+           05  APR-RATE-PERCENT    PIC 9(2)V99 VALUE 00.00.
+           05  DTI-PERCENTAGE      PIC 9(3)V99 VALUE 000.00.
+           05  RISK-TIER           PIC X(6) VALUE 'HIGH'.
+
+       PROCEDURE DIVISION.
+       0000-EVALUATE-CREDIT.
+           PERFORM 1000-CALCULATE-DTI
+           PERFORM 2000-DETERMINE-RISK-TIER
+           PERFORM 3000-DECIDE-APPROVAL-AND-LIMIT
+           PERFORM 4000-ASSIGN-APR-RATE
+           GOBACK.
+
+       1000-CALCULATE-DTI.
+           IF MONTHLY-INCOME > 0.00
+               COMPUTE DTI-PERCENTAGE = (EXISTING-DEBT-PMTS / MONTHLY-INCOME) * 100.00
+           ELSE
+               MOVE 999.00 TO DTI-PERCENTAGE
+           END-IF.
+
+       2000-DETERMINE-RISK-TIER.
+           IF BANKRUPTCY-FLAG = 'Y' OR CREDIT-SCORE < 580
+               MOVE 'HIGH' TO RISK-TIER
+           ELSE
+               IF CREDIT-SCORE >= 740 AND DTI-PERCENTAGE <= 35.00
+                   MOVE 'LOW' TO RISK-TIER
+               ELSE
+                   IF CREDIT-SCORE >= 660 AND DTI-PERCENTAGE <= 45.00
+                       MOVE 'MEDIUM' TO RISK-TIER
+                   ELSE
+                       MOVE 'HIGH' TO RISK-TIER
+                   END-IF
+               END-IF
+           END-IF.
+
+       3000-DECIDE-APPROVAL-AND-LIMIT.
+           IF RISK-TIER = 'HIGH'
+               MOVE 'REJECTED' TO DECISION-STATUS
+               MOVE 0.00 TO ASSIGNED-CREDIT-LMT
+           ELSE
+               MOVE 'APPROVED' TO DECISION-STATUS
+               IF RISK-TIER = 'LOW'
+                   IF CARD-TIER-REQUESTED = 'PLATINUM'
+                       COMPUTE ASSIGNED-CREDIT-LMT = MONTHLY-INCOME * 3.50
+                   ELSE
+                       COMPUTE ASSIGNED-CREDIT-LMT = MONTHLY-INCOME * 2.50
+                   END-IF
+               ELSE
+                   COMPUTE ASSIGNED-CREDIT-LMT = MONTHLY-INCOME * 1.50
+               END-IF
+               IF ASSIGNED-CREDIT-LMT > 25000.00
+                   MOVE 25000.00 TO ASSIGNED-CREDIT-LMT
+               END-IF
+           END-IF.
+
+       4000-ASSIGN-APR-RATE.
+           IF DECISION-STATUS = 'APPROVED'
+               IF RISK-TIER = 'LOW'
+                   MOVE 14.99 TO APR-RATE-PERCENT
+               ELSE
+                   MOVE 21.99 TO APR-RATE-PERCENT
+               END-IF
+               IF EMPLOYMENT-MONTHS >= 48
+                   COMPUTE APR-RATE-PERCENT = APR-RATE-PERCENT - 1.00
+               END-IF
+           ELSE
+               MOVE 0.00 TO APR-RATE-PERCENT
+           END-IF.

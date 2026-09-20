@@ -84,8 +84,10 @@ from loguru import logger
 from app.parser.ast.paragraphs import ParagraphNode
 from app.parser.ast.procedure import ProcedureDivisionNode
 from app.parser.ast.statements import (
+    ConditionTerm,
     DisplayStatementNode,
     GobackStatementNode,
+    GoToStatementNode,
     MoveStatementNode,
     StatementNode,
     StopRunStatementNode,
@@ -104,6 +106,7 @@ from app.parser.lexer.token import Token
 from app.parser.lexer.token_types import TokenType
 from app.parser.syntax.parser_exceptions import ParserError
 from app.parser.syntax.parser_state import ParserState
+from app.parser.syntax.token_stream import TokenStream
 
 __all__ = ["ProcedureDivisionParser"]
 
@@ -137,6 +140,7 @@ _STATEMENT_LEXEMES: frozenset[str] = frozenset(
         "CALL",
         "IF",
         "PERFORM",
+        "GO",
     }
 )
 
@@ -174,7 +178,12 @@ _UNSUPPORTED_STATEMENT_LEXEMES: frozenset[str] = frozenset(
         "MERGE",
         "RETURN",
         "RELEASE",
-        "GO",
+        # GO (TO) moved to _STATEMENT_LEXEMES (task #stage17): a simple
+        # GO TO paragraph-name is now parsed into GoToStatementNode --
+        # see _parse_go_to_statement. The multi-target
+        # "GO TO A B C DEPENDING ON X" form remains unimplemented (not
+        # present anywhere in the real corpus); see that method's
+        # docstring and docs/MMIM_GO_TO_FIX.md.
         # ACCEPT already has an AST node (AcceptStatementNode) and an IR
         # builder (build_accept_instruction), but no parser dispatch
         # path.  Task #108 explicitly asks that it be reported as
@@ -242,6 +251,127 @@ _SCOPE_OPENING_LEXEMES: frozenset[str] = frozenset(
         "SEARCH",
     }
 )
+
+# ---------------------------------------------------------------------------
+# The closing word that precisely bounds each scope-opening verb's body, for
+# verbs where that word is known. ``_skip_unsupported_statement`` matches
+# this word (honoring same-verb nesting) instead of scanning for the next
+# period -- see its docstring. ``SEARCH`` has no entry: it keeps the
+# original scan-to-next-period behavior, unchanged. ``READ`` is not here
+# either -- its ``AT END``/``NOT AT END`` clauses may legitimately end with
+# ``END-READ`` *or* a bare period (unlike ``EVALUATE``), so it has its own
+# dedicated skip, :meth:`ProcedureDivisionParser._skip_read_statement`.
+# ---------------------------------------------------------------------------
+_SCOPE_CLOSE_WORDS: dict[str, str] = {
+    "EVALUATE": "END-EVALUATE",
+}
+
+# ---------------------------------------------------------------------------
+# Relational-operator token recognition, shared between the plain-comparison
+# grammar in _parse_simple_condition and the condition-name lookahead in
+# _parse_condition_term (both need to answer "is the token after this
+# operand a comparison operator, or something else?").
+# ---------------------------------------------------------------------------
+_COMPARISON_OPERATOR_TYPE_NAMES: frozenset[str] = frozenset(
+    {
+        "OPERATOR_EQ",
+        "OPERATOR_GT",
+        "OPERATOR_LT",
+        "OPERATOR_GE",
+        "OPERATOR_LE",
+        "OPERATOR_NEQ",
+    }
+)
+_COMPARISON_OPERATOR_LEXEMES: frozenset[str] = frozenset(
+    {"=", ">", "<", ">=", "<=", "!=", "==", "<>"}
+)
+
+
+def _is_comparison_operator_token(token: Token) -> bool:
+    """``True`` if *token* is a relational-comparison operator."""
+    return (
+        token.type.name in _COMPARISON_OPERATOR_TYPE_NAMES
+        or token.lexeme in _COMPARISON_OPERATOR_LEXEMES
+    )
+
+
+# COBOL's ``relational-operator ::= [NOT] { = | > | < | >= | <= | <> }``
+# (task #stage25): a ``NOT`` directly between the two operands of a simple
+# condition (``IF WS-CODE NOT = 'AUTO'``) negates the operator, not the
+# operand. Every key here is a lexeme :func:`_is_comparison_operator_token`
+# accepts, so a comparison operator that passed that check always resolves;
+# every value is itself an accepted lexeme, so the negated operator needs no
+# further translation downstream (``NOT =`` becomes ``<>``, already aliased
+# to Java ``!=`` in :data:`app.backend.java.control_flow_emitter
+# .OPERATOR_ALIASES`; ``NOT >`` becomes ``<=``, already in
+# :data:`~app.backend.java.control_flow_emitter.SUPPORTED_OPERATORS`, and so
+# on). ``==``/``!=`` are this parser's own non-standard spellings (accepted
+# unchanged elsewhere in this grammar); their negations are included too, for
+# the same reason every other accepted operator's negation is: a comparison
+# operator token that passed :func:`_is_comparison_operator_token` must
+# never hit the "NOT is not supported before" fallback error.
+_NEGATED_OPERATOR: dict[str, str] = {
+    "=": "<>",
+    "==": "!=",
+    "<>": "=",
+    "!=": "==",
+    ">": "<=",
+    "<": ">=",
+    ">=": "<",
+    "<=": ">",
+}
+
+
+# ---------------------------------------------------------------------------
+# task #stage26: the comparison-operand check in _parse_simple_condition only
+# ever accepted TokenType.IDENTIFIER/NUMBER/STRING, so a figurative-constant
+# operand (``IF WS-CODE = SPACES``) failed with "expected operand for IF
+# condition" -- but only for *some* spellings. app.parser.lexer.keywords
+# .KEYWORDS reserves just two of COBOL's figurative-constant words --
+# "ZEROS" and "SPACES" -- so only those two lex as TokenType.KEYWORD and hit
+# the rejection; every other spelling (ZERO, SPACE, ZEROES, HIGH-VALUE(S),
+# LOW-VALUE(S)) is not a reserved word here, lexes as a plain
+# TokenType.IDENTIFIER, and already parsed successfully. This set names
+# exactly the two words that need the operand check widened; every other
+# figurative constant needs no change, since IDENTIFIER is already accepted.
+# The analogous level-88 VALUE-literal grammar (data_parser
+# ._read_condition_literal) already accepts this same
+# {STRING, NUMBER, IDENTIFIER, KEYWORD} shape for exactly this reason.
+_FIGURATIVE_CONSTANT_KEYWORDS: frozenset[str] = frozenset({"ZEROS", "SPACES"})
+
+
+def _is_comparison_operand_token(token: Token) -> bool:
+    """``True`` if *token* may stand as one side of an IF-condition comparison."""
+    return (
+        token.type is TokenType.IDENTIFIER
+        or token.type is TokenType.NUMBER
+        or token.type is TokenType.STRING
+        or (
+            token.type is TokenType.KEYWORD
+            and token.lexeme in _FIGURATIVE_CONSTANT_KEYWORDS
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sentinel condition_operator values for a level-88 condition-name reference
+# used bare as an IF condition (``IF TX-DEPOSIT``) or negated
+# (``IF NOT TX-VALID-KIND``), as opposed to an ordinary
+# ``<operand> <relational-operator> <operand>`` comparison. Neither string
+# can collide with a real comparison operator (see
+# _COMPARISON_OPERATOR_LEXEMES above), so a consumer can distinguish a
+# condition-name term from a comparison term by checking
+# ``operator in (_CONDITION_NAME_TRUE_OPERATOR, _CONDITION_NAME_FALSE_OPERATOR)``.
+# left and right both hold the condition-name itself (not two different
+# operands, since a condition-name reference is a unary test) -- this keeps
+# the existing three-string ConditionTerm/IfStatementNode shape exactly as
+# it is, with no new AST fields, and keeps both fields truthy so existing
+# business-rule extraction (which requires ``left and op and right`` to
+# recognise a comparison) picks the term up without needing any change
+# itself.
+# ---------------------------------------------------------------------------
+_CONDITION_NAME_TRUE_OPERATOR = "IS-TRUE"
+_CONDITION_NAME_FALSE_OPERATOR = "IS-FALSE"
 
 
 def _at_operand_boundary(token: Token) -> bool:
@@ -692,11 +822,10 @@ class ProcedureDivisionParser:
         """
         Record and skip one statement whose verb has no parser yet.
 
-        The cursor must be on the verb's first token.  Everything up to
-        and including the statement's terminating period is consumed, so
-        a scope-delimited construct such as ``EVALUATE ... END-EVALUATE.``
-        is skipped whole.  The scan stops short at EOF or at the next
-        division header so it can never run past the procedure division.
+        The cursor must be on the verb's first token. Everything up to and
+        including the statement's terminating period is consumed. The scan
+        stops short at EOF or at the next division header so it can never
+        run past the procedure division.
 
         An unsupported statement written *without* a period terminator
         also stops at the start of the next statement, so that the
@@ -708,9 +837,27 @@ class ProcedureDivisionParser:
             STOP RUN.
 
         Here the skip ends at ``STOP`` instead of running on to the
-        period that terminates ``STOP RUN``.  Scope-opening verbs are
-        excluded from that rule: their bodies legitimately contain
-        statements, so they are still skipped to their period.
+        period that terminates ``STOP RUN``.
+
+        Scope-opening verbs with a known closing word (currently only
+        ``EVALUATE`` -> ``END-EVALUATE``) are skipped by matching that
+        closing word, honoring same-verb nesting, rather than by scanning
+        for the next period. This matters because a scope-opening
+        construct used as the *last* statement inside an enclosing
+        ``IF``/``ELSE`` block legitimately has no period of its own — its
+        end is implied by the enclosing block's own ``END-IF`` — and a
+        naive "scan to next period" would run straight past that
+        ``END-IF`` and consume whatever real statement follows it
+        (docs/MMIM_PARSER_VALIDATION_FIX.md, COMPUTE/EVALUATE-inside-IF
+        follow-up). Once the matching closing word is found, one
+        immediately-following period is consumed if present, and the skip
+        always stops there — never continuing to hunt for a later period.
+
+        ``SEARCH`` (the other scope-opening verb) has no matching entry in
+        ``_SCOPE_CLOSE_WORDS`` and keeps the original, unbounded
+        scan-to-next-period behavior unchanged — out of scope here since
+        the paragraph-level case this exists for was never affected and
+        no test exercises ``SEARCH`` inside an ``IF``/``ELSE`` block.
 
         Args:
             state: Active parser state, positioned on the verb.
@@ -725,7 +872,9 @@ class ProcedureDivisionParser:
         for _ in range(word_count - 1):
             words.append(stream.advance().lexeme)
         verb_text = " ".join(words).upper()
-        opens_scope = verb_token.lexeme.upper() in _SCOPE_OPENING_LEXEMES
+        open_word = verb_token.lexeme.upper()
+        opens_scope = open_word in _SCOPE_OPENING_LEXEMES
+        close_word = _SCOPE_CLOSE_WORDS.get(open_word)
 
         logger.debug(
             "ProcedureDivisionParser: skipping unsupported statement {!r}.",
@@ -740,6 +889,14 @@ class ProcedureDivisionParser:
             context=RecoveryContext.STATEMENT,
             code="SYN100",
         )
+
+        if open_word == "READ":
+            self._skip_read_statement(stream)
+            return
+
+        if opens_scope and close_word is not None:
+            self._skip_to_matching_close_word(stream, open_word, close_word)
+            return
 
         while not stream.eof():
             tok = stream.current()
@@ -759,6 +916,129 @@ class ProcedureDivisionParser:
                 and stream.peek().lexeme.upper() == "DIVISION"
             ):
                 break
+            stream.advance()
+
+    @staticmethod
+    def _skip_to_matching_close_word(
+        stream: TokenStream, open_word: str, close_word: str
+    ) -> None:
+        """
+        Consume tokens up to and including the ``close_word`` that matches
+        the already-consumed ``open_word``, honoring same-verb nesting
+        (an ``open_word`` seen again before the matching ``close_word``
+        increments the nesting depth). One immediately-following period is
+        then consumed if present. Stops early at EOF or a division header,
+        exactly like the generic skip path — never reads past that.
+        """
+        depth = 1
+        while not stream.eof():
+            tok = stream.current()
+            if tok.type is TokenType.EOF:
+                return
+            if tok.type in (TokenType.KEYWORD, TokenType.IDENTIFIER):
+                upper = tok.lexeme.upper()
+                if upper == open_word:
+                    depth += 1
+                    stream.advance()
+                    continue
+                if upper == close_word:
+                    depth -= 1
+                    stream.advance()
+                    if depth <= 0:
+                        if stream.current().type is TokenType.PERIOD:
+                            stream.advance()
+                        return
+                    continue
+                if (
+                    tok.type is TokenType.KEYWORD
+                    and upper in _DIVISION_KEYWORDS
+                    and stream.peek().type is TokenType.KEYWORD
+                    and stream.peek().lexeme.upper() == "DIVISION"
+                ):
+                    return
+            stream.advance()
+
+    @staticmethod
+    def _skip_read_statement(stream: TokenStream) -> None:
+        """
+        Skip an unsupported ``READ`` statement (the cursor is positioned
+        just past the already-consumed ``READ`` verb token).
+
+        ``READ`` has no AST node or parser of its own (:data:`SYN100`,
+        same as every other verb in :data:`_UNSUPPORTED_STATEMENT_LEXEMES`).
+        Its ``AT END`` / ``NOT AT END`` clauses legitimately contain full
+        imperative statements (``MOVE``, ``ADD``, ...) — real COBOL grammar,
+        confirmed against the corpus (e.g. ``READ F INTO R AT END MOVE 'Y'
+        TO EOF-FLAG NOT AT END ADD 1 TO COUNT END-READ.``). Before this
+        method existed, the generic "scan to next period, but stop at the
+        first statement-verb token" skip (below, still used for every other
+        unsupported verb without a known closing word) treated that nested
+        ``MOVE``/``ADD`` as the *next real statement* — ending the READ's
+        skip early and leaving the clause's tail (e.g. ``TO WS-EOF-FLAG NOT
+        AT END``) to be absorbed as part of that nested statement's own
+        operand text by the ordinary statement parser, corrupting it (a
+        ``MoveStatementNode`` with target ``"WS-EOF-FLAG NOT AT END"``,
+        traced directly to this mechanism; see
+        ``docs/MMIM_READ_AT_END_PARSING_FIX.md``).
+
+        This method instead tracks whether an ``AT`` token (the only word
+        that introduces ``AT END``/``NOT AT END`` in this grammar) has been
+        seen yet:
+
+        * **Before** the first ``AT``: behaves exactly like the generic
+          skip — a statement-boundary token (:func:`_at_operand_boundary`)
+          still ends the skip early, so a bare ``READ F1`` with no clause at
+          all, immediately followed by another period-less unsupported or
+          supported statement, is completely unaffected (this is the shape
+          ``tests/parser/test_statement_boundaries.py`` and
+          ``tests/parser/test_token_type_regressions.py`` already pin).
+        * **From** the first ``AT`` onward: statement-boundary tokens no
+          longer end the skip (they are legitimately part of a clause's
+          nested statement) — only ``END-READ`` or a bare period does.
+
+        A bare period always ends the READ, at any point (real COBOL: a
+        ``READ`` with no ``END-READ`` is closed by the sentence's own
+        terminating period — verified against
+        ``tests/fixtures/phase5/file_processing.cbl``,
+        ``READ CUST-FILE AT END MOVE 'Y' TO WS-EOF.``, which has no
+        ``END-READ`` at all). ``END-READ`` is still recognised even before
+        any ``AT`` is seen, for a (COBOL-legal but corpus-unseen) ``READ F1
+        END-READ.`` with no clause. Stops early at EOF or a division header,
+        matching every other skip path in this class.
+
+        Scope note: only ``AT END``/``NOT AT END`` are recognised. A READ
+        using ``INVALID KEY``/``NOT INVALID KEY`` instead (random access)
+        has no ``AT`` token, so it is not protected by this method and keeps
+        the pre-existing generic-skip behavior — not present anywhere in the
+        current corpus or test fixtures, and deliberately out of this
+        task's scope (see the fix doc's "remaining gaps").
+        """
+        seen_at = False
+        while not stream.eof():
+            tok = stream.current()
+            if tok.type is TokenType.EOF:
+                return
+            if tok.type is TokenType.PERIOD:
+                stream.advance()
+                return
+            if tok.type in (TokenType.KEYWORD, TokenType.IDENTIFIER):
+                upper = tok.lexeme.upper()
+                if upper == "END-READ":
+                    stream.advance()
+                    if stream.current().type is TokenType.PERIOD:
+                        stream.advance()
+                    return
+                if upper == "AT":
+                    seen_at = True
+                elif not seen_at and _at_operand_boundary(tok):
+                    return
+                elif (
+                    tok.type is TokenType.KEYWORD
+                    and upper in _DIVISION_KEYWORDS
+                    and stream.peek().type is TokenType.KEYWORD
+                    and stream.peek().lexeme.upper() == "DIVISION"
+                ):
+                    return
             stream.advance()
 
     # ------------------------------------------------------------------
@@ -810,6 +1090,8 @@ class ProcedureDivisionParser:
             return self._parse_if_statement(state)
         if upper == "PERFORM":
             return self._parse_perform_statement(state)
+        if upper == "GO":
+            return self._parse_go_to_statement(state)
 
         raise ParserError(
             f"unsupported statement keyword {upper!r}",
@@ -1375,18 +1657,44 @@ class ProcedureDivisionParser:
     # Control flow statement parsers
     # ------------------------------------------------------------------
 
-    def _parse_if_statement(self, state: ParserState) -> IfStatementNode:
-        stream = state.stream
-        start = stream.current().position
-        stream.advance()  # consume IF
+    def _parse_simple_condition(self, state: ParserState) -> tuple[str, str, str]:
+        """
+        Parse one ``<operand> [NOT] <comparison-operator> <operand>`` triple —
+        the shape both a plain ``IF`` condition and each ``AND``/``OR``-
+        joined term of a compound one share. Does not consume a *leading*
+        ``AND``/``OR``/``NOT`` or ``(``/``)`` — a compound or parenthesised
+        condition is assembled by the caller from repeated calls to this
+        method (see :meth:`_parse_if_statement`).
 
-        # Parse condition
+        A ``NOT`` sitting *between* the two operands (COBOL's own
+        ``relational-operator ::= [NOT] { = | > | < | >= | <= | <> }``
+        grammar, e.g. ``IF WS-CODE NOT = 'AUTO'``) negates the operator that
+        follows it (task #stage25): it is consumed here and the operator is
+        replaced by its negation from :data:`_NEGATED_OPERATOR` before the
+        triple is returned, so every caller -- and everything downstream:
+        the IR, the Java backend, business-rule/behavioral text -- sees the
+        already-supported plain spelling (``NOT =`` becomes ``<>``) and
+        needs no further change. This is a different position from the
+        *leading* ``NOT`` before an entire condition (``IF NOT WS-CODE =
+        'AUTO'``, or a level-88 reference), which :meth:`_parse_condition_term`
+        handles for a known condition-name and otherwise deliberately leaves
+        unconsumed -- that remains the separate, out-of-scope gap its own
+        docstring names.
+
+        Callers needing to admit a bare level-88 condition-name reference
+        alongside an ordinary comparison should call
+        :meth:`_parse_condition_term` instead, which dispatches here only
+        once it has ruled that out.
+
+        Either operand may also be a figurative constant (task #stage26,
+        e.g. ``IF WS-CODE = SPACES``) — see
+        :func:`_is_comparison_operand_token` and :data:`_FIGURATIVE_CONSTANT_KEYWORDS`
+        for exactly which spellings that widens acceptance for and why.
+        """
+        stream = state.stream
+
         tok = stream.current()
-        if (
-            tok.type is not TokenType.IDENTIFIER
-            and tok.type is not TokenType.NUMBER
-            and tok.type is not TokenType.STRING
-        ):
+        if not _is_comparison_operand_token(tok):
             raise ParserError(
                 "expected operand for IF condition",
                 line=tok.position.line,
@@ -1396,30 +1704,35 @@ class ProcedureDivisionParser:
         left = tok.lexeme
         stream.advance()
 
+        negated = False
+        if matches_grammar_word(stream.current(), {"NOT"}):
+            negated = True
+            stream.advance()  # consume NOT; the operator it negates follows
+
         tok = stream.current()
-        if tok.type.name not in (
-            "OPERATOR_EQ",
-            "OPERATOR_GT",
-            "OPERATOR_LT",
-            "OPERATOR_GE",
-            "OPERATOR_LE",
-            "OPERATOR_NEQ",
-        ) and tok.lexeme not in ("=", ">", "<", ">=", "<=", "!=", "=="):
+        if not _is_comparison_operator_token(tok):
             raise ParserError(
                 "expected comparison operator in IF condition",
                 line=tok.position.line,
                 column=tok.position.column,
                 offset=tok.position.offset,
             )
-        operator = tok.lexeme
+        if negated:
+            negation = _NEGATED_OPERATOR.get(tok.lexeme)
+            if negation is None:  # pragma: no cover — every accepted lexeme is mapped
+                raise ParserError(
+                    f"NOT is not supported before comparison operator {tok.lexeme!r}",
+                    line=tok.position.line,
+                    column=tok.position.column,
+                    offset=tok.position.offset,
+                )
+            operator = negation
+        else:
+            operator = tok.lexeme
         stream.advance()
 
         tok = stream.current()
-        if (
-            tok.type is not TokenType.IDENTIFIER
-            and tok.type is not TokenType.NUMBER
-            and tok.type is not TokenType.STRING
-        ):
+        if not _is_comparison_operand_token(tok):
             raise ParserError(
                 "expected operand for IF condition",
                 line=tok.position.line,
@@ -1429,7 +1742,116 @@ class ProcedureDivisionParser:
         right = tok.lexeme
         stream.advance()
 
+        return left, operator, right
+
+    def _parse_condition_term(self, state: ParserState) -> tuple[str, str, str]:
+        """
+        Parse one ``IF``-condition term, admitting a bare level-88
+        condition-name reference (optionally ``NOT``-prefixed) in addition
+        to the ordinary ``<operand> <comparison-operator> <operand>``
+        shape :meth:`_parse_simple_condition` already handles. This is the
+        entry point :meth:`_parse_if_statement` calls for the leading term
+        and every ``AND``/``OR``-joined one; :meth:`_parse_simple_condition`
+        itself is unchanged and still does the actual comparison parsing.
+
+        A bare identifier is only ever treated as a condition-name
+        reference when it is one of ``state.known_condition_names`` —
+        collected from the program's own DATA DIVISION AST by
+        :class:`~app.parser.syntax.program_parser.ProgramParser` before
+        the PROCEDURE DIVISION is parsed (empty if there is no such
+        state, e.g. a procedure-division-only unit test that never set
+        it). An identifier the DATA DIVISION never declared as level-88
+        is never guessed at — it falls through to
+        :meth:`_parse_simple_condition`, which raises the same
+        "expected comparison operator" error as before this method
+        existed, preserving that diagnostic for every other case
+        (including the unrelated ``NOT =`` negated-equality gap, which
+        this method does not attempt to handle: ``NOT`` here is accepted
+        only immediately before a *known* condition-name).
+
+        Returns:
+            A ``(left, operator, right)`` triple. For a condition-name
+            term, ``operator`` is :data:`_CONDITION_NAME_TRUE_OPERATOR` or
+            :data:`_CONDITION_NAME_FALSE_OPERATOR` and ``left``/``right``
+            both hold the condition-name itself (see the module-level
+            comment above those constants for why).
+        """
+        stream = state.stream
+        known = state.known_condition_names
+
+        negated = False
+        lookahead_index = 0
+        if matches_grammar_word(stream.current(), {"NOT"}):
+            negated = True
+            lookahead_index = 1
+
+        candidate = stream.peek(lookahead_index)
+        if candidate.type is TokenType.IDENTIFIER and candidate.lexeme.upper() in known:
+            following = stream.peek(lookahead_index + 1)
+            if not _is_comparison_operator_token(following):
+                if negated:
+                    stream.advance()  # consume NOT
+                name = candidate.lexeme.upper()
+                stream.advance()  # consume the condition-name identifier
+                operator = (
+                    _CONDITION_NAME_FALSE_OPERATOR
+                    if negated
+                    else _CONDITION_NAME_TRUE_OPERATOR
+                )
+                return name, operator, name
+
+        # Not a recognised condition-name reference (negated or not) --
+        # fall through to the ordinary comparison grammar, unchanged. A
+        # leading NOT that turned out not to precede a known
+        # condition-name is deliberately left unconsumed here: it is the
+        # unrelated, out-of-scope "NOT <comparison>" gap, and
+        # _parse_simple_condition's existing "expected operand"/"expected
+        # comparison operator" diagnostics on the NOT token itself are the
+        # same honest failure this whole grammar already gave it.
+        return self._parse_simple_condition(state)
+
+    def _parse_if_statement(self, state: ParserState) -> IfStatementNode:
+        stream = state.stream
+        start = stream.current().position
+        stream.advance()  # consume IF
+
+        # Parse the first (and, for a plain IF, only) condition term --
+        # either an ordinary comparison or a level-88 condition-name
+        # reference (see _parse_condition_term).
+        left, operator, right = self._parse_condition_term(state)
+
+        # Compound condition: zero or more further AND/OR-joined terms.
+        # AND binds tighter than OR (COBOL's own precedence rule); see
+        # ConditionTerm's docstring. Parenthesised sub-conditions are
+        # deliberately not handled here — the operand check inside
+        # _parse_simple_condition rejects a leading '(' with a clear
+        # ParserError rather than silently misparsing it.
+        extra_conditions: list[ConditionTerm] = []
+        while stream.current().lexeme.upper() in ("AND", "OR"):
+            connector = stream.current().lexeme.upper()
+            stream.advance()  # consume AND/OR
+            term_left, term_operator, term_right = self._parse_condition_term(state)
+            extra_conditions.append(
+                ConditionTerm(
+                    connector=connector,
+                    left=term_left,
+                    operator=term_operator,
+                    right=term_right,
+                )
+            )
+
         # Parse statements until ELSE or END-IF
+        #
+        # An unsupported verb (COMPUTE, EVALUATE, ...) here used to raise a
+        # hard ParserError, which the caller's statement-level recovery
+        # resolves by synchronising to the next PERIOD -- and a structured
+        # IF/END-IF has no interior periods, so that swallowed the rest of
+        # the paragraph (docs/MMIM_PARSER_VALIDATION_FIX.md §7). The
+        # paragraph-level statement loop already has a graceful path for
+        # exactly this case (_skip_unsupported_statement, tested in
+        # tests/parser/test_statement_boundaries.py::
+        # test_scope_delimited_construct_still_skipped_whole); this mirrors
+        # it here instead of inventing new recovery behavior.
         then_statements = []
         while not stream.eof():
             tok = stream.current()
@@ -1437,6 +1859,8 @@ class ProcedureDivisionParser:
                 break
             if tok.lexeme.upper() in _STATEMENT_LEXEMES:
                 then_statements.append(self._parse_statement(state))
+            elif tok.lexeme.upper() in _UNSUPPORTED_STATEMENT_LEXEMES:
+                self._skip_unsupported_statement(state)
             else:
                 raise ParserError(
                     "expected statement in IF block",
@@ -1454,6 +1878,8 @@ class ProcedureDivisionParser:
                     break
                 if tok.lexeme.upper() in _STATEMENT_LEXEMES:
                     else_statements.append(self._parse_statement(state))
+                elif tok.lexeme.upper() in _UNSUPPORTED_STATEMENT_LEXEMES:
+                    self._skip_unsupported_statement(state)
                 else:
                     raise ParserError(
                         "expected statement in ELSE block",
@@ -1491,6 +1917,7 @@ class ProcedureDivisionParser:
             condition_right=right,
             then_statements=tuple(then_statements),
             else_statements=tuple(else_statements),
+            extra_conditions=tuple(extra_conditions),
         )
 
     def _parse_perform_statement(self, state: ParserState) -> StatementNode:
@@ -1515,6 +1942,18 @@ class ProcedureDivisionParser:
             right = tok.lexeme
             stream.advance()
 
+            # An unsupported verb (READ, COMPUTE, EVALUATE, ...) here used to
+            # raise a hard ParserError, which the caller's statement-level
+            # recovery resolves by synchronising to the next PERIOD -- and a
+            # structured PERFORM UNTIL/END-PERFORM has no interior periods of
+            # its own guaranteed, so that could swallow the rest of the
+            # paragraph, exactly the defect class
+            # docs/MMIM_PARSER_VALIDATION_FIX.md §7 fixed for IF/ELSE blocks
+            # (task #stage28; the identical gap was found but left
+            # unfixed there, docs/MMIM_COMPUTE_EVALUATE_IF_FIX.md §8). This
+            # mirrors that fix exactly: the same graceful
+            # _skip_unsupported_statement path _parse_if_statement's
+            # then/else loops already use.
             statements = []
             while not stream.eof():
                 tok = stream.current()
@@ -1522,6 +1961,8 @@ class ProcedureDivisionParser:
                     break
                 if tok.lexeme.upper() in _STATEMENT_LEXEMES:
                     statements.append(self._parse_statement(state))
+                elif tok.lexeme.upper() in _UNSUPPORTED_STATEMENT_LEXEMES:
+                    self._skip_unsupported_statement(state)
                 else:
                     raise ParserError(
                         "expected statement in PERFORM block",
@@ -1559,7 +2000,13 @@ class ProcedureDivisionParser:
                 statements=tuple(statements),
             )
         else:
-            # Inline PERFORM with just a target (e.g. PERFORM PARAGRAPH-NAME)
+            # Inline PERFORM with just a target (e.g. PERFORM PARAGRAPH-NAME),
+            # optionally followed by a THRU/THROUGH range end (task
+            # #stage16: PERFORM A THRU C). Neither "THRU" nor "THROUGH" is a
+            # reserved word in this lexer -- both arrive as a bare
+            # IDENTIFIER token, exactly like READ's "AT" marker
+            # (_skip_read_statement) -- so it is recognised here by lexeme,
+            # not token type.
             if tok.type is not TokenType.IDENTIFIER:
                 raise ParserError(
                     "expected paragraph name for PERFORM",
@@ -1569,8 +2016,94 @@ class ProcedureDivisionParser:
                 )
             target = tok.lexeme
             stream.advance()
+
+            thru_target = ""
+            tok = stream.current()
+            if tok.lexeme.upper() in ("THRU", "THROUGH"):
+                stream.advance()  # consume THRU/THROUGH
+                tok = stream.current()
+                if tok.type is not TokenType.IDENTIFIER:
+                    raise ParserError(
+                        "expected paragraph name after THRU/THROUGH in PERFORM",
+                        line=tok.position.line,
+                        column=tok.position.column,
+                        offset=tok.position.offset,
+                    )
+                thru_target = tok.lexeme
+                stream.advance()
+
             return PerformStatementNode(
                 start_position=start,
                 end_position=stream.current().position,
                 target=target,
+                thru_target=thru_target,
             )
+
+    def _parse_go_to_statement(self, state: ParserState) -> GoToStatementNode:
+        """
+        Parse a simple ``GO TO paragraph-name`` statement (task #stage17).
+
+        Grammar rule::
+
+            go-to-statement ::= GO TO paragraph-name PERIOD
+
+        Neither ``GO`` nor ``TO`` is a reserved word in this lexer (both
+        arrive as ordinary ``IDENTIFIER`` tokens), so ``TO`` is recognised
+        here by lexeme, the same way ``PERFORM``'s ``THRU``/``THROUGH`` and
+        ``READ``'s ``AT`` markers already are.
+
+        Only the single-target form is implemented. Real COBOL also allows
+        ``GO TO A B C ... DEPENDING ON identifier`` (a computed multi-way
+        jump); this corpus contains no such usage (confirmed by direct
+        search across all 45 sources -- only ever ``GO TO`` a single
+        paragraph name), so it is deliberately not implemented here rather
+        than guessed at. If a second identifier follows the target instead
+        of a period (i.e. something resembling that form), it is left on
+        the stream: the paragraph-level statement loop's existing
+        unexpected-token recovery reports and safely skips it, exactly as
+        it already does for any other not-yet-supported clause extension
+        -- this method never silently narrows a multi-target jump down to
+        "always go to the first name".
+
+        Args:
+            state: Active parser state; cursor on ``GO``.
+
+        Returns:
+            An immutable :class:`~app.parser.ast.statements.GoToStatementNode`.
+
+        Raises:
+            ParserError: If ``TO`` or the target paragraph name is missing.
+        """
+        stream = state.stream
+        start = stream.current().position
+        stream.advance()  # consume GO
+
+        tok = stream.current()
+        if tok.lexeme.upper() != "TO":
+            raise ParserError(
+                "expected TO after GO",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+        stream.advance()  # consume TO
+
+        tok = stream.current()
+        if tok.type is not TokenType.IDENTIFIER:
+            raise ParserError(
+                "expected paragraph name after GO TO",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+        target = tok.lexeme
+        stream.advance()
+
+        end = stream.current().position
+        self._consume_optional_period(state)
+
+        return GoToStatementNode(
+            start_position=start,
+            end_position=end,
+            target=target,
+        )

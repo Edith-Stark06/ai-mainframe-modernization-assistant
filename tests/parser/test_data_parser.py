@@ -542,6 +542,176 @@ class TestConditionNameDeclaration:
         assert isinstance(items[0], ElementaryItemNode)
         assert isinstance(items[1], ConditionNameNode)
 
+    def test_88_condition_name_with_value_populates_values_tuple(self) -> None:
+        """Singular VALUE also populates the new `values` tuple (a single
+        element mirroring `value`), so a consumer can read `values`
+        uniformly regardless of which clause form was used."""
+        tokens = (
+            _data_header()
+            + _ws_header()
+            + [_num("88"), _id("END-OF-FILE"), _kw("VALUE"), _str_tok("'Y'"), _period()]
+            + [_eof()]
+        )
+        node = self._parse(tokens)
+        item = node.working_storage.items[0]
+        assert isinstance(item, ConditionNameNode)
+        assert item.value == "'Y'"
+        assert item.values == ("'Y'",)
+
+    def test_88_condition_name_no_value_has_empty_values_tuple(self) -> None:
+        tokens = (
+            _data_header()
+            + _ws_header()
+            + [_num("88"), _id("END-OF-FILE"), _period()]
+            + [_eof()]
+        )
+        node = self._parse(tokens)
+        item = node.working_storage.items[0]
+        assert isinstance(item, ConditionNameNode)
+        assert item.value is None
+        assert item.values == ()
+
+
+class TestConditionNameValuesPluralForm:
+    """88-level items declared with the plural ``VALUES lit lit ...`` form
+    (``VALUES`` is not a lexer keyword -- see data_parser.py's
+    ``matches_grammar_word`` usage -- so this exercises a real lexeme-only
+    dispatch, not just a different keyword token)."""
+
+    def _parse(self, tokens: list[Token]) -> DataDivisionNode:
+        state = _make_state(tokens)
+        return DataDivisionParser().parse(state)
+
+    def test_values_two_literals(self) -> None:
+        tokens = (
+            _data_header()
+            + _ws_header()
+            + [
+                _num("88"),
+                _id("PHYSICAL-BRANCH"),
+                _id("VALUES"),
+                _str_tok("'BRN'"),
+                _str_tok("'ATM'"),
+                _period(),
+            ]
+            + [_eof()]
+        )
+        node = self._parse(tokens)
+        assert node.working_storage is not None
+        assert len(node.working_storage.items) == 1
+        item = node.working_storage.items[0]
+        assert isinstance(item, ConditionNameNode)
+        assert item.level == 88
+        assert item.name == "PHYSICAL-BRANCH"
+        assert item.value is None
+        assert item.values == ("'BRN'", "'ATM'")
+
+    def test_values_four_literals_matches_real_corpus_shape(self) -> None:
+        """Exact shape of `t_condition_names_88.cbl`'s
+        `88 TX-VALID-KIND VALUES 'D' 'W' 'T' 'F'.`"""
+        tokens = (
+            _data_header()
+            + _ws_header()
+            + [
+                _num("88"),
+                _id("TX-VALID-KIND"),
+                _id("VALUES"),
+                _str_tok("'D'"),
+                _str_tok("'W'"),
+                _str_tok("'T'"),
+                _str_tok("'F'"),
+                _period(),
+            ]
+            + [_eof()]
+        )
+        node = self._parse(tokens)
+        item = node.working_storage.items[0]
+        assert isinstance(item, ConditionNameNode)
+        assert item.values == ("'D'", "'W'", "'T'", "'F'")
+
+    def test_values_with_numeric_literals(self) -> None:
+        tokens = (
+            _data_header()
+            + _ws_header()
+            + [
+                _num("88"),
+                _id("VALID-CODE"),
+                _id("VALUES"),
+                _num("1"),
+                _num("2"),
+                _num("3"),
+                _period(),
+            ]
+            + [_eof()]
+        )
+        node = self._parse(tokens)
+        item = node.working_storage.items[0]
+        assert isinstance(item, ConditionNameNode)
+        assert item.values == ("1", "2", "3")
+
+    def test_values_does_not_disturb_following_item(self) -> None:
+        """The item after a VALUES-form condition-name still parses
+        correctly -- the plural form's literal-collection loop stops
+        exactly at the period and does not overrun."""
+        tokens = (
+            _data_header()
+            + _ws_header()
+            + [
+                _num("88"),
+                _id("TX-VALID-KIND"),
+                _id("VALUES"),
+                _str_tok("'D'"),
+                _str_tok("'W'"),
+                _period(),
+            ]
+            + [_num("05"), _id("NEXT-ITEM")]
+            + _pic_clause("X")
+            + [_period()]
+            + [_eof()]
+        )
+        node = self._parse(tokens)
+        items = node.working_storage.items
+        assert len(items) == 2
+        assert isinstance(items[0], ConditionNameNode)
+        assert items[0].values == ("'D'", "'W'")
+        assert isinstance(items[1], ElementaryItemNode)
+        assert items[1].name == "NEXT-ITEM"
+
+    def test_values_thru_range_is_an_explicit_unsupported_error(self) -> None:
+        """THRU ranges are real, standard COBOL but unused anywhere in this
+        corpus; rather than silently mis-collecting THRU as if it were a
+        literal value, this form raises a clear, honest error -- recorded
+        as a recoverable diagnostic (item-level errors recover, per
+        TestDataDivisionParserErrors above), not a swallowed miss-parse."""
+        tokens = (
+            _data_header()
+            + _ws_header()
+            + [
+                _num("88"),
+                _id("MID-RANGE"),
+                _id("VALUES"),
+                _num("1"),
+                _id("THRU"),
+                _num("9"),
+                _period(),
+            ]
+            + [_eof()]
+        )
+        state = _make_state(tokens)
+        DataDivisionParser().parse(state)
+        assert state.has_errors
+        assert any("THRU" in d.message for d in state.diagnostics)
+
+    def test_values_missing_literal_raises(self) -> None:
+        tokens = (
+            _data_header()
+            + _ws_header()
+            + [_num("88"), _id("BAD-COND"), _id("VALUES"), _eof()]
+        )
+        state = _make_state(tokens)
+        DataDivisionParser().parse(state)
+        assert state.has_errors
+
 
 # ---------------------------------------------------------------------------
 # DataDivisionParser — error cases

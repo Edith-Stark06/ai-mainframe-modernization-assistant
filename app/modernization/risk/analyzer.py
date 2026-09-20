@@ -67,6 +67,8 @@ Deterministic severity policy (task #113):
   EXTERNAL_CALL              HIGH if the CALL passes arguments (a data
                              contract to validate); MEDIUM otherwise.
   UNRESOLVED_PERFORM_TARGET  MEDIUM.
+  UNRESOLVED_GO_TO_TARGET    MEDIUM (task #stage18; same policy as the
+                             PERFORM counterpart).
   COMPLEX_CONTROL_FLOW       MEDIUM if back-edges (loops) or GO TO
                              transfers exist; LOW for forward branching
                              only.
@@ -125,6 +127,7 @@ class RiskAnalyzer:
         raw += self._detect_parser_coverage_gap(analysis_result)
         raw += self._detect_external_calls(analysis_result)
         raw += self._detect_unresolved_perform_targets(analysis_result, flow)
+        raw += self._detect_unresolved_go_to_targets(analysis_result, flow)
         raw += self._detect_complex_control_flow(analysis_result, flow)
         raw += self._detect_deeply_nested_conditions(analysis_result)
         raw += self._detect_shared_mutable_state(analysis_result)
@@ -409,6 +412,67 @@ class RiskAnalyzer:
                     "Confirm for each unresolved target whether it is an external "
                     "routine, an unsupported PERFORM form, or dead code, and resolve "
                     "it before relying on the control-flow graph."
+                ),
+                occurrence_count=sum(len(s) for s in targets.values()),
+            )
+        ]
+
+    def _detect_unresolved_go_to_targets(
+        self, ar: AnalysisResult, flow: Flow | None
+    ) -> list[ModernizationRisk]:
+        """
+        A GO TO whose target is not a paragraph defined in this program
+        (task #stage18). Detected from the CFG's synthetic ``EXTERNAL``
+        nodes reached by ``GOES_TO`` edges -- the mirror of
+        :meth:`_detect_unresolved_perform_targets`, which only ever looks
+        at ``PERFORMS`` edges.
+
+        The edge type is what makes this precise: a ``GOES_TO`` target is
+        always resolved as a *paragraph* by the flow generator (existing
+        paragraph / Stage-15 empty-paragraph anchor / ``EXTERNAL``), so an
+        ``EXTERNAL`` ``GOES_TO`` target means the paragraph genuinely does
+        not exist. An ``EXTERNAL`` node reached only by a ``CALLS`` or
+        ``PERFORMS`` edge (a real external CALL, an unresolved PERFORM)
+        never produces this risk. Severity: MEDIUM.
+        """
+        if flow is None:
+            return []
+        external_ids = {n.id for n in flow.nodes if n.node_type is NodeType.EXTERNAL}
+        if not external_ids:
+            return []
+        targets: dict[str, list[str]] = defaultdict(list)
+        node_by_id = {n.id: n for n in flow.nodes}
+        for edge in flow.edges:
+            if edge.edge_type is EdgeType.GOES_TO and edge.target_id in external_ids:
+                name = node_by_id[edge.target_id].name
+                targets[name].append(edge.source_id)
+        if not targets:
+            return []
+        return [
+            ModernizationRisk(
+                risk_id="RISK-PENDING",
+                category=RiskCategory.UNRESOLVED_GO_TO_TARGET,
+                severity=RiskSeverity.MEDIUM,
+                title="GO TO an unresolved target",
+                explanation=(
+                    "A GO TO names something that is not a paragraph defined in this "
+                    "program. It is either a misspelled or missing paragraph, a name "
+                    "this analysis does not model (for example a PROCEDURE DIVISION "
+                    "section), or dead code. An unconditional jump to an unknown "
+                    "target leaves the real control-flow successor unknown to the "
+                    "analysis."
+                ),
+                evidence=tuple(
+                    f"GO TO '{name}' (unresolved) — {len(srcs)} site(s)"
+                    for name, srcs in sorted(targets.items())
+                ),
+                affected_components=("<program>",),
+                confidence=_CONF_DIRECT,
+                recommended_mitigation=(
+                    "Confirm for each unresolved target whether it is a missing "
+                    "paragraph, a section or other construct this analysis does not "
+                    "model, or dead code, and resolve it before relying on the "
+                    "control-flow graph."
                 ),
                 occurrence_count=sum(len(s) for s in targets.values()),
             )

@@ -23,9 +23,15 @@ from typing import Any
 from app.dataset.analysis_bundle import AnalysisBundle
 from app.behavioral.extraction.conditions import (
     Comparison,
+    CompoundComparison,
+    evaluate_term,
     generate_boundary_values,
+    generate_compound_boundary_values,
+    parse_compound_condition,
     parse_condition,
+    strip_string_literal,
 )
+from app.behavioral.extraction.loops import extract_loop_tests
 from app.behavioral.extraction.models import (
     BehavioralSuite,
     BehavioralTestCase,
@@ -61,6 +67,65 @@ _METHOD_RE = re.compile(
 
 def _decamel(name: str) -> str:
     return re.sub(r"(?<!^)(?=[A-Z])", "-", name).upper()
+
+
+def _collect_condition_name_values(
+    ast: dict[str, Any] | None,
+) -> dict[str, tuple[str, ...]]:
+    """``{CONDITION-NAME: (declared value, ...)}`` straight off the real
+    DATA DIVISION AST — the only source of truth for what a level-88
+    condition-name's ``VALUE``/``VALUES`` clause actually declared (see
+    ``app/parser/ast/data_items.py::ConditionNameNode.values``,
+    ``docs/MMIM_LEVEL88_CONDITION_REFERENCE_FIX.md``). Never guessed or
+    hard-coded: a condition-name absent here (no DATA DIVISION, no
+    WORKING-STORAGE SECTION, or genuinely no such declaration) simply
+    yields no boundary values downstream — see
+    :func:`app.behavioral.extraction.conditions.generate_boundary_values`.
+
+    Only WORKING-STORAGE is walked, matching the parser's own scope (the
+    only DATA DIVISION section it represents in the AST); the section's
+    ``items`` is already a flat list (no subordinate-item nesting in this
+    parser), so no recursive walk is needed.
+    """
+    if not ast:
+        return {}
+    ws = ((ast.get("data_division") or {}).get("working_storage")) or {}
+    out: dict[str, tuple[str, ...]] = {}
+    for item in ws.get("items", []) or []:
+        if not isinstance(item, dict) or item.get("level") != 88:
+            continue
+        name = str(item.get("name", "")).strip().upper()
+        raw_values = item.get("values") or []
+        if name and raw_values:
+            out[name] = tuple(strip_string_literal(str(v)) for v in raw_values)
+    return out
+
+
+def _collect_condition_name_parents(ast: dict[str, Any] | None) -> dict[str, str]:
+    """``{CONDITION-NAME: parent data item}`` off the real DATA DIVISION AST.
+
+    A level-88 entry is subordinate to the nearest preceding non-88 item in
+    the (flat) WORKING-STORAGE item list. Several condition-names can share
+    one parent -- they are all conditions on that single storage location --
+    so compound-condition evidence must assign the *parent*, not each
+    condition-name independently (see
+    :func:`~app.behavioral.extraction.conditions.generate_compound_boundary_values`).
+    """
+    if not ast:
+        return {}
+    ws = ((ast.get("data_division") or {}).get("working_storage")) or {}
+    parents: dict[str, str] = {}
+    current: str | None = None
+    for item in ws.get("items", []) or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip().upper()
+        if item.get("level") == 88:
+            if name and current:
+                parents[name] = current
+        elif name:
+            current = name
+    return parents
 
 
 def _paragraph_spans(source: str, names: list[str]) -> dict[str, tuple[int, int]]:
@@ -206,6 +271,141 @@ def _apply_action(
     return None, None, None
 
 
+def _build_compound_tests(
+    *,
+    rule: dict[str, Any],
+    para: str | None,
+    compound: CompoundComparison,
+    condition_name_values: dict[str, tuple[str, ...]],
+    condition_name_parents: dict[str, str],
+    stub_code: str | None,
+    represented: set[str],
+    unsupported_codes: list[str],
+    sid: str,
+    path: str,
+) -> list[BehavioralTestCase]:
+    """One :class:`BehavioralTestCase` per boundary case
+    :func:`~app.behavioral.extraction.conditions.generate_compound_boundary_values`
+    derives for *rule*'s compound condition. Mirrors the single-term loop
+    in :func:`extract_behavioral_tests` exactly (same executability
+    checks, same action application, same error/category handling) --
+    the only structural difference is *inputs* holding one
+    :class:`InputValue` per distinct variable in the compound instead of
+    always exactly one.
+    """
+    known_values_map = {
+        t.variable: condition_name_values.get(t.variable, ()) for t in compound.terms
+    }
+    cases = generate_compound_boundary_values(
+        compound, known_values_map, condition_name_parents
+    )
+    rid = str(rule.get("rule_id", ""))
+
+    tests: list[BehavioralTestCase] = []
+    for values_by_variable, holds in cases:
+        variables_in_order = sorted(values_by_variable)
+        outputs: list[ExpectedOutput] = []
+        states: list[ExpectedStateChange] = []
+        calcs: list[ExpectedCalculation] = []
+        errors: list[ExpectedError] = []
+        rule_ids: list[str] = []
+        source_refs: list[SourceRef] = []
+
+        branch = ExpectedBranch(
+            branch_id=f"{para or sid}.{rid}.IF.{str(holds).lower()}",
+            paragraph=para or sid,
+            condition=compound.raw,
+            taken=holds,
+        )
+
+        if holds:
+            rule_ids.append(rid)
+            source_refs.extend(_rule_source_refs(rule, sid, path, para))
+            for action in rule.get("actions", []):
+                # No single variable is "the" comparison variable for a
+                # multi-variable compound condition -- passing "" means
+                # _apply_action's self-referencing-accumulator special
+                # case (which requires target == comparison_var) can
+                # never spuriously match, so an ambiguous case is left
+                # implicit rather than guessed at.
+                state, out, calc = _apply_action(action, "", "")
+                if state:
+                    states.append(state)
+                if out:
+                    outputs.append(out)
+                if calc:
+                    calcs.append(calc)
+            if str(rule.get("category", "")).upper() in _ERROR_CATEGORIES:
+                errors.append(
+                    ExpectedError(
+                        category=str(rule.get("category")),
+                        description=str(rule.get("description", "")),
+                        observable=bool(outputs or states),
+                    )
+                )
+
+        executable = True
+        reason = None
+        if para and para.upper() not in represented:
+            executable = False
+            reason = (
+                f"paragraph {para} has no representation in the generated "
+                f"Java (never PERFORMed from the entry paragraph)"
+            )
+        elif stub_code:
+            executable = False
+            reason = (
+                f"generated Java does not implement paragraph {para} "
+                f"(generator diagnostic {stub_code})"
+            )
+        elif unsupported_codes:
+            executable = False
+            reason = "source contains unsupported/unmodelled syntax: " + ", ".join(
+                sorted(set(unsupported_codes))
+            )
+
+        composite_variable = "+".join(variables_in_order)
+        composite_value = "|".join(
+            f"{var}={values_by_variable[var]}" for var in variables_in_order
+        )
+        tid = _test_id(sid, para or sid, composite_variable, composite_value)
+        description_values = ", ".join(
+            f"{var}={values_by_variable[var]}" for var in variables_in_order
+        )
+        tests.append(
+            BehavioralTestCase(
+                test_id=tid,
+                name=f"{sid}:{para or sid}:{composite_variable}={composite_value}",
+                description=(
+                    f"{description_values} in paragraph {para or sid}"
+                    + (f" (fires {rid})" if rule_ids else " (no rule fires)")
+                ),
+                inputs=tuple(
+                    InputValue(
+                        name=var,
+                        value=values_by_variable[var],
+                        source=InputSource.BOUNDARY_GENERATED,
+                        partition_of=compound.raw,
+                    )
+                    for var in variables_in_order
+                ),
+                expected_branches=(branch,),
+                expected_calculations=tuple(calcs),
+                expected_outputs=tuple(outputs),
+                expected_errors=tuple(errors),
+                expected_state_changes=tuple(states),
+                source_refs=tuple(source_refs),
+                business_rule_ids=tuple(sorted(set(rule_ids))),
+                confidence="high" if (outputs or states or errors) else "low",
+                executable=executable,
+                inconclusive_reason=reason,
+                extraction_version=EXTRACTION_VERSION,
+                source_id=sid,
+            )
+        )
+    return tests
+
+
 def extract_behavioral_tests(bundle: AnalysisBundle) -> BehavioralSuite:
     sid = bundle.source_id
     path = f"{sid}.cbl"
@@ -216,13 +416,17 @@ def extract_behavioral_tests(bundle: AnalysisBundle) -> BehavioralSuite:
     unsupported_codes = list(
         ((bundle.coverage or {}).get("unsupported_syntax") or {}).get("codes", [])
     )
+    condition_name_values = _collect_condition_name_values(bundle.ast)
+    condition_name_parents = _collect_condition_name_parents(bundle.ast)
 
     parsed: list[tuple[dict[str, Any], str | None, Comparison]] = []
+    handled_rule_ids: set[str] = set()
     for rule in bundle.business_rules or []:
         cmp = parse_condition(str(rule.get("condition", "")))
         para = _owning_paragraph(rule, spans)
         if cmp is not None:
             parsed.append((rule, para, cmp))
+            handled_rule_ids.add(str(rule.get("rule_id", "")))
 
     # group by (paragraph, variable) — an IF/ELSE pair shares both
     groups: dict[tuple[str | None, str], list[tuple[dict[str, Any], Comparison]]] = {}
@@ -233,9 +437,10 @@ def extract_behavioral_tests(bundle: AnalysisBundle) -> BehavioralSuite:
     for (para, variable), members in sorted(
         groups.items(), key=lambda kv: (kv[0][0] or "", kv[0][1])
     ):
+        known_values = condition_name_values.get(variable, ())
         values: dict[str, None] = {}
         for _rule, cmp in members:
-            for v, _taken in generate_boundary_values(cmp):
+            for v, _taken in generate_boundary_values(cmp, known_values):
                 values[v] = None
 
         stub_code = stubs.get(para or "", None)
@@ -249,7 +454,7 @@ def extract_behavioral_tests(bundle: AnalysisBundle) -> BehavioralSuite:
             source_refs: list[SourceRef] = []
 
             for rule, cmp in members:
-                taken = _evaluate(cmp, value)
+                taken = _evaluate(cmp, value, known_values)
                 rid = str(rule.get("rule_id", ""))
                 branches.append(
                     ExpectedBranch(
@@ -341,29 +546,54 @@ def extract_behavioral_tests(bundle: AnalysisBundle) -> BehavioralSuite:
                 )
             )
 
+    # STEP 14: compound AND/OR conditions -- a business rule whose
+    # condition parse_condition alone cannot represent (it was excluded
+    # from `parsed` above) but parse_compound_condition can, additive to
+    # the single-term tests above, never replacing them. Only rules not
+    # already handled by the single-term path are considered (a rule is
+    # never double-counted).
+    for rule in bundle.business_rules or []:
+        rid = str(rule.get("rule_id", ""))
+        if rid in handled_rule_ids:
+            continue
+        compound = parse_compound_condition(str(rule.get("condition", "")))
+        if compound is None:
+            continue  # genuinely unparseable -- excluded, same as today
+        para = _owning_paragraph(rule, spans)
+        tests.extend(
+            _build_compound_tests(
+                rule=rule,
+                para=para,
+                compound=compound,
+                condition_name_values=condition_name_values,
+                condition_name_parents=condition_name_parents,
+                stub_code=stubs.get(para or "", None),
+                represented=represented,
+                unsupported_codes=unsupported_codes,
+                sid=sid,
+                path=path,
+            )
+        )
+
+    # MMIM v2 extractor upgrade: deterministic PERFORM UNTIL loop/
+    # accumulator tests, additive to the #129 IF/ELSE boundary tests
+    # above — never replacing them (see app.behavioral.extraction.loops).
+    loop_tests, skipped_loops = extract_loop_tests(bundle)
+    tests.extend(loop_tests)
+
     tests.sort(key=lambda t: t.test_id)
     return BehavioralSuite(
         source_id=sid,
         extraction_version=EXTRACTION_VERSION,
         analysis_version=ANALYSIS_CONTRACT_VERSION,
         tests=tuple(tests),
+        skipped_loops=tuple(skipped_loops),
     )
 
 
-def _evaluate(cmp: Comparison, value: str) -> bool:
-    op = cmp.effective_operator
-    if cmp.is_numeric:
-        v, n = int(value), int(cmp.literal)
-        return {
-            ">=": v >= n,
-            "<=": v <= n,
-            ">": v > n,
-            "<": v < n,
-            "=": v == n,
-            "<>": v != n,
-        }[op]
-    if op == "=":
-        return value == cmp.literal
-    if op == "<>":
-        return value != cmp.literal
-    return False
+def _evaluate(cmp: Comparison, value: str, known_values: tuple[str, ...] = ()) -> bool:
+    # Delegates to conditions.evaluate_term, the single canonical
+    # implementation compound-condition evaluation (evaluate_compound)
+    # also uses, so a term's truth value is never derived two different
+    # ways depending on whether it appears alone or inside a compound.
+    return evaluate_term(cmp, value, known_values)
