@@ -1,0 +1,57 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. POLRED01.
+       AUTHOR. SYNTHETIC-CORPUS.
+      * CATEGORY B: DATA HIERARCHY - REDEFINES FOR POLYMORPHIC INSURANCE POLICIES
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  POLICY-CONTAINER.
+           05  POLICY-COMMON-HEADER.
+               10  POLICY-ID           PIC X(12) VALUE 'POL-99201-X'.
+               10  POLICY-KIND         PIC X(4) VALUE 'AUTO'.
+               10  ANNUAL-BASE-PREM    PIC 9(6)V99 VALUE 001200.00.
+           05  POLICY-RAW-PAYLOAD      PIC X(60) VALUE 'VIN12345678901234567SEDAN     02DRIVERSNOPERMIT             '.
+           05  AUTO-PAYLOAD REDEFINES POLICY-RAW-PAYLOAD.
+               10  VEHICLE-VIN         PIC X(17).
+               10  BODY-STYLE          PIC X(10).
+               10  NUM-VEHICLE-DRIVERS PIC 9(2).
+               10  SPECIAL-PERMIT-FLAG PIC X(1).
+               10  FILLER              PIC X(30).
+           05  LIFE-PAYLOAD REDEFINES POLICY-RAW-PAYLOAD.
+               10  BENEFICIARY-NAME    PIC X(30).
+               10  COVERAGE-DEATH-BEN  PIC 9(8)V99.
+               10  SMOKER-STATUS-CODE  PIC X(1).
+               10  FILLER              PIC X(21).
+       01  EVALUATION-RESULT.
+           05  FINAL-CALCULATED-PREM   PIC 9(7)V99 VALUE 0000000.00.
+           05  RISK-FLAG               PIC X(1) VALUE 'N'.
+
+       PROCEDURE DIVISION.
+       0000-EVALUATE-POLICY.
+           IF POLICY-KIND = 'AUTO'
+               PERFORM 1000-PROCESS-AUTO-POLICY
+           ELSE
+               IF POLICY-KIND = 'LIFE'
+                   PERFORM 2000-PROCESS-LIFE-POLICY
+               ELSE
+                   MOVE ANNUAL-BASE-PREM TO FINAL-CALCULATED-PREM
+               END-IF
+           END-IF
+           GOBACK.
+
+       1000-PROCESS-AUTO-POLICY.
+           IF NUM-VEHICLE-DRIVERS > 3
+               COMPUTE FINAL-CALCULATED-PREM = ANNUAL-BASE-PREM * 1.40
+               MOVE 'Y' TO RISK-FLAG
+           ELSE
+               COMPUTE FINAL-CALCULATED-PREM = ANNUAL-BASE-PREM * 1.05
+               MOVE 'N' TO RISK-FLAG
+           END-IF.
+
+       2000-PROCESS-LIFE-POLICY.
+           IF SMOKER-STATUS-CODE = 'Y'
+               COMPUTE FINAL-CALCULATED-PREM = ANNUAL-BASE-PREM * 2.10
+               MOVE 'Y' TO RISK-FLAG
+           ELSE
+               COMPUTE FINAL-CALCULATED-PREM = ANNUAL-BASE-PREM * 1.15
+               MOVE 'N' TO RISK-FLAG
+           END-IF.

@@ -213,6 +213,7 @@ class SymbolCollectorVisitor(SemanticVisitor):
             level=node.level,
             picture=node.picture,
             declared_at=node.start_position,
+            value=node.value,
         )
 
     def visit_group_item(self, node: GroupItemNode) -> None:
@@ -251,6 +252,7 @@ class SymbolCollectorVisitor(SemanticVisitor):
         level: int,
         picture: str | None,
         declared_at: object,
+        value: str | None = None,
     ) -> None:
         """
         Create and register a :class:`~app.parser.semantic.symbols.VariableSymbol`.
@@ -269,6 +271,9 @@ class SymbolCollectorVisitor(SemanticVisitor):
             declared_at:
                 The source :class:`~app.parser.lexer.position.Position` of the
                 data-name token.
+            value:
+                The raw ``VALUE`` clause literal of an elementary item, or
+                ``None`` (the default) when there is none.
         """
         from app.parser.lexer.position import Position
 
@@ -280,6 +285,7 @@ class SymbolCollectorVisitor(SemanticVisitor):
             declared_at=declared_at,
             level=level,
             picture=picture,
+            value=value,
         )
         registered = self._table.register(sym)
         if registered:

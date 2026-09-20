@@ -49,7 +49,7 @@ Project:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.parser.ast.node import ASTNode
 
@@ -57,6 +57,7 @@ __all__ = [
     "AcceptStatementNode",
     "AddStatementNode",
     "CallStatementNode",
+    "ConditionTerm",
     "DisplayStatementNode",
     "DivideStatementNode",
     "GoToStatementNode",
@@ -407,9 +408,47 @@ class GobackStatementNode(StatementNode):
 
 
 @dataclass(frozen=True)
+class ConditionTerm:
+    """
+    One ``<connector> <left> <operator> <right>`` term of a compound
+    ``IF`` condition, beyond the first (which stays in
+    :class:`IfStatementNode`'s own ``condition_left``/``condition_operator``/
+    ``condition_right`` for backward compatibility with every existing
+    consumer of that triple).
+
+    ``connector`` is always ``"AND"`` or ``"OR"`` — the keyword that joined
+    this term to the one before it, in source order.
+
+    Precedence convention: ``AND`` binds tighter than ``OR`` (COBOL's own
+    rule, and the one this parser now follows) — ``A AND B OR C`` parses
+    as ``(A AND B) OR C``, never ``A AND (B OR C)``. ``extra_conditions``
+    stores the flat left-to-right sequence of terms exactly as written;
+    a consumer that needs to *evaluate* a compound condition must group
+    consecutive ``AND``-connected terms before splitting on ``OR``, per
+    that convention — nothing currently does, so no evaluator is invented
+    here (see docs/MMIM_PARSER_VALIDATION_FIX.md).
+
+    Parenthesised sub-conditions (e.g. ``A AND (B OR C)``) are not
+    represented by this node — they remain unsupported and are reported
+    as a parse error, not silently misparsed as a flat term sequence.
+    """
+
+    connector: str
+    left: str
+    operator: str
+    right: str
+
+
+@dataclass(frozen=True)
 class IfStatementNode(StatementNode):
     """
     Immutable AST node for a COBOL ``IF`` statement.
+
+    ``condition_left``/``condition_operator``/``condition_right`` are the
+    *first* simple condition — unchanged in meaning and populated exactly
+    as before for a plain (non-compound) ``IF``. ``extra_conditions``
+    holds any further ``AND``/``OR``-joined comparisons, empty for a plain
+    ``IF``. See :class:`ConditionTerm` for the precedence convention.
     """
 
     condition_left: str
@@ -417,6 +456,7 @@ class IfStatementNode(StatementNode):
     condition_right: str
     then_statements: tuple[StatementNode, ...]
     else_statements: tuple[StatementNode, ...] = ()
+    extra_conditions: tuple[ConditionTerm, ...] = ()
 
     def accept(self, visitor: object) -> object:
         visit = getattr(visitor, "visit_if_statement", None)
@@ -429,9 +469,21 @@ class IfStatementNode(StatementNode):
 class PerformStatementNode(StatementNode):
     """
     Immutable AST node for a COBOL ``PERFORM`` statement.
+
+    Attributes:
+        target:
+            The paragraph (or section) name performed. For ``PERFORM A
+            THRU C``, this is the range's first name, ``A``.
+        thru_target:
+            The range's last name (``C`` in ``PERFORM A THRU C``), or
+            ``""`` for an ordinary ``PERFORM A`` with no ``THRU``/
+            ``THROUGH`` clause (task #stage16). Omitted from the
+            serialized AST while empty, so an ordinary PERFORM
+            serializes exactly as it always did.
     """
 
     target: str
+    thru_target: str = field(default="", metadata={"omit_if_empty": True})
 
     def accept(self, visitor: object) -> object:
         visit = getattr(visitor, "visit_perform_statement", None)

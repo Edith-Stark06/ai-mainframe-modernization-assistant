@@ -85,9 +85,17 @@ class BusinessRuleExtractor(ASTVisitor):
     def visit_if_statement(self, node: IfStatementNode) -> None:
         self._flush_actions()
 
+        # Every AND/OR-joined term of a compound IF, in source order (the
+        # parser's precedence: AND binds tighter than OR). An OR-containing
+        # chain is parenthesised so it stays one conjunct of the enclosing
+        # " AND " stack; a pure-AND chain is just more conjuncts.
         cond = f"{node.condition_left} {node.condition_operator} {node.condition_right}"
+        for term in node.extra_conditions:
+            cond += f" {term.connector} {term.left} {term.operator} {term.right}"
+        has_or = any(t.connector.upper() == "OR" for t in node.extra_conditions)
+        then_cond = f"({cond})" if has_or else cond
 
-        self._condition_stack.append(cond)
+        self._condition_stack.append(then_cond)
         for stmt in node.then_statements:
             stmt.accept(self)
         self._flush_actions()

@@ -96,12 +96,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from app.backend.java.condition_context import (
+    ConditionContext,
+    translate_comparison,
+    translate_condition_name,
+)
 from app.backend.java.generator import BackendDiagnostic, BackendSeverity
 
 if TYPE_CHECKING:
     from app.ir.instructions import IRIf, IRPerformUntil
 
 __all__ = [
+    "OPERATOR_ALIASES",
     "SUPPORTED_OPERATORS",
     "emit_else",
     "emit_end_if",
@@ -115,7 +121,24 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 SUPPORTED_OPERATORS: frozenset[str] = frozenset({"==", "!=", ">", ">=", "<", "<="})
-"""The set of comparison operator strings accepted by :func:`emit_if`."""
+"""The set of Java comparison operators :func:`emit_if` can emit."""
+
+_CONDITION_NAME_OPERATORS: frozenset[str] = frozenset({"IS-TRUE", "IS-FALSE"})
+"""The IR sentinels for a level-88 condition-name reference (``IF NAME`` /
+``IF NOT NAME``); see :mod:`app.backend.java.condition_context`."""
+
+OPERATOR_ALIASES: dict[str, str] = {"=": "==", "<>": "!="}
+"""COBOL spellings the parser passes through unchanged, mapped to the Java
+operator they mean. COBOL's equality operator is ``=``; the parser and IR
+builder keep it as ``=`` (they never normalise operators), so without this
+alias every ``IF``/``PERFORM UNTIL`` using the most common COBOL comparison
+was rejected as unsupported. ``<>`` is COBOL's own "not equal" spelling
+(task #stage25) -- including the one a parser-level ``NOT =`` negation
+normalises to (see :meth:`~app.parser.syntax.procedure_parser
+.ProcedureDivisionParser._parse_simple_condition`) -- and is aliased the
+same way, to the already-supported ``!=``. Kept separate from
+:data:`SUPPORTED_OPERATORS` so that set's meaning (the Java operators) is
+unchanged."""
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +150,7 @@ def emit_if(
     instruction: IRIf,
     depth: int,
     diagnostics: list[BackendDiagnostic],
+    context: ConditionContext | None = None,
 ) -> list[str]:
     """
     Translate an :class:`~app.ir.instructions.IRIf` into a Java
@@ -139,6 +163,14 @@ def emit_if(
         - ``IF WS-COUNT > 0``      → ``if (wsCount > 0) {``   (depth 0)
         - ``IF WS-A == WS-B``      → ``if (wsA == wsB) {``    (depth 0)
         - ``IF WS-X != 0``         → ``    if (wsX != 0) {``  (depth 1)
+        - ``IF WS-A > 5 OR WS-B < 2`` → ``if (wsA > 5 || wsB < 2) {``
+          (every ``extra_terms`` term is kept, in order; ``AND`` → ``&&``,
+          ``OR`` → ``||``; an AND-run inside an ``OR`` chain is
+          parenthesised for readability -- Java's ``&&``-over-``||``
+          precedence already matches COBOL's ``AND``-over-``OR``.) If any
+          one term cannot be translated the whole IF header is skipped
+          with that term's ``BE007`` diagnostic -- never emitted with a
+          term silently missing.
 
     Args:
         instruction:
@@ -147,14 +179,18 @@ def emit_if(
             Current nesting depth of this header line (0 = flat inside main).
         diagnostics:
             Mutable list; ``BE007`` diagnostics appended on error.
+        context:
+            Optional :class:`~app.backend.java.condition_context.ConditionContext`
+            (field types + level-88 condition-names). With it, ``=``/``!=``
+            between two text operands is a COBOL text comparison and a
+            level-88 condition reference is translated; without it every
+            condition is translated exactly as before.
 
     Returns:
         A list containing exactly one ``if (<cond>) {`` string, or an empty
         list when the condition cannot be translated.
     """
-    condition = _build_condition(
-        instruction.left, instruction.operator, instruction.right, diagnostics
-    )
+    condition = _build_if_condition(instruction, diagnostics, context)
     if condition is None:
         return []
 
@@ -227,6 +263,7 @@ def emit_perform_until(
     instruction: IRPerformUntil,
     depth: int,
     diagnostics: list[BackendDiagnostic],
+    context: ConditionContext | None = None,
 ) -> list[str]:
     """
     Translate an :class:`~app.ir.instructions.IRPerformUntil` into a Java
@@ -242,13 +279,19 @@ def emit_perform_until(
             Current nesting depth of this header line (0 = flat inside main).
         diagnostics:
             Mutable list; ``BE007`` diagnostics appended on error.
+        context:
+            Optional condition context; see :func:`emit_if`.
 
     Returns:
         A list containing exactly one ``while (!(<cond>)) {`` string, or an empty
         list when the condition cannot be translated.
     """
     condition = _build_condition(
-        instruction.left, instruction.operator, instruction.right, diagnostics
+        instruction.left,
+        instruction.operator,
+        instruction.right,
+        diagnostics,
+        context,
     )
     if condition is None:
         return []
@@ -288,11 +331,70 @@ def emit_end_perform(
 # ---------------------------------------------------------------------------
 
 
+_JAVA_CONNECTORS: dict[str, str] = {"AND": "&&", "OR": "||"}
+
+
+def _build_if_condition(
+    instruction: IRIf,
+    diagnostics: list[BackendDiagnostic],
+    context: ConditionContext | None = None,
+) -> str | None:
+    """
+    Translate an ``IRIf``'s whole condition (first term plus ``extra_terms``)
+    into one Java boolean expression, or ``None`` if any term cannot be
+    translated (that term's ``BE007`` diagnostic is already recorded).
+    """
+    first = _build_condition(
+        instruction.left,
+        instruction.operator,
+        instruction.right,
+        diagnostics,
+        context,
+    )
+    if first is None:
+        return None
+    if not instruction.extra_terms:
+        return first
+
+    # OR-separated runs of AND-connected terms (AND binds tighter than OR).
+    runs: list[list[str]] = [[first]]
+    for term in instruction.extra_terms:
+        connector = (term.connector or "").upper()
+        if connector not in _JAVA_CONNECTORS:
+            diagnostics.append(
+                BackendDiagnostic(
+                    severity=BackendSeverity.WARNING,
+                    message=(
+                        f"IRIf has unsupported condition connector '{term.connector}'; "
+                        "supported connectors are ['AND', 'OR']. Skipping IF block."
+                    ),
+                    code="BE007",
+                )
+            )
+            return None
+        java_term = _build_condition(
+            term.left, term.operator, term.right, diagnostics, context
+        )
+        if java_term is None:
+            return None
+        if connector == "AND":
+            runs[-1].append(java_term)
+        else:
+            runs.append([java_term])
+
+    if len(runs) == 1:
+        return " && ".join(runs[0])
+    return " || ".join(
+        run[0] if len(run) == 1 else "(" + " && ".join(run) + ")" for run in runs
+    )
+
+
 def _build_condition(
     left: str,
     operator: str,
     right: str,
     diagnostics: list[BackendDiagnostic],
+    context: ConditionContext | None = None,
 ) -> str | None:
     """
     Validate and translate a condition triple into a Java expression string.
@@ -301,12 +403,23 @@ def _build_condition(
     ``None``):
 
     1. ``left`` must not be empty.
-    2. ``operator`` must be one of :data:`SUPPORTED_OPERATORS`.
+    2. ``operator`` must be one of :data:`SUPPORTED_OPERATORS`, or a COBOL
+       spelling in :data:`OPERATOR_ALIASES` (``=`` is emitted as ``==``).
     3. ``right`` must not be empty.
 
     If all checks pass, both operands are translated via
     :func:`~app.backend.java.statement_emitter._translate_operand` and the
-    result is assembled as ``"<java_left> <operator> <java_right>"``.
+    result is assembled as ``"<java_left> <operator> <java_right>"`` --
+    except (only when *context* is given) that
+
+    * ``=``/``!=`` between two operands that are both *known text* (a quoted
+      literal or a ``String`` field) is a COBOL alphanumeric comparison,
+      ``_cobolEquals(l, r)`` / ``!_cobolEquals(l, r)``, because Java ``==``
+      on two ``String`` references compares object identity, not characters;
+      numeric, mixed, unknown-typed and ordering comparisons are unchanged;
+    * the level-88 sentinels ``IS-TRUE``/``IS-FALSE`` are translated when
+      *context* knows the condition-name, and reported (``BE007``) with the
+      reason when it cannot be translated safely.
 
     Args:
         left:
@@ -317,6 +430,8 @@ def _build_condition(
             Right-hand IR operand string.
         diagnostics:
             Mutable list; ``BE007`` diagnostics appended on error.
+        context:
+            Optional field-type / condition-name context.
 
     Returns:
         A Java condition expression string such as ``"wsCount > 0"`` or
@@ -335,7 +450,30 @@ def _build_condition(
         )
         return None
 
-    if operator not in SUPPORTED_OPERATORS:
+    if (
+        context is not None
+        and operator in _CONDITION_NAME_OPERATORS
+        and left.upper() in context.condition_names
+    ):
+        expression, reason = translate_condition_name(
+            left, operator == "IS-TRUE", context
+        )
+        if expression is not None:
+            return expression
+        diagnostics.append(
+            BackendDiagnostic(
+                severity=BackendSeverity.WARNING,
+                message=(
+                    f"Level-88 condition '{left}' cannot be translated: {reason}. "
+                    "Skipping IF block."
+                ),
+                code="BE007",
+            )
+        )
+        return None
+
+    java_operator = OPERATOR_ALIASES.get(operator, operator)
+    if java_operator not in SUPPORTED_OPERATORS:
         diagnostics.append(
             BackendDiagnostic(
                 severity=BackendSeverity.WARNING,
@@ -359,6 +497,10 @@ def _build_condition(
         )
         return None
 
+    text_comparison = translate_comparison(left, java_operator, right, context)
+    if text_comparison is not None:
+        return text_comparison
+
     java_left = _translate_operand(left)
     java_right = _translate_operand(right)
-    return f"{java_left} {operator} {java_right}"
+    return f"{java_left} {java_operator} {java_right}"

@@ -110,3 +110,33 @@ def test_data_model_maps_working_storage_fields(elig_bundle):
     names = {d.name for d in a.data_model}
     assert "wsAge" in names
     assert any(c.type is ComponentType.DTO for c in a.components)
+
+
+def test_data_model_keeps_fields_declared_with_a_value_initializer(if_else_bundle):
+    """COBOL ``VALUE`` clauses became Java field initializers (Stage 20), so
+    ``private int age = 25;`` must still be recognised as a field. The field
+    pattern once required ``;`` straight after the name, which silently dropped
+    every initialized field -- and with it the whole DTO for a program whose
+    fields all carry a ``VALUE``."""
+    assert "private int age = 25;" in if_else_bundle.java_backend_output
+    a = build_architecture(if_else_bundle)
+    assert {d.name for d in a.data_model} == {"age"}
+    assert any(c.type is ComponentType.DTO for c in a.components)
+
+
+def test_field_pattern_accepts_initializers_and_ignores_methods():
+    from app.java_modernization.architecture.builder import _FIELD_RE
+
+    java = (
+        "public class T {\n"
+        "    private int a;\n"
+        "    private int b = 1;\n"
+        '    private String c = "x;y";\n'
+        "    private double d = 65000.00;\n"
+        '    private String e = "";\n'
+        "    private void f1000Para() {\n"
+        "        int local = 2;\n"
+        "    }\n"
+        "}\n"
+    )
+    assert [m.group(2) for m in _FIELD_RE.finditer(java)] == ["a", "b", "c", "d", "e"]

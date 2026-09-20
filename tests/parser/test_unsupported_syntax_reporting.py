@@ -560,14 +560,26 @@ class TestCoverageAndSuccessSemantics:
     # -- 5. Regression: complex fixture ----------------------------------
 
     def test_complex_fixture_reaches_full_token_coverage(self) -> None:
-        """Regression: 2103/2103 tokens, no reintroduced silent loss."""
+        """Regression: 2093/2093 tokens, no reintroduced silent loss.
+
+        Was 2103/2103 before the decimal-literal lexer fix
+        (docs/MMIM_PARSER_VALIDATION_FIX.md): 5 decimal literals in this
+        fixture (``9.99`` in a PICTURE clause, ``0.0025``/``0.0035``/
+        ``0.0050``/``0.0075`` in MOVE statements) were previously
+        mis-tokenized as 3 tokens each (``NUMBER``, spurious ``PERIOD``,
+        ``NUMBER``) instead of 1 correct ``NUMBER`` token — accounting for
+        exactly the -10 token delta (5 × 2). Verified token-for-token
+        against the pre-fix lexer: every other token in this 2093-token
+        stream is byte-identical to before; nothing else changed and
+        nothing was silently lost.
+        """
         if not _COMPLEX_FIXTURE.exists():
             return
         result = AnalysisService().analyze_file(str(_COMPLEX_FIXTURE))
 
         assert result.coverage is not None
-        assert result.coverage.tokens_total == 2103
-        assert result.coverage.tokens_consumed == 2103
+        assert result.coverage.tokens_total == 2093
+        assert result.coverage.tokens_consumed == 2093
         assert result.coverage.abandoned_construct_count == 0
 
     def test_complex_fixture_all_paragraphs_parsed(self) -> None:
@@ -579,13 +591,66 @@ class TestCoverageAndSuccessSemantics:
         assert result.coverage is not None
         assert result.coverage.paragraphs_parsed == 21
 
-    def test_complex_fixture_surfaces_51_syntax_diagnostics(self) -> None:
-        """Regression: the 51 syntax diagnostics remain surfaced."""
+    def test_complex_fixture_surfaces_49_syntax_diagnostics(self) -> None:
+        """Regression: the (now 49, was 51) syntax diagnostics remain surfaced.
+
+        51 -> 44 came from the decimal-literal lexer fix (7 fewer cascading
+        SYN001/SYN005 "unexpected token"/resync errors -- see
+        test_complex_fixture_reaches_full_token_coverage and
+        docs/MMIM_PARSER_VALIDATION_FIX.md).
+
+        44 -> 45 comes from the COMPUTE/EVALUATE-inside-IF-block parser
+        recovery fix and is a *strengthening* of diagnostic accuracy, not
+        a regression: the vague `SYN005 "expected statement in IF block"`
+        previously reported at line 339 is replaced by the precise
+        `SYN100 "unsupported statement 'COMPUTE'"` (same line, matching
+        every other COMPUTE occurrence in this file), and a COMPUTE at
+        line 412 that was previously silently swallowed by the old
+        scan-to-next-period recovery cascade -- with *zero* diagnostic at
+        all -- is now correctly surfaced. `statements_parsed` for this
+        fixture rose 46 -> 52 in the same change: more of the source is
+        actually represented, not less. See docs/MMIM_PARSER_VALIDATION_FIX.md.
+
+        45 -> 47 (task #stage25) is the same kind of strengthening again, from
+        a different corner: this fixture has 9 `NOT =`/`<>` comparisons
+        (`docs/MMIM_NEGATED_COMPARISON_FIX.md`), 7 of which the parser can now
+        represent (`IF WS-CUST-STATUS NOT = '00'` and 3 siblings, plus a
+        3-term `AND` chain on `TR-CURRENCY`) -- each used to be its own
+        `SYN005 "expected comparison operator"`, now gone. But fixing them
+        lets the parser walk *past* line 317 for the first time, which
+        reveals a genuinely different, pre-existing, unrelated gap this
+        fixture already had: `IF WA-STATUS(WS-IDX) = 'C'` at line 323 uses a
+        *subscripted* operand, which this grammar's operand check has never
+        supported -- its own `SYN005 "expected comparison operator"` was
+        always latent here, just hidden behind the recovery cascade of the
+        (now-fixed) earlier failure. `statements_parsed` rose 52 -> 60 in the
+        same change. `success` and `semantic_diags` (10) are unchanged.
+
+        47 -> 49 (task #stage27) is the FILE SECTION fix: this fixture's own
+        FILE SECTION (3 `FD` records, unrelated to the 45-source training
+        corpus) previously produced exactly one `SYN101 "unsupported DATA
+        DIVISION section 'FILE'"` and was otherwise skipped whole. It now
+        parses in full, which removes that one diagnostic but reveals 3
+        genuinely different, pre-existing, unrelated `SYN200 "'COMP-3' clause
+        ... not represented"` warnings on 3 of its fields (`AR-BALANCE`,
+        `AR-CREDIT-LIMIT`, `TR-AMOUNT`) that were always latent inside the
+        skipped section -- the same "more honest, not less" pattern as
+        45 -> 47 above (net -1 + 3 = +2). `statements_parsed` is unchanged
+        (FILE SECTION adds no PROCEDURE DIVISION statements).
+        `semantic_diagnostics` drops 10 -> 2: 8 of the 10 were
+        `SEM003 "undefined variable"` on FILE SECTION fields the semantic
+        analyser could not previously see declared anywhere (`AR-BALANCE`
+        and 7 siblings); they are real variables now, so the diagnostic --
+        which was correct given the information available, not a bug -- no
+        longer fires. The remaining 2 (`ALL '-'`/`ALL '='`, a `STRING`
+        figurative-constant-repetition construct) are unrelated and
+        unchanged. `success` stays `False`.
+        """
         if not _COMPLEX_FIXTURE.exists():
             return
         result = AnalysisService().analyze_file(str(_COMPLEX_FIXTURE))
 
-        assert len(result.syntax_diagnostics) == 51
+        assert len(result.syntax_diagnostics) == 49
 
     def test_complex_fixture_does_not_report_unqualified_success(self) -> None:
         """

@@ -182,9 +182,17 @@ class TestDiagnosticClassification:
         assert target.severity is SyntaxSeverity.WARNING
         assert target.code == "SYN100"
 
-    def test_if_not_equals_is_classified_syntax_error(self) -> None:
-        """IF A NOT = B: malformed grammar -> SYNTAX_ERROR / ERROR."""
-        diags = _diagnostics_for(_ID + '    IF A NOT = B DISPLAY "x" END-IF.\n')
+    def test_if_subscripted_operand_is_classified_syntax_error(self) -> None:
+        """IF A(1) = B: malformed grammar (a subscripted operand -- this
+        grammar's comparison operand check has never accepted one) ->
+        SYNTAX_ERROR / ERROR.
+
+        This was originally ``IF A NOT = B``; task #stage25
+        (docs/MMIM_NEGATED_COMPARISON_FIX.md) made that example parse
+        cleanly, so it no longer illustrates a syntax error at all (0
+        diagnostics, not 1). Swapped for a different, still-genuinely-
+        malformed example that exercises the same classification path."""
+        diags = _diagnostics_for(_ID + '    IF A(1) = B DISPLAY "x" END-IF.\n')
         assert len(diags) == 1
         target = diags[0]
 
@@ -209,7 +217,7 @@ class TestDiagnosticClassification:
     def test_categories_are_distinguishable_without_reading_message(self) -> None:
         """The three cases above must land in three different categories."""
         open_diags = _diagnostics_for(_ID + "    OPEN INPUT F1.\n    STOP RUN.\n")
-        if_diags = _diagnostics_for(_ID + '    IF A NOT = B DISPLAY "x" END-IF.\n')
+        if_diags = _diagnostics_for(_ID + '    IF A(1) = B DISPLAY "x" END-IF.\n')
 
         open_cat = next(d for d in open_diags if "OPEN" in d.message).category
         if_cat = if_diags[0].category

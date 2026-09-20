@@ -71,6 +71,7 @@ from dataclasses import dataclass
 from loguru import logger
 
 from app.parser.ast.data import DataDivisionNode
+from app.parser.ast.data_items import ConditionNameNode
 from app.parser.ast.division import DivisionNode
 from app.parser.ast.identification import IdentificationDivisionNode
 from app.parser.ast.procedure import ProcedureDivisionNode
@@ -86,6 +87,50 @@ from app.parser.syntax.procedure_parser import ProcedureDivisionParser
 from app.parser.syntax.token_stream import TokenStream
 
 __all__ = ["ParseResult", "ProgramParser"]
+
+
+def _collect_condition_names(data: DataDivisionNode | None) -> frozenset[str]:
+    """
+    Return every level-88 condition-name declared in *data*'s
+    WORKING-STORAGE SECTION and FILE SECTION, uppercased.
+
+    Only these two sections are walked because they are the only DATA
+    DIVISION sections this parser currently represents in the AST
+    (LINKAGE, etc. are unsupported syntax, not silently assumed empty of
+    condition-names -- there simply is no AST for them to collect from).
+    FILE SECTION support is task #stage27; none of the real corpus's FD
+    records declares an 88-level today, but a program that did would
+    otherwise have its condition-name silently missing from this set.
+    Each section's items are already a flat sequence (this parser does
+    not nest subordinate items under their parent group), so no recursive
+    walk is needed.
+
+    Args:
+        data: The parsed DATA DIVISION, or ``None`` if the program had
+            none.
+
+    Returns:
+        A ``frozenset`` of uppercased condition-name strings (empty if
+        *data* is ``None`` or declares no level-88 items in either
+        section).
+    """
+    if data is None:
+        return frozenset()
+    names: set[str] = set()
+    if data.working_storage is not None:
+        names.update(
+            item.name
+            for item in data.working_storage.items
+            if isinstance(item, ConditionNameNode)
+        )
+    if data.file_section is not None:
+        names.update(
+            item.name
+            for record in data.file_section.records
+            for item in record.items
+            if isinstance(item, ConditionNameNode)
+        )
+    return frozenset(names)
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,6 +334,13 @@ class ProgramParser:
         # Detect DATA DIVISION
         if self._is_data_division(state):
             data = self._data_parser.parse(state)
+
+        # The PROCEDURE DIVISION grammar needs to know which identifiers
+        # are declared level-88 condition-names *before* it parses a
+        # single IF condition, so a bare reference (``IF TX-DEPOSIT``) can
+        # be told apart from an arbitrary, undeclared identifier -- never
+        # inferred from syntax alone. See ParserState.known_condition_names.
+        state.set_known_condition_names(_collect_condition_names(data))
 
         # Detect PROCEDURE DIVISION
         if self._is_procedure_division(state):

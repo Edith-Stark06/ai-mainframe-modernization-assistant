@@ -72,7 +72,7 @@ class SplitResult:
 
 def _bucket(dataset_version: str, seed: int, source_id: str) -> int:
     h = hashlib.sha256(
-        f"{dataset_version}\x1f{seed}\x1f{source_id}".encode("utf-8")
+        f"{dataset_version}\x1f{seed}\x1f{source_id}".encode()
     ).hexdigest()
     return int(h, 16) % _BUCKETS
 

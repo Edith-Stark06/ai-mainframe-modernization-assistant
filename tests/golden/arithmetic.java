@@ -1,7 +1,7 @@
 public class ArithmeticTest {
 
-    private int numA;
-    private int numB;
+    private int numA = 10;
+    private int numB = 5;
 
     public static void main(String[] args) {
         new ArithmeticTest().run();

@@ -35,7 +35,13 @@ from app.java_modernization.version import (
 
 __all__ = ["build_architecture"]
 
-_FIELD_RE = re.compile(r"^\s*private\s+([\w<>\[\]]+)\s+(\w+)\s*;", re.MULTILINE)
+# A field is ``private <type> <name>;`` with an optional single-line initializer
+# (``= 1``, ``= "INITIAL"``) now that COBOL ``VALUE`` clauses become Java field
+# initializers. Without the optional group, every initialized field would
+# silently vanish from the data model (and its DTO).
+_FIELD_RE = re.compile(
+    r"^\s*private\s+([\w<>\[\]]+)\s+(\w+)\s*(?:=[^\n]*)?;", re.MULTILINE
+)
 _TODO_RE = re.compile(
     r"//\s*TODO:\s*implement\s+(CALL/PERFORM|[A-Z/]+)\s+target\s+'([^']+)'\s*\(([A-Z0-9]+)\)"
 )

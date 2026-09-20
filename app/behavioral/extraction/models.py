@@ -29,6 +29,7 @@ __all__ = [
     "ExpectedOutput",
     "ExpectedError",
     "ExpectedStateChange",
+    "LoopSkipRecord",
     "BehavioralTestCase",
     "BehavioralSuite",
 ]
@@ -95,6 +96,18 @@ class ExpectedStateChange(BaseModel):
     to_value: str
 
 
+class LoopSkipRecord(BaseModel):
+    """A ``PERFORM UNTIL`` region the loop/accumulator extractor found but
+    could not turn into a derivable test — recorded with its reason
+    rather than silently dropped, so a "0 loop tests" result is always
+    distinguishable from "this source has no loops at all"."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    paragraph: str
+    reason: str
+
+
 class BehavioralTestCase(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -119,6 +132,16 @@ class BehavioralTestCase(BaseModel):
     executable: bool = False
     inconclusive_reason: str | None = None
 
+    #: "boundary_partition" (single-comparison IF/ELSE, #129 original) or
+    #: "loop_accumulator" (PERFORM UNTIL loop/accumulator simulation,
+    #: MMIM v2 extractor upgrade). Lets downstream consumers distinguish
+    #: the two derivation strategies without parsing ``description``.
+    test_type: str = "boundary_partition"
+    #: number of loop-body iterations the deterministic simulation ran
+    #: before the exit condition held, for ``test_type="loop_accumulator"``
+    #: cases only; ``None`` for non-loop tests.
+    iteration_count: int | None = None
+
     extraction_version: str = EXTRACTION_VERSION
     source_id: str = ""
 
@@ -133,6 +156,9 @@ class BehavioralSuite(BaseModel):
     extraction_version: str = EXTRACTION_VERSION
     analysis_version: str
     tests: tuple[BehavioralTestCase, ...] = ()
+    #: PERFORM UNTIL regions found but not turned into a test, with the
+    #: reason — never silently dropped.
+    skipped_loops: tuple[LoopSkipRecord, ...] = ()
 
     @property
     def executable_tests(self) -> tuple[BehavioralTestCase, ...]:
@@ -161,4 +187,5 @@ class BehavioralSuite(BaseModel):
             "executable_count": len(self.executable_tests),
             "non_executable_count": len(self.non_executable_tests),
             "tests": [t.to_dict() for t in self.tests],
+            "skipped_loops": [s.model_dump(mode="json") for s in self.skipped_loops],
         }
