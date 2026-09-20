@@ -1,0 +1,74 @@
+{
+  "adapter_version": "mmim-inst-v1",
+  "benchmark_leakage": {
+    "clean": true,
+    "overlap_count": 0,
+    "overlap_sources": []
+  },
+  "character_statistics": {
+    "total_chars": {
+      "avg": 2397.08,
+      "max": 10643,
+      "min": 850
+    }
+  },
+  "dataset_version": "mmim-v1",
+  "example_count": 144,
+  "per_ground_truth_status": {
+    "deterministic": 142,
+    "executable_verified": 2
+  },
+  "per_task": {
+    "business_rule_extraction": 18,
+    "cobol_to_java": 18,
+    "dependency_reasoning": 18,
+    "modernization_strategy": 18,
+    "program_understanding": 18,
+    "risk_classification": 18,
+    "transformation_planning": 18,
+    "validation_reasoning": 18
+  },
+  "source_count": 18,
+  "source_ids": [
+    "fx_combined",
+    "fx_perform_until",
+    "fx_simple_proc",
+    "t_account_validate",
+    "t_bonus_calc",
+    "t_credit_limit",
+    "t_discount_tier",
+    "t_grade_letter",
+    "t_interest_accrue",
+    "t_late_fee",
+    "t_loan_balance",
+    "t_overdraft_fee",
+    "t_payroll_net_pay",
+    "t_reorder_point",
+    "t_shipping_zone",
+    "t_stock_alert",
+    "t_temp_convert",
+    "t_vacation_accrual"
+  ],
+  "split_counts": {
+    "test": 24,
+    "train": 104,
+    "validation": 16
+  },
+  "token_statistics": {
+    "assistant_tokens": {
+      "avg": 338.59,
+      "max": 2465,
+      "min": 10
+    },
+    "total_tokens": {
+      "avg": 631.78,
+      "max": 2801,
+      "min": 225
+    },
+    "user_tokens": {
+      "avg": 293.19,
+      "max": 389,
+      "min": 195
+    }
+  }
+}

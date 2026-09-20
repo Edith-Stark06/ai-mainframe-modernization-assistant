@@ -34,7 +34,7 @@ from app.dataset.schema import (
 from app.dataset.security import SecretScanConfig, SecretScanner
 from app.dataset.version import ANALYSIS_VERSION, DATASET_VERSION, GENERATOR_VERSION
 
-__all__ = ["SourceRecord", "BuildResult", "DatasetBuilder"]
+__all__ = ["BuildResult", "DatasetBuilder", "SourceRecord"]
 
 
 @dataclass(frozen=True)

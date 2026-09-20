@@ -120,10 +120,19 @@ class TestUnsupportedSectionHandling:
         assert len(paragraphs[0].statements) == 2
 
     def test_unsupported_section_is_reported_explicitly(self) -> None:
-        """Exactly one meaningful diagnostic, not one per skipped token."""
+        """
+        Exactly one meaningful diagnostic, not one per skipped token.
+
+        Uses LINKAGE, not FILE, as the example (task #stage27: FILE
+        SECTION is now modelled in full and produces zero diagnostics
+        for a well-formed record like this one -- see
+        ``test_file_section_does_not_hide_working_storage`` above and
+        ``tests/parser/test_file_section_fields.py`` for its own
+        coverage). LINKAGE remains genuinely unsupported.
+        """
         source = (
             _ID
-            + "DATA DIVISION.\nFILE SECTION.\nFD F.\n01 R PIC X(1).\n"
+            + "DATA DIVISION.\nLINKAGE SECTION.\n01 L1 PIC X(1).\n"
             + "WORKING-STORAGE SECTION.\n01 WS-COUNT PIC 9(4).\n"
             + _PROC
         )
@@ -131,7 +140,7 @@ class TestUnsupportedSectionHandling:
 
         assert len(state.diagnostics) == 1
         diagnostic = state.diagnostics[0]
-        assert "FILE" in diagnostic.message
+        assert "LINKAGE" in diagnostic.message
         assert "skipped" in diagnostic.message
         assert diagnostic.context is RecoveryContext.DATA_DIVISION
 

@@ -18,10 +18,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 __all__ = [
-    "Severity",
     "SecretFinding",
     "SecretScanConfig",
     "SecretScanner",
+    "Severity",
 ]
 
 

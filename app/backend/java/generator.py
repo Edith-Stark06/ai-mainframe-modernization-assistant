@@ -78,13 +78,22 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum, unique
-from typing import TYPE_CHECKING
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from app.backend.java.condition_context import (
+    COBOL_EQUALS,
+    COBOL_EQUALS_HELPER,
+    ConditionContext,
+    ConditionName,
+    build_condition_context,
+)
 from app.backend.java.field_model import JavaField
 from app.backend.java.naming import to_java_field_name
 from app.backend.java.type_mapper import map_cobol_type
+from app.backend.java.value_initializer import translate_value_literal
 
 if TYPE_CHECKING:
     from app.ir.program import IRProgram
@@ -162,6 +171,9 @@ class GenerationResult:
 # Public API
 # ---------------------------------------------------------------------------
 
+#: COBOL level number of a condition-name entry (``88 NAME VALUE ...``).
+_CONDITION_NAME_LEVEL = 88
+
 
 def build_fields_from_symbols(
     symbols: list[VariableSymbol],
@@ -171,16 +183,28 @@ def build_fields_from_symbols(
     Convert a list of :class:`~app.parser.semantic.symbols.VariableSymbol`
     objects into :class:`~app.backend.java.field_model.JavaField` objects.
 
-    For each symbol:
+    A level-88 condition-name is skipped: it is a named *condition on its
+    parent data item*, not storage, so it gets no Java field (a
+    ``private String isDep;`` would imply state that does not exist, and
+    nothing ever reads or writes it).  The symbol stays in the symbol table
+    and the ``VALUE``/``VALUES`` literals stay on the AST's
+    ``ConditionNameNode``; a condition reference in an ``IF`` is lowered as
+    the ``IS-TRUE``/``IS-FALSE`` IR sentinel, which the backend still reports
+    as untranslatable (``BE007``) rather than guessing.
+
+    For every other symbol:
 
     1. The COBOL name is converted to lowerCamelCase via
        :func:`~app.backend.java.naming.to_java_field_name`.
     2. The ``cobol_type`` is mapped to a Java type via
        :func:`~app.backend.java.type_mapper.map_cobol_type`.  Symbols without
        a type (``cobol_type is None``) are skipped with a ``BE003`` WARNING.
-    3. The ``picture`` string is used as-is for the initial value when the
-       symbol carries a ``VALUE`` clause (future enhancement; currently no
-       initial value is set by this helper — callers can post-process the list).
+    3. A ``VALUE`` clause becomes the field's initializer via
+       :func:`~app.backend.java.value_initializer.translate_value_literal`
+       (numeric literals are normalized — Java reads a leading ``0`` as
+       octal).  A symbol with no ``VALUE`` clause, or one whose literal has no
+       provably correct Java equivalent for the field's type, keeps no
+       initializer.
 
     Args:
         symbols:
@@ -200,6 +224,9 @@ def build_fields_from_symbols(
     result: list[JavaField] = []
 
     for sym in symbols:
+        if sym.level == _CONDITION_NAME_LEVEL:
+            continue
+
         cobol_type = sym.cobol_type
 
         if cobol_type is None:
@@ -235,7 +262,7 @@ def build_fields_from_symbols(
             JavaField(
                 java_name=java_name,
                 java_type=java_type,
-                initial_value=None,
+                initial_value=translate_value_literal(sym.value, java_type),
                 cobol_name=sym.name,
             )
         )
@@ -283,6 +310,8 @@ def generate(
 def generate_with_diagnostics(
     program: IRProgram,
     fields: list[JavaField] | None = None,
+    paragraph_order: Sequence[str] | None = None,
+    condition_names: Mapping[str, ConditionName] | None = None,
 ) -> GenerationResult:
     """
     Generate Java source from *program* and return both the source and any
@@ -294,6 +323,28 @@ def generate_with_diagnostics(
         fields:
             Optional list of :class:`~app.backend.java.field_model.JavaField`
             objects to emit as instance field declarations.
+        paragraph_order:
+            Optional names of *every* PROCEDURE DIVISION paragraph in source
+            order (task #stage19). The IR carries no record of a paragraph
+            that has no representable statements, so without this a
+            ``GO TO`` to such a paragraph is indistinguishable from a
+            ``GO TO`` to a paragraph that does not exist. Only names are
+            passed -- the generator still never reads the AST. Consulted
+            solely when the program contains a ``GO TO`` (see
+            :func:`_collect_statements`).
+        condition_names:
+            Optional level-88 condition-names of the program
+            (``{NAME: ConditionName(parent, values)}``, see
+            :func:`~app.backend.java.condition_context.build_condition_names`).
+            With them ``IF <condition-name>`` is translated to a comparison of
+            the parent item with each declared value; without them it is
+            reported untranslatable (``BE007``) exactly as before.  The IR is
+            unchanged -- this is the AST metadata the IR never carried.
+
+    Every run also knows the Java type of each of *fields*, which is what lets
+    a COBOL text comparison (``=``/``!=`` between two text operands) be emitted
+    as an alphanumeric comparison instead of Java ``==`` on two ``String``
+    references (see :mod:`app.backend.java.condition_context`).
 
     Returns:
         A :class:`GenerationResult` carrying the source string and any
@@ -311,7 +362,8 @@ def generate_with_diagnostics(
     # ------------------------------------------------------------------
     # 2. Translate entry-block instructions into Java statements
     # ------------------------------------------------------------------
-    statements = _collect_statements(program, diagnostics)
+    context = build_condition_context(effective_fields, condition_names)
+    statements = _collect_statements(program, diagnostics, paragraph_order, context)
 
     # ------------------------------------------------------------------
     # 2b. Discover CALL/PERFORM targets that have no generated method body.
@@ -339,7 +391,15 @@ def generate_with_diagnostics(
     # ------------------------------------------------------------------
     # 3. Render Java source
     # ------------------------------------------------------------------
-    source = _render_class(class_name, effective_fields, statements, stub_targets)
+    # The alphanumeric-equality helper is emitted only by a class that uses it.
+    helpers = (
+        list(COBOL_EQUALS_HELPER)
+        if any(f"{COBOL_EQUALS}(" in statement for statement in statements)
+        else []
+    )
+    source = _render_class(
+        class_name, effective_fields, statements, stub_targets, helpers
+    )
     logger.debug(
         "JavaGenerator: generated {} line(s) for class '{}'.",
         source.count("\n"),
@@ -446,9 +506,36 @@ def _to_java_class_name(raw: str) -> str:
     return pascal or "GeneratedProgram"
 
 
+def _matching_close(instructions: list[Any], start: int) -> int | None:
+    """Index of the ``IREndIf``/``IREndPerform`` that closes the structured
+    construct opened at ``instructions[start]``, or ``None`` if the IR is
+    malformed (no matching close). Nested constructs are matched by type."""
+    from app.ir.instructions import IRIf, IRPerformUntil
+
+    closers = {IRIf: "IREndIf", IRPerformUntil: "IREndPerform"}
+    open_stack: list[str] = []
+    for j in range(start, len(instructions)):
+        instr = instructions[j]
+        for opener, closer in closers.items():
+            if isinstance(instr, opener):
+                open_stack.append(closer)
+                break
+        else:
+            name = type(instr).__name__
+            if name in ("IREndIf", "IREndPerform"):
+                if not open_stack or open_stack[-1] != name:
+                    return None
+                open_stack.pop()
+                if not open_stack:
+                    return j
+    return None
+
+
 def _collect_statements(
     program: IRProgram,
     diagnostics: list[BackendDiagnostic],
+    paragraph_order: Sequence[str] | None = None,
+    context: ConditionContext | None = None,
 ) -> list[str]:
     """
     Translate all instructions in the first entry basic block of the first
@@ -482,6 +569,16 @@ def _collect_statements(
     * :class:`~app.ir.instructions.IRElse` encountered at depth 0 also
       produces a ``BE007`` WARNING and is skipped.
 
+    Untranslatable headers fail safe: when :func:`emit_if` /
+    :func:`emit_perform_until` cannot translate the condition (``BE007``),
+    the *whole* construct -- header, body, ``ELSE`` branch, nested constructs
+    and closing instruction -- is omitted and replaced by one ``// TODO``
+    comment. Emitting the body (and the closing ``}``) without its header
+    would produce unbalanced Java or, if it happened to balance, run the
+    guarded statements unconditionally. If the IR is malformed and the
+    construct has no matching closing instruction, only the header is
+    omitted (nothing is left open, nothing is swallowed).
+
     Reachability (post-#111 review fix, added alongside
     :class:`~app.ir.instructions.IRReturn` support): the entry block
     concatenates every paragraph's instructions flat, one after another
@@ -508,6 +605,43 @@ def _collect_statements(
     prevents the concrete, common case of trailing paragraph content
     after a top-level terminator.
 
+    ``GO TO`` (task #stage19, :class:`~app.ir.instructions.IRJump`): Java has
+    no ``goto``, and the flat model above has no notion of a paragraph, so a
+    jump cannot be expressed in it. When -- and only when -- the entry block
+    contains at least one ``IRJump`` whose target is a known paragraph
+    (:func:`_plan_dispatch`), the whole body is lowered as a paragraph
+    dispatcher instead::
+
+        int _paragraph = 0;
+        _dispatch:
+        while (true) {
+            switch (_paragraph) {
+                case 0: // FIRST-PARA
+                    ...
+                case 1: // SECOND-PARA
+                    ...
+            }
+            break _dispatch;
+        }
+
+    Every paragraph is a ``case``; because Java ``switch`` cases fall through,
+    COBOL's sequential paragraph fall-through needs no extra code. A jump is
+    ``_paragraph = k; continue _dispatch;`` -- forward or backward, from any
+    IF nesting depth, and out of an inline ``PERFORM UNTIL`` loop (a *labeled*
+    ``continue``). It is emitted as ``if (true) { ... }`` on purpose: javac
+    treats an ``if`` as able to complete normally whatever its condition, so
+    the statements that may follow an unconditional jump (dead code in COBOL
+    too) or an IF/ELSE whose branches both jump never become an
+    "unreachable statement" compile error. ``_paragraph``/``_dispatch``
+    contain an underscore, which :func:`to_java_field_name` can never
+    produce, so they cannot shadow or collide with a COBOL-derived name. A
+    ``STOP RUN``/``GOBACK`` still makes the remainder of *its own* case
+    unreachable, but the next paragraph's ``case`` label makes code reachable
+    again (so the dead-region tracking is reset there). A jump whose target
+    is not a paragraph of the program is left as a ``// TODO`` with a
+    ``BE012`` WARNING, never guessed. Programs with no translatable jump take
+    the flat path unchanged, byte for byte.
+
     Diagnostics produced during translation are appended to *diagnostics*.
 
     Returns:
@@ -530,6 +664,7 @@ def _collect_statements(
         IREndIf,
         IREndPerform,
         IRIf,
+        IRJump,
         IRPerformUntil,
         IRReturn,
     )
@@ -565,7 +700,39 @@ def _collect_statements(
             )
         )
 
-    for instr in block.instructions:
+    instructions = list(block.instructions)
+    skip_through = -1  # last index of an omitted (untranslatable) construct
+
+    # GO TO dispatcher state (task #stage19); inert when `plan` is None.
+    plan = _plan_dispatch(instructions, paragraph_order)
+    labels_at: dict[int, list[int]] = {}  # statement position -> case labels
+    labelled_upto = -1  # highest case label emitted so far
+    current_paragraph = ""
+
+    def _omit_construct(index: int, what: str, omitted: str) -> None:
+        """Replace the construct opened at *index* by one comment and skip
+        through its matching closing instruction (or just the header if the
+        IR has none)."""
+        nonlocal skip_through
+        statements.append(
+            "    " * depth + f"// TODO: {what} condition cannot be translated "
+            f"(BE007); {omitted} omitted."
+        )
+        close = _matching_close(instructions, index)
+        skip_through = close if close is not None else index
+
+    for index, instr in enumerate(instructions):
+        if index <= skip_through:
+            continue
+        if plan is not None and depth == 0:
+            paragraph = (instr.paragraph or "").upper()
+            if paragraph and paragraph != current_paragraph:
+                current_paragraph = paragraph
+                target_case = plan[1][paragraph]
+                for case in range(labelled_upto + 1, target_case + 1):
+                    labels_at.setdefault(len(statements), []).append(case)
+                labelled_upto = max(labelled_upto, target_case)
+                dead[0] = False  # a case label makes code reachable again
         try:
             if isinstance(instr, IRIf):
                 if dead[depth]:
@@ -573,7 +740,10 @@ def _collect_statements(
                     depth += 1
                     dead.append(True)
                     continue
-                stmts = _emit_if(instr, depth, diagnostics)
+                stmts = _emit_if(instr, depth, diagnostics, context)
+                if not stmts:
+                    _omit_construct(index, "IF", "guarded block")
+                    continue
                 statements.extend(stmts)
                 depth += 1
                 dead.append(False)
@@ -637,7 +807,10 @@ def _collect_statements(
                     depth += 1
                     dead.append(True)
                     continue
-                stmts = _emit_perform_until(instr, depth, diagnostics)
+                stmts = _emit_perform_until(instr, depth, diagnostics, context)
+                if not stmts:
+                    _omit_construct(index, "PERFORM UNTIL", "loop body")
+                    continue
                 statements.extend(stmts)
                 depth += 1
                 dead.append(False)
@@ -667,6 +840,12 @@ def _collect_statements(
                     _skip_unreachable(type(instr).__name__)
                     continue
 
+                if plan is not None and isinstance(instr, IRJump):
+                    statements.extend(
+                        _emit_dispatch_jump(instr, depth, plan, diagnostics)
+                    )
+                    continue
+
                 # Regular (non-control-flow) statement — apply depth prefix.
                 stmts = emit_statement(instr, diagnostics)
                 indent = "    " * depth
@@ -686,7 +865,115 @@ def _collect_statements(
             )
             statements.append(f"// ERROR: {type_name}")
 
-    return statements
+    if plan is None:
+        return statements
+    # Paragraphs after the last one with code (empty/unsupported) still need
+    # their case label so a GO TO to them resolves.
+    for case in range(labelled_upto + 1, len(plan[0])):
+        labels_at.setdefault(len(statements), []).append(case)
+    return _wrap_dispatch(statements, labels_at, plan[0])
+
+
+def _plan_dispatch(
+    instructions: list[Any],
+    paragraph_order: Sequence[str] | None,
+) -> tuple[list[str], dict[str, int]] | None:
+    """
+    Decide whether the entry block must be lowered as a paragraph dispatcher.
+
+    Returns ``None`` (=> the unchanged flat lowering) unless *instructions*
+    contain an :class:`~app.ir.instructions.IRJump` whose target is a known
+    paragraph. Otherwise returns ``(order, index_of)``: every paragraph name
+    in source order and the upper-cased-name -> ``case`` number map.
+
+    *paragraph_order* (every paragraph, empty ones included) is used only if
+    it covers every paragraph the instructions mention; otherwise the order
+    in which paragraphs first appear in the IR is used, in which case an
+    empty paragraph is unknown and a jump to it stays a ``// TODO``.
+    """
+    from app.ir.instructions import IRJump
+
+    if not any(isinstance(i, IRJump) for i in instructions):
+        return None
+
+    from_ir: list[str] = []
+    seen: set[str] = set()
+    for instr in instructions:
+        name = instr.paragraph or ""
+        if name and name.upper() not in seen:
+            seen.add(name.upper())
+            from_ir.append(name)
+
+    order = from_ir
+    if paragraph_order is not None:
+        given: list[str] = []
+        given_upper: set[str] = set()
+        for name in paragraph_order:
+            if name and name.upper() not in given_upper:
+                given_upper.add(name.upper())
+                given.append(name)
+        if seen <= given_upper:
+            order = given
+
+    index_of = {name.upper(): case for case, name in enumerate(order)}
+    if not any(
+        isinstance(i, IRJump) and i.target.upper() in index_of for i in instructions
+    ):
+        return None
+    return order, index_of
+
+
+def _emit_dispatch_jump(
+    instr: Any,
+    depth: int,
+    plan: tuple[list[str], dict[str, int]],
+    diagnostics: list[BackendDiagnostic],
+) -> list[str]:
+    """Lower one ``IRJump`` inside a dispatcher (see :func:`_collect_statements`)."""
+    order, index_of = plan
+    indent = "    " * depth
+    case = index_of.get(instr.target.upper())
+    if case is None:
+        diagnostics.append(
+            BackendDiagnostic(
+                severity=BackendSeverity.WARNING,
+                message=(
+                    f"GO TO target '{instr.target}' is not a paragraph of this "
+                    "program; the jump was not translated."
+                ),
+                code="BE012",
+            )
+        )
+        return [
+            indent + f"// TODO: GO TO '{instr.target}' cannot be translated "
+            "(BE012); the target is not a paragraph of this program."
+        ]
+    return [
+        indent + f"if (true) {{ _paragraph = {case}; continue _dispatch; }} "
+        f"// GO TO {order[case]}"
+    ]
+
+
+def _wrap_dispatch(
+    statements: list[str],
+    labels_at: dict[int, list[int]],
+    order: list[str],
+) -> list[str]:
+    """Wrap the collected body in the ``_dispatch``/``switch`` skeleton,
+    inserting each ``case`` label at its recorded statement position."""
+    out = [
+        "int _paragraph = 0;",
+        "_dispatch:",
+        "while (true) {",
+        "    switch (_paragraph) {",
+    ]
+    for position in range(len(statements) + 1):
+        for case in labels_at.get(position, []):
+            out.append(f"        case {case}: // {order[case]}")
+        if position < len(statements):
+            out.append("            " + statements[position])
+    out += ["    }", "    break _dispatch;", "}"]
+    return out
 
 
 def _collect_call_targets(program: IRProgram) -> list[tuple[str, str]]:
@@ -759,6 +1046,7 @@ def _render_class(
     fields: list[JavaField],
     statements: list[str],
     stub_targets: list[tuple[str, str]] | None = None,
+    helpers: list[str] | None = None,
 ) -> str:
     """
     Render the complete Java class source string.
@@ -776,6 +1064,9 @@ def _render_class(
             Optional list of ``(java_name, original_target)`` pairs for
             CALL/PERFORM targets that need an empty ``private void`` stub method
             so the generated class compiles.
+        helpers:
+            Optional pre-indented lines of helper methods (such as the COBOL
+            alphanumeric-equality helper) rendered after the stubs.
 
     Returns:
         A non-empty Java source string.
@@ -824,6 +1115,11 @@ def _render_class(
             f"        // TODO: implement CALL/PERFORM target '{original}' (BE009)."
         )
         lines.append("    }")
+        lines.append("")
+
+    # Helper methods used by the lowered statements (only when needed).
+    if helpers:
+        lines.extend(helpers)
         lines.append("")
 
     # Class footer

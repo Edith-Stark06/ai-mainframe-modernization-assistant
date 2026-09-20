@@ -72,6 +72,7 @@ __all__ = [
     "IRAdd",
     "IRAssignment",
     "IRCall",
+    "IRConditionTerm",
     "IRConditionalBranch",
     "IRDisplay",
     "IRDivide",
@@ -272,13 +273,38 @@ class IRDivide(IRInstruction):
 
 
 @dataclass(frozen=True)
+class IRConditionTerm:
+    """
+    One ``<connector> <left> <operator> <right>`` term of a compound
+    ``IF`` condition beyond the first -- the IR image of
+    :class:`~app.parser.ast.statements.ConditionTerm`.
+
+    ``connector`` is ``"AND"`` or ``"OR"`` and is the keyword that joined
+    this term to the one before it, in source order. Precedence is the
+    parser's (and COBOL's): ``AND`` binds tighter than ``OR``. The operands
+    are already lowered by ``IRBuilder.build_operand``.
+
+    Examples:
+        >>> from app.ir.instructions import IRConditionTerm
+        >>> IRConditionTerm(connector="OR", left="WS-B", operator="=", right="2")
+        IRConditionTerm(connector='OR', left='WS-B', operator='=', right='2')
+    """
+
+    connector: str = field(default="")
+    left: str = field(default="")
+    operator: str = field(default="")
+    right: str = field(default="")
+
+
+@dataclass(frozen=True)
 class IRIf(IRInstruction):
     """
     Open a structured conditional block (COBOL IF statement).
 
-    Carries the full condition as three fields so the backend can
+    Carries the first condition as three fields so the backend can
     translate each operand independently via its operand-translation
-    helpers.
+    helpers, plus ``extra_terms`` for any further ``AND``/``OR``-joined
+    comparisons of a compound ``IF``.
 
     Attributes:
         result:
@@ -290,6 +316,10 @@ class IRIf(IRInstruction):
             ``">="``, ``"<"``, ``"<="``.
         right:
             Right-hand operand of the comparison.
+        extra_terms:
+            Further ``AND``/``OR``-joined terms, in source order, empty for
+            a plain ``IF``. Omitted from the serialized IR when empty, so a
+            plain ``IF`` serializes exactly as it always did.
         comment:
             Optional annotation.
 
@@ -302,11 +332,25 @@ class IRIf(IRInstruction):
         '>'
         >>> instr.right
         '0'
+        >>> instr.condition_text()
+        'WS-COUNT > 0'
     """
 
     left: str = field(default="")
     operator: str = field(default="")
     right: str = field(default="")
+    extra_terms: tuple[IRConditionTerm, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
+
+    def condition_text(self) -> str:
+        """The whole condition as source-ordered text, e.g.
+        ``"WS-A > 5 OR WS-B = 2"`` (a plain IF gives ``"WS-A > 5"``)."""
+        parts = [f"{self.left} {self.operator} {self.right}"]
+        parts.extend(
+            f"{t.connector} {t.left} {t.operator} {t.right}" for t in self.extra_terms
+        )
+        return " ".join(parts)
 
     def accept(self, visitor: Any) -> Any:
         """Dispatch to ``visitor.visit_if(self)``."""
@@ -423,9 +467,16 @@ class IRCall(IRInstruction):
             Name of the operand that receives the return value.  Set to
             ``""`` for void calls.
         target:
-            Name of the function or paragraph to invoke.
+            Name of the function or paragraph to invoke. For ``PERFORM A
+            THRU C``, this is the range's first paragraph, ``A``.
         args:
             Positional argument names, in order.  Default: empty tuple.
+        thru_target:
+            The range's last paragraph name (``C`` in ``PERFORM A THRU
+            C``), or ``""`` for an ordinary ``PERFORM``/``CALL`` with no
+            ``THRU``/``THROUGH`` clause (task #stage16). Omitted from the
+            serialized IR while empty, so a non-THRU call/PERFORM
+            serializes exactly as it always did.
         comment:
             Optional annotation.
 
@@ -440,6 +491,7 @@ class IRCall(IRInstruction):
 
     target: str = field(default="")
     args: tuple[str, ...] = field(default_factory=tuple)
+    thru_target: str = field(default="", metadata={"omit_if_empty": True})
 
     def accept(self, visitor: Any) -> Any:
         """Dispatch to ``visitor.visit_call(self)``."""

@@ -36,11 +36,573 @@ PROMPT_VERSION: str = "p6-prompt-v1"
 GENERATOR_VERSION: str = "phase6-gen-v1"
 ANALYSIS_VERSION: str = "deterministic-analysis-phases-1-5"
 
+MMIM_DATASET_VERSION: str = "mmim-v1"
+MMIM_GENERATOR_VERSION: str = "mmim-gen-v1"
+MMIM_PROMPT_VERSION: str = "mmim-prompt-v1"
+
+#: MMIM v2 — rebuilt from the 45-source expanded training corpus
+#: (``docs/MMIM_CORPUS_EXPANSION.md``). ``mmim-v1`` (18 sources) is frozen
+#: and untouched by this rebuild; these are a distinct, parallel version
+#: namespace, never a mutation of the v1 meaning.
+MMIM_DATASET_VERSION_V2: str = "mmim-v2"
+MMIM_GENERATOR_VERSION_V2: str = "mmim-gen-v2"
+MMIM_PROMPT_VERSION_V2: str = "mmim-prompt-v2"
+
+#: ``mmim-gen-v3`` — a second regeneration of the *same* ``mmim-v2``
+#: dataset_version/corpus, produced after
+#: ``app.behavioral.extraction.loops`` (the deterministic PERFORM UNTIL
+#: loop/accumulator extractor, ``EXTRACTION_VERSION = "p10-extract-v2"``)
+#: was added. The corpus, task taxonomy, and eligibility rules are
+#: unchanged from ``mmim-gen-v2`` — only VALIDATION_REASONING's ground
+#: truth can differ (more sources now have a derivable behavioral-test
+#: suite). ``dataset_version`` stays ``"mmim-v2"`` on purpose (same
+#: corpus + task contract); ``generator_version`` bumps because the
+#: deterministic pipeline that produced the examples changed. See
+#: ``docs/MMIM_VALIDATION_EXTRACTOR_AUDIT.md``.
+MMIM_GENERATOR_VERSION_V3: str = "mmim-gen-v3"
+
+#: ``mmim-gen-v4`` — a third regeneration of the *same* ``mmim-v2``
+#: dataset_version/corpus, produced after the parser/lexer fix in
+#: ``app/parser/lexer/lexer.py`` (decimal-literal tokenization) and
+#: ``app/parser/syntax/procedure_parser.py`` (compound AND/OR IF-condition
+#: parsing) — see ``docs/MMIM_PARSER_VALIDATION_FIX.md``. Unlike
+#: ``mmim-gen-v3`` (which only changed VALIDATION_REASONING's ground
+#: truth), this regeneration can change ground truth for every task that
+#: depends on the AST/business-rule engine: BUSINESS_RULE_EXTRACTION,
+#: DEPENDENCY_REASONING, RISK_CLASSIFICATION, MODERNIZATION_STRATEGY,
+#: TRANSFORMATION_PLANNING, COBOL_TO_JAVA, and VALIDATION_REASONING —
+#: more paragraphs now parse completely instead of being silently
+#: abandoned. The corpus and task taxonomy are unchanged;
+#: ``dataset_version`` stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V4: str = "mmim-gen-v4"
+
+#: ``mmim-gen-v5`` — a fourth regeneration of the *same* ``mmim-v2``
+#: dataset_version/corpus, produced after the COMPUTE/EVALUATE-inside-IF-
+#: block parser recovery fix in ``app/parser/syntax/procedure_parser.py``
+#: (``_parse_if_statement``'s then/else loops now route unsupported verbs
+#: through ``_skip_unsupported_statement`` instead of raising; scope-opening
+#: verbs with a known closing word are skipped by matching that word,
+#: honoring same-verb nesting, instead of scanning for an unrelated
+#: period) — see ``docs/MMIM_PARSER_VALIDATION_FIX.md`` §7 follow-up and
+#: its companion audit. Same task-ground-truth-change profile as
+#: ``mmim-gen-v4`` (any AST/business-rule-derived task can differ); the
+#: corpus and task taxonomy are unchanged; ``dataset_version`` stays
+#: ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V5: str = "mmim-gen-v5"
+
+#: ``mmim-gen-v6`` — a fifth regeneration of the *same* ``mmim-v2``
+#: dataset_version/corpus, produced after the decimal-literal condition
+#: extraction fix in ``app/behavioral/extraction/conditions.py``
+#: (``_COND_RE``'s literal alternation and ``_NUMERIC`` now accept a
+#: COBOL fixed-point decimal such as ``0.00``/``12.50``/``-1.25``, and
+#: ``generate_boundary_values`` steps by the literal's own precision
+#: instead of assuming an integer) plus the matching numeric-comparison
+#: fix in ``app/behavioral/extraction/extractor.py::_evaluate`` (decimal
+#: values no longer raise ``ValueError`` when compared). Unlike
+#: ``mmim-gen-v5`` (parser recovery), this regeneration only changes
+#: VALIDATION_REASONING's ground truth — no parser, lexer, CFG, IR, or
+#: business-rule-extraction behaviour is touched, so BUSINESS_RULE_EXTRACTION,
+#: DEPENDENCY_REASONING, RISK_CLASSIFICATION, MODERNIZATION_STRATEGY,
+#: TRANSFORMATION_PLANNING, and COBOL_TO_JAVA are unaffected. The corpus
+#: and task taxonomy are unchanged; ``dataset_version`` stays
+#: ``"mmim-v2"``. See ``docs/MMIM_DECIMAL_CONDITION_FIX.md``.
+MMIM_GENERATOR_VERSION_V6: str = "mmim-gen-v6"
+
+#: ``mmim-gen-v7`` — a sixth regeneration of the *same* ``mmim-v2``
+#: dataset_version/corpus, produced after two upstream parser-grammar
+#: fixes for level-88 condition names (``docs/MMIM_LEVEL88_CONDITION_AUDIT.md``,
+#: ``docs/MMIM_LEVEL88_CONDITION_REFERENCE_FIX.md``):
+#: (1) ``app/parser/syntax/data_parser.py::_parse_condition_name`` now
+#: recognises the plural ``88 name VALUES literal literal ...`` form
+#: (``ConditionNameNode`` gained a ``values`` tuple field; ``value`` is
+#: unchanged for the singular form); (2)
+#: ``app/parser/syntax/procedure_parser.py`` now permits a bare or
+#: ``NOT``-prefixed level-88 condition-name reference as an ``IF``
+#: condition operand (``ParserState.known_condition_names``, populated by
+#: ``ProgramParser`` from the DATA DIVISION AST; a new
+#: ``_parse_condition_term`` dispatches to the existing comparison grammar
+#: unchanged for every non-condition-name case). Like ``mmim-gen-v5``
+#: (parser recovery), this regeneration can change ground truth for every
+#: AST/business-rule-derived task: BUSINESS_RULE_EXTRACTION,
+#: DEPENDENCY_REASONING, RISK_CLASSIFICATION, MODERNIZATION_STRATEGY,
+#: TRANSFORMATION_PLANNING, and COBOL_TO_JAVA. Unlike ``mmim-gen-v5``/
+#: ``v6``, the corpus-wide blast radius is a single source
+#: (``t_condition_names_88`` is the only one in the 45-source corpus that
+#: declares any level-88 item — verified directly, not assumed) — every
+#: other example in the dataset is byte-identical to ``mmim-gen-v6``.
+#: VALIDATION_REASONING is unaffected: ``app/behavioral/extraction/
+#: conditions.py`` was deliberately not modified by this cycle and does
+#: not yet recognise the new ``IS-TRUE``/``IS-FALSE`` condition operators,
+#: so ``t_condition_names_88`` remains skipped for that task. The corpus
+#: and task taxonomy are unchanged; ``dataset_version`` stays
+#: ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V7: str = "mmim-gen-v7"
+
+#: ``mmim-gen-v8`` — a seventh regeneration of the *same* ``mmim-v2``
+#: dataset_version/corpus, produced after
+#: ``app/behavioral/extraction/conditions.py`` was extended to recognise
+#: the ``IS-TRUE``/``IS-FALSE`` level-88 condition-operator sentinels the
+#: ``mmim-gen-v7`` parser fix introduced (``docs/MMIM_LEVEL88_CONDITION_OPERATOR_FIX.md``):
+#: ``parse_condition`` gained a second, separate regex for a bare/
+#: ``NOT``-wrapped condition-name term (``Comparison.is_condition_name``);
+#: ``generate_boundary_values``/the extractor's ``_evaluate`` gained an
+#: optional ``known_values`` parameter populated from the condition-name's
+#: real declared ``VALUE``/``VALUES`` literals, read off the DATA DIVISION
+#: AST by a new ``extractor.py::_collect_condition_name_values`` helper —
+#: never fabricated, and empty (safely yielding no boundary values) when
+#: no declaration can be found. Unlike ``mmim-gen-v7`` (parser grammar,
+#: every AST-derived task), this regeneration touches only
+#: ``app/behavioral/extraction/``, so it can change ground truth for
+#: VALIDATION_REASONING alone — BUSINESS_RULE_EXTRACTION,
+#: DEPENDENCY_REASONING, RISK_CLASSIFICATION, MODERNIZATION_STRATEGY,
+#: TRANSFORMATION_PLANNING, and COBOL_TO_JAVA are unaffected. The
+#: corpus-wide blast radius is again a single source
+#: (``t_condition_names_88`` — the only source whose business rules use
+#: the ``IS-TRUE``/``IS-FALSE`` operators at all, verified directly);
+#: every other example in the dataset is byte-identical to
+#: ``mmim-gen-v7``. The corpus and task taxonomy are unchanged;
+#: ``dataset_version`` stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V8: str = "mmim-gen-v8"
+
+#: ``mmim-gen-v9`` — an eighth regeneration of the *same* ``mmim-v2``
+#: dataset_version/corpus, produced after
+#: ``app/behavioral/extraction/conditions.py`` gained
+#: ``parse_compound_condition``/``generate_compound_boundary_values``/
+#: ``evaluate_compound`` — a compound ``AND``/``OR`` condition parser that
+#: *composes* the existing single-term ``parse_condition`` (recursing into
+#: each parenthesized part) rather than reimplementing comparison/
+#: condition-name grammar (``docs/MMIM_COMPOUND_CONDITION_FIX.md``).
+#: Unlike ``mmim-gen-v7`` (parser grammar, every AST-derived task), this
+#: regeneration touches only ``app/behavioral/extraction/``, so it can
+#: change ground truth for VALIDATION_REASONING alone —
+#: BUSINESS_RULE_EXTRACTION, DEPENDENCY_REASONING, RISK_CLASSIFICATION,
+#: MODERNIZATION_STRATEGY, TRANSFORMATION_PLANNING, and COBOL_TO_JAVA are
+#: unaffected. Unlike every prior cycle in this series, the corpus-wide
+#: blast radius is **not** limited to one source: 17 sources have
+#: changed VALIDATION_REASONING content (their business rules include a
+#: nested-``IF``/``ELSE``-cascade-derived ``AND`` compound, previously
+#: silently unparseable for any operator), one of which
+#: (``t_batch_acct_update``) becomes newly eligible — verified directly
+#: via a full corpus-wide before/after scan, not assumed from the single
+#: source this task's own brief named as its primary regression target.
+#: Compound evidence is keyed on the real underlying data item (a level-88
+#: condition-name is a condition on its parent, so ``TX-VALID-KIND`` and
+#: ``TX-WITHDRAWAL`` are both ``TX-TYPE-CODE``) and every generated case is
+#: verified by re-evaluation; an unrealizable case is dropped, not emitted.
+#: The corpus and task taxonomy are unchanged; ``dataset_version`` stays
+#: ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V9: str = "mmim-gen-v9"
+
+#: ``mmim-gen-v10`` -- a ninth regeneration of the *same* ``mmim-v2``
+#: dataset_version/corpus, produced after
+#: ``app/modernization/business_rules/extractor.py`` began consuming
+#: ``IfStatementNode.extra_conditions`` (``docs/MMIM_EXTRA_CONDITIONS_FIX.md``).
+#: The engine used to render only an ``IF``'s first comparison, silently
+#: dropping every ``AND``/``OR`` term the parser had recorded; a rule's
+#: condition now carries all terms in source order (``AND`` binds tighter
+#: than ``OR``; the ELSE branch is the exact De Morgan complement).
+#: Unlike ``mmim-gen-v9`` (behavioral extractor only), this is an
+#: *upstream* change: it alters the ``condition`` text of 18 business rules
+#: in exactly the 8 sources whose AST has a compound ``IF``
+#: (``t_account_eligibility``, ``t_condition_names_88``,
+#: ``t_credit_approval``, ``t_daily_trans_report``, ``t_insurance_claim``,
+#: ``t_mortgage_service``, ``t_payment_gateway``, ``t_pricing_tier``), and
+#: everything derived from those conditions. Rule counts, parser
+#: diagnostics and statement counts are unchanged corpus-wide. The corpus
+#: and task taxonomy are unchanged; ``dataset_version`` stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V10: str = "mmim-gen-v10"
+
+#: ``mmim-gen-v11`` -- a tenth regeneration of the *same* ``mmim-v2``
+#: dataset_version/corpus, produced after every downstream consumer of
+#: ``IfStatementNode.extra_conditions`` was fixed
+#: (``docs/MMIM_EXTRA_CONDITIONS_DOWNSTREAM_FIX.md``): the IR builder
+#: (``IRIf.extra_terms``), the Java emitter (``&&``/``||``), the dependency
+#: analyzer, the CFG decision label and the legacy
+#: ``app/analysis/rules/extractor.py`` (used by the ``/analysis`` API). The
+#: business-rule engine was fixed in ``mmim-gen-v10``. This changes the IR
+#: JSON embedded in COBOL_TO_JAVA and TRANSFORMATION_PLANNING examples and
+#: the dependency edges in DEPENDENCY_REASONING for exactly the 8 sources
+#: whose AST has a compound ``IF`` (``t_account_eligibility``,
+#: ``t_condition_names_88``, ``t_credit_approval``,
+#: ``t_daily_trans_report``, ``t_insurance_claim``, ``t_mortgage_service``,
+#: ``t_payment_gateway``, ``t_pricing_tier``); a plain ``IF`` serializes
+#: byte-identically. Parser diagnostics, statement counts and rule counts
+#: are unchanged corpus-wide. The corpus and task taxonomy are unchanged;
+#: ``dataset_version`` stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V11: str = "mmim-gen-v11"
+
+#: ``mmim-gen-v12`` -- an eleventh regeneration of the *same* ``mmim-v2``
+#: dataset_version/corpus, produced after two Java-backend fixes
+#: (``docs/MMIM_JAVA_IF_EMISSION_FIX.md``): COBOL's equality operator ``=``
+#: is emitted as Java ``==`` (it used to be rejected as unsupported, skipping
+#: the header of every ``IF``/``PERFORM UNTIL`` using it), and a construct
+#: whose header cannot be translated is now omitted whole (replaced by one
+#: ``// TODO`` comment) instead of emitting its body and closing ``}``
+#: without the header. Only the Java text changes, so only COBOL_TO_JAVA
+#: ground truth is affected: exactly the 5 sources whose emitted paragraph
+#: has an ``=`` IF (``t_batch_acct_update``, ``t_daily_trans_report``,
+#: ``t_fallthrough_flow``, ``t_goto_spaghetti``, ``t_policy_redefines``) --
+#: all five were unbalanced Java before and are balanced now. Every ``compiles``
+#: flag and ground-truth status is unchanged. The corpus and task taxonomy are
+#: unchanged; ``dataset_version`` stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V12: str = "mmim-gen-v12"
+
+#: ``mmim-gen-v13`` -- a twelfth regeneration of the *same* ``mmim-v2``
+#: dataset_version/corpus, produced after the Java backend's
+#: ``_translate_operand`` (``app/backend/java/statement_emitter.py``) gained
+#: support for COBOL's own single-quoted string-literal delimiter
+#: (``docs/MMIM_JAVA_LITERAL_EMISSION_FIX.md``). It previously recognised only
+#: Java's ``"..."`` delimiter; a COBOL literal such as ``'Y'`` -- the
+#: overwhelmingly common form in the corpus -- fell through to the
+#: "COBOL identifier" rule and was silently emitted as an undeclared Java
+#: variable reference (``y``), the direct cause of every remaining
+#: ``cannot find symbol`` ``javac`` failure. It is now emitted as a Java
+#: string literal with the same content, escaped for Java source. Only the
+#: Java text changes, so only COBOL_TO_JAVA ground truth is affected: exactly
+#: the 7 sources whose emitted (flattened) statements contain a single-quoted
+#: literal (``t_batch_acct_update``, ``t_daily_trans_report``,
+#: ``t_fallthrough_flow``, ``t_goto_spaghetti``, ``t_inventory_extract``,
+#: ``t_payroll_file_post``, ``t_policy_redefines``); 3 of them
+#: (``t_fallthrough_flow``, ``t_goto_spaghetti``, ``t_policy_redefines``)
+#: newly compile with ``javac`` (38 -> 41 of 45). The corpus and task
+#: taxonomy are unchanged; ``dataset_version`` stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V13: str = "mmim-gen-v13"
+
+#: ``mmim-gen-v14`` -- a thirteenth regeneration of the *same* ``mmim-v2``
+#: dataset_version/corpus, produced after
+#: ``app/parser/syntax/procedure_parser.py`` gained a dedicated
+#: ``_skip_read_statement`` for the unsupported ``READ`` verb
+#: (``docs/MMIM_READ_AT_END_PARSING_FIX.md``). ``READ``'s ``AT END``/``NOT
+#: AT END`` clauses legitimately contain nested imperative statements (like
+#: ``EVALUATE``'s ``WHEN``), but unlike ``EVALUATE``, ``READ`` was not
+#: protected from the generic "stop at the first statement-verb token" skip
+#: -- so a nested ``MOVE``/``ADD`` ended the skip early and the clause's
+#: remaining words (``NOT AT END``, ``END-READ``, ...) leaked into that
+#: statement's own operand text as corrupted identifiers (``MoveStatementNode
+#: (target="WS-EOF-FLAG NOT AT END")``). This is a parser-layer fix: it
+#: changes the AST for the 4 real sources with a READ statement
+#: (``t_batch_acct_update``, ``t_daily_trans_report``, ``t_inventory_extract``,
+#: ``t_payroll_file_post`` -- verified directly, not assumed), removing the
+#: spurious top-level MOVE/ADD statements and their corrupted dependency
+#: edges; it does not add any READ support (still ``SYN100``, same as
+#: before). Parser diagnostics, business-rule counts and `javac` compile
+#: status are unchanged corpus-wide. The corpus and task taxonomy are
+#: unchanged; ``dataset_version`` stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V14: str = "mmim-gen-v14"
+
+#: ``mmim-gen-v15`` -- a fourteenth regeneration of the *same* ``mmim-v2``
+#: dataset_version/corpus, produced after
+#: ``app/modernization/flow/generator.py::FlowGenerationVisitor`` stopped
+#: treating an existing-but-statement-empty ``PERFORM``/``GO TO`` target
+#: the same as a target that does not exist at all
+#: (``docs/MMIM_EMPTY_PARAGRAPH_PERFORM_TARGET_FIX.md``). The visitor used
+#: to discover a paragraph's existence purely from IR *instructions*, so a
+#: paragraph whose only statement was unsupported (``READ``, ``OPEN``, ...)
+#: produced zero instructions and was indistinguishable from a paragraph
+#: that genuinely does not exist -- a ``PERFORM``/``GO TO`` reaching it was
+#: misclassified as an ``EXTERNAL``/unresolved target, producing a false
+#: ``UNRESOLVED_PERFORM_TARGET`` risk finding. The fix threads the real
+#: AST paragraph-name set into the visitor and resolves such a target to a
+#: cached, non-fabricated CFG anchor node instead. Verified directly
+#: against the corpus (not assumed): **12 sources** change
+#: (`t_account_eligibility`, `t_batch_acct_update`, `t_billing_engine`,
+#: `t_daily_trans_report`, `t_insurance_claim`, `t_inventory_extract`,
+#: `t_inventory_reorder`, `t_order_hierarchy`, `t_packed_decimal`,
+#: `t_payroll_file_post`, `t_pricing_tier`, `t_transitive_fx`) -- every
+#: false ``UNRESOLVED_PERFORM_TARGET`` occurrence drops to 0; a genuinely
+#: external target (e.g. a real ``CALL`` to another module) is unaffected.
+#: Node and edge counts are unchanged (a one-for-one node-type swap).
+#: Touches only RISK_CLASSIFICATION and MODERNIZATION_STRATEGY ground
+#: truth (the only tasks whose expected_output derives from this risk
+#: finding); business-rule counts, dependency edges, VALIDATION_REASONING,
+#: and COBOL_TO_JAVA are unaffected. The corpus and task taxonomy are
+#: unchanged; ``dataset_version`` stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V15: str = "mmim-gen-v15"
+
+#: ``mmim-gen-v16`` -- a fifteenth regeneration of the same ``mmim-v2``
+#: dataset_version/corpus, produced after
+#: ``ProcedureDivisionParser._parse_perform_statement``'s inline-PERFORM
+#: branch gained an optional ``THRU``/``THROUGH`` clause
+#: (``docs/MMIM_PERFORM_THRU_FIX.md``). Previously ``PERFORM A THRU C``
+#: captured only ``target="A"``; the trailing ``THRU C`` was consumed by
+#: panic-mode ``SYN001`` recovery, which -- for the one real corpus source
+#: with no period between statements until the paragraph's end -- also
+#: silently discarded the *following* ``MOVE``/``GOBACK`` statements.
+#: ``PerformStatementNode``/``IRCall`` gained a ``thru_target`` field
+#: (``""`` for an ordinary PERFORM, omitted from the serialized AST/IR
+#: while empty, so non-THRU statements serialize byte-identically), and
+#: ``FlowGenerationVisitor`` now resolves a THRU range to the ordered
+#: slice of the program's real paragraphs (by physical source position)
+#: from the start name to the end name inclusive, adding one ``PERFORMS``
+#: edge per paragraph in the range -- reusing ``mmim-gen-v15``'s
+#: per-paragraph empty/external resolution unchanged. Verified directly
+#: against the corpus (not assumed): exactly **1 source** contains a real
+#: ``PERFORM ... THRU ...`` (`t_fallthrough_flow`); it is also the only
+#: source whose ground truth changes this cycle. Its recovered
+#: ``MOVE``/``GOBACK`` statements (previously swallowed whole by the same
+#: ``SYN001`` recovery, since this source has no period between
+#: statements until the sentence's end) are a direct, causally-inseparable
+#: consequence of the same fix, not a second change: PROGRAM_UNDERSTANDING,
+#: DEPENDENCY_REASONING, RISK_CLASSIFICATION (embedded CFG +2 nodes/+3
+#: edges; a new, genuine SHARED_MUTABLE_STATE finding for PASS-THRU-STATUS
+#: surfaces, and the SYNTAX_ERROR risk's occurrence_count drops 2 -> 1),
+#: BUSINESS_RULE_EXTRACTION (embedded AST only -- rule_count unchanged,
+#: 157 total), MODERNIZATION_STRATEGY, TRANSFORMATION_PLANNING (embedded
+#: AST/dependencies/strategy text; a new DOMAIN-type component appears
+#: alongside the existing DTO) and COBOL_TO_JAVA (the generated Java text
+#: changes; ``compiles`` stays ``True`` -> ``True``) all change their
+#: expected_output for this source. VALIDATION_REASONING's expected_output
+#: (test suite/hash) is byte-identical -- only its embedded raw ``analysis``
+#: block (AST/IR dump) differs. No other source's expected_output changes;
+#: ``dataset_version`` stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V16: str = "mmim-gen-v16"
+
+#: ``mmim-gen-v17`` -- a sixteenth regeneration of the same ``mmim-v2``
+#: dataset_version/corpus, produced after ``"GO"`` moved from
+#: ``_UNSUPPORTED_STATEMENT_LEXEMES`` to ``_STATEMENT_LEXEMES`` and a new
+#: ``ProcedureDivisionParser._parse_go_to_statement`` parses the
+#: single-target ``GO TO paragraph-name`` form (``docs/MMIM_GO_TO_FIX.md``).
+#: ``GoToStatementNode`` and ``IRBuilder.build_go_to_statement`` ->
+#: ``IRJump`` already existed and were already correctly wired to
+#: ``FlowGenerationVisitor.visit_jump`` and a ``GOES_TO`` CFG edge (reusing
+#: the exact per-target resolution ``mmim-gen-v15``/``v16`` already share
+#: with PERFORM) -- confirmed unreachable only at the parser boundary
+#: (real ``GO TO`` produced a single ``SYN100`` diagnostic and no AST node
+#: at all). No IR/CFG code changed. Verified directly against the corpus
+#: (not assumed, via a syntax-aware, multi-line-safe search): exactly
+#: **1 source** contains real ``GO TO`` usage (`t_goto_spaghetti`, 7
+#: occurrences, all the single-target form -- no ``DEPENDING ON``/
+#: multi-target form exists anywhere in the corpus, so that form remains
+#: unimplemented); it is also the only source whose ground truth changes
+#: this cycle: PROGRAM_UNDERSTANDING, DEPENDENCY_REASONING,
+#: RISK_CLASSIFICATION (embedded CFG +7 nodes/+7 edges; the
+#: ``UNSUPPORTED_SYNTAX`` risk -- 7 occurrences of the ``GO``/``GO TO``
+#: ``SYN100`` diagnostic -- disappears entirely, and
+#: ``COMPLEX_CONTROL_FLOW`` rises from 3 occurrences/LOW severity to 10
+#: occurrences/MEDIUM severity as its already-existing, unmodified
+#: GO-TO-transfer counting becomes non-trivial for the first time),
+#: BUSINESS_RULE_EXTRACTION (embedded AST only -- rule_count unchanged),
+#: MODERNIZATION_STRATEGY, TRANSFORMATION_PLANNING (embedded AST/
+#: dependencies/strategy text) and COBOL_TO_JAVA (the Java backend
+#: already had a ``// TODO: translate IRJump`` placeholder for an
+#: ``IRJump`` it cannot translate -- previously dead code, since no real
+#: source ever produced one; now emitted for the first time, at each of
+#: the 7 GO TO sites, in place of the empty ``if`` bodies/silently
+#: dropped ELSE branch this source's Java previously had. ``compiles``
+#: stays ``True`` -> ``True``, verified with real ``javac 25.0.3``) all
+#: change their expected_output for this source. `t_goto_spaghetti` has
+#: no VALIDATION_REASONING example in either version -- it is skipped for
+#: ``no_derivable_behavioral_tests`` both before and after (confirmed
+#: against the pre-fix manifest: identical skip reason and decision; only
+#: that skip record's own ``parser_status.unsupported_codes`` field drops
+#: ``["SYN100"]`` -> ``[]``, which is not itself a ground-truth change).
+#: No other source's expected_output changes; ``dataset_version`` stays
+#: ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V17: str = "mmim-gen-v17"
+
+#: ``mmim-gen-v18`` -- a seventeenth regeneration of the same ``mmim-v2``
+#: dataset_version/corpus, produced after the Java backend learned to
+#: translate ``IRJump`` (``docs/MMIM_GO_TO_FIX.md`` §10). Java has no
+#: ``goto`` and the backend's flat model has no paragraphs, so a program
+#: containing a translatable ``GO TO`` is now lowered as a paragraph
+#: dispatcher (``while``/``switch`` on a paragraph index, jumps as labeled
+#: ``continue``); a program with no such jump takes the unchanged flat
+#: path. ``AnalysisService`` also passes the AST's paragraph *names* to the
+#: backend so a ``GO TO`` to an empty paragraph (invisible in the IR) can be
+#: told from a missing one. Only **COBOL_TO_JAVA** ground truth changes,
+#: and only for **1 source**: `t_goto_spaghetti`'s ``expected_output.java``
+#: (7 ``// TODO: translate IRJump`` placeholders -> a dispatcher whose
+#: generated Java, executed under ``javac``/``java``, matches an independent
+#: COBOL-semantics interpretation of the IR). Verified directly, not
+#: assumed: the other 44 Java texts are byte-identical, ``compiles`` stays
+#: ``True`` for it (41/45 overall), its ground-truth status stays
+#: ``deterministic``, and every other task type, rule count (157), the
+#: 351-example count, the 226/71/54 split assignment and the leakage report
+#: are unchanged. ``dataset_version`` stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V18: str = "mmim-gen-v18"
+
+#: ``mmim-gen-v19`` -- an eighteenth regeneration of the same ``mmim-v2``
+#: dataset_version/corpus, produced after COBOL ``VALUE`` clauses became Java
+#: field initializers (``docs/MMIM_VALUE_INITIALIZER_FIX.md``). The parsed
+#: ``VALUE`` literal was dropped at symbol creation and the backend hardcoded
+#: ``initial_value=None``, so every generated field started at the Java
+#: default (``0``/``null``) instead of its COBOL initial contents. The literal
+#: is now carried on ``VariableSymbol.value`` and translated per Java type
+#: (numeric literals are re-emitted from their value, since Java reads a
+#: leading ``0`` as octal: ``VALUE 035`` is not ``035``). Only
+#: **COBOL_TO_JAVA** ground truth changes -- ``expected_output.java`` for
+#: **all 45 sources** (270 field initializers added, and *nothing else* in
+#: any Java text). Verified directly, not assumed: ``compiles`` stays
+#: ``True`` for the same 41/45, TODO counts and backend diagnostics are
+#: unchanged, and every other task type, rule count (157), the 351-example
+#: count, the 226/71/54 split assignment and the leakage report are
+#: unchanged. ``dataset_version`` stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V19: str = "mmim-gen-v19"
+
+#: ``mmim-gen-v20`` -- a nineteenth regeneration of the same ``mmim-v2``
+#: dataset_version/corpus, produced after the data-division parser learned
+#: signed numeric ``VALUE`` literals (``docs/MMIM_SIGNED_VALUE_FIX.md``). The
+#: lexer emits ``+``/``-`` as their own ``UNKNOWN`` tokens (deliberately: they
+#: are also the arithmetic operators), and the ``VALUE`` clause took only that
+#: sign as the whole literal, so the digits left behind failed the
+#: terminating-period check and the *entire data item* was abandoned with a
+#: ``SYN005``. A sign directly against a following ``NUMBER`` is now joined
+#: into one literal (``+000450000.00``). Exactly **1 source** is affected:
+#: ``t_packed_decimal`` recovers 5 ``COMP-3`` items (8 -> 13 data items, 5
+#: ``SYN005`` gone) that now reach the symbol table and become Java ``double``
+#: fields with their COBOL initial values. Verified directly, not assumed: the
+#: other 44 sources are fingerprint-identical (AST items, diagnostics, IR,
+#: Java text, ``javac``), and the 351-example count, the 226/71/54 split
+#: assignment and the leakage report are unchanged. ``dataset_version`` stays
+#: ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V20: str = "mmim-gen-v20"
+
+#: ``mmim-gen-v21`` -- a twentieth regeneration of the same ``mmim-v2``
+#: dataset_version/corpus, produced after level-88 condition-names stopped
+#: being emitted as Java storage fields (``docs/MMIM_LEVEL88_VALUE_FIX.md``).
+#: A level-88 entry is a named *condition on its parent data item*, not
+#: storage: the AST keeps it as ``ConditionNameNode`` metadata (``values``),
+#: the behavioral extractor and the procedure parser already treat it that
+#: way, and the backend deliberately refuses to translate ``IS-TRUE``. Yet
+#: ``build_fields_from_symbols`` declared each one as an uninitialized
+#: ``private String`` that nothing ever read or wrote. It now skips level 88.
+#: The 88 ``VALUE``/``VALUES`` parser also learned signed (``-1``),
+#: leading-decimal (``.5``, ``-.5``) and ``IS``/``ARE``-prefixed literals; the
+#: 45-source corpus uses none of those, so that part changes no output.
+#: Exactly **1 source** is affected -- ``t_condition_names_88``, whose 11
+#: level-88 entries no longer appear as fields (19 -> 8 Java fields);
+#: only its **COBOL_TO_JAVA** and **TRANSFORMATION_PLANNING** ground truth
+#: change (the architecture's data model is read back from the generated
+#: fields). Verified directly, not assumed: every other source is
+#: fingerprint-identical, ``compiles`` is unchanged (41/45), and the
+#: 351-example count, the 226/71/54 split assignment and the leakage report
+#: are unchanged. ``dataset_version`` stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V21: str = "mmim-gen-v21"
+
+#: ``mmim-gen-v22`` -- a twenty-first regeneration of the same ``mmim-v2``
+#: dataset_version/corpus, produced after the Java backend learned COBOL
+#: comparison semantics for text (``docs/MMIM_STRING_COMPARISON_FIX.md``).
+#: ``IF WS-CODE = 'AUTO'`` was emitted as ``wsCode == "AUTO"``: Java ``==`` on
+#: two ``String`` references compares object identity, so it held only while
+#: the field still contained its compile-time literal (both sides one interned
+#: constant) and failed for an equal string from anywhere else. ``=``/``!=``
+#: between two operands that are *known text* (a quoted literal or a ``String``
+#: field) is now ``_cobolEquals(a, b)`` -- COBOL's space-padded alphanumeric
+#: equality -- backed by a small package-private helper the class carries only
+#: when it uses it. Numeric, mixed, unknown-typed (FILE SECTION fields are not
+#: declared) and ordering comparisons are unchanged. The same change lets
+#: ``IF <level-88 condition-name>`` / ``IF NOT`` be translated (parent item
+#: compared with each declared value) instead of omitted with ``BE007``; no
+#: corpus condition-name reference sits in reachable code, so that part changes
+#: no output. Exactly **1 source** is affected -- ``t_policy_redefines``, whose
+#: two reachable text comparisons change and whose class gains the helper --
+#: and only its **COBOL_TO_JAVA** ``expected_output.java`` changes. Verified
+#: directly, not assumed: the AST, IR, CFG, dependencies, business rules, risks,
+#: strategy and every diagnostic of all 45 sources are identical, ``javac``
+#: still passes for the same 41/45, and the 351-example count, the 226/71/54
+#: split assignment and the leakage report are unchanged. ``dataset_version``
+#: stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V22: str = "mmim-gen-v22"
+
+#: ``mmim-gen-v23`` -- a twenty-second regeneration of the same ``mmim-v2``
+#: dataset_version/corpus, produced after the procedure-division parser
+#: learned COBOL's own "not equal" relational-operator forms
+#: (``docs/MMIM_NEGATED_COMPARISON_FIX.md``). ``relational-operator ::= [NOT]
+#: { = | > | < | >= | <= | <> }`` -- a ``NOT`` sitting between the two
+#: operands negates the operator that follows it (``IF X NOT = 'A'``), and
+#: ``<>`` is COBOL's own not-equal spelling; neither was recognised (the
+#: lexer split ``<>`` into two separate operator tokens, and a mid-condition
+#: ``NOT`` was never consumed), so the whole ``IF`` was dropped by panic-mode
+#: recovery. Both now collapse to the already-supported plain spelling (``NOT
+#: =``/``<>`` -> ``<>``, aliased to Java ``!=`` in
+#: ``control_flow_emitter.OPERATOR_ALIASES`` exactly the way ``=`` is already
+#: aliased to ``==``; ``NOT >``/``NOT <``/``NOT >=``/``NOT <=`` negate to
+#: ``<=``/``>=``/``<``/``>``). No IR change. Exactly **4 sources** have a
+#: ``NOT =`` comparison (`t_account_eligibility`, `t_batch_acct_update`,
+#: `t_insurance_claim`, `t_payment_gateway`); their embedded AST/IR/CFG/
+#: dependencies/business rules/risks/strategy/syntax diagnostics all change
+#: to represent the previously-dropped ``IF``s, so **COBOL_TO_JAVA**,
+#: **PROGRAM_UNDERSTANDING**, **DEPENDENCY_REASONING**,
+#: **BUSINESS_RULE_EXTRACTION**, **RISK_CLASSIFICATION**,
+#: **MODERNIZATION_STRATEGY** and **VALIDATION_REASONING** change for those 4
+#: sources. Only **1** of them (`t_batch_acct_update` -- reachable only
+#: because a separate, pre-existing, unrelated parser gap drops its entry
+#: paragraph's ``GOBACK``) has its generated Java text change at all (one new
+#: comparison plus the ``_cobolEquals`` helper it needs). Verified directly,
+#: not assumed: the other 41 sources are fingerprint-identical, ``javac``
+#: stays 41/45, and the 351-example count, the 226/71/54 split assignment and
+#: the leakage report are unchanged. ``dataset_version`` stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V23: str = "mmim-gen-v23"
+
+#: ``mmim-gen-v24`` -- a twenty-third regeneration of the same ``mmim-v2``
+#: dataset_version/corpus, produced after the DATA DIVISION parser learned
+#: the FILE SECTION (``docs/MMIM_FILE_SECTION_FIELDS_FIX.md``, task
+#: #stage27). ``FILE SECTION.`` was previously recognised only to be skipped
+#: whole (``SYN101``), so an ``FD`` record's fields never entered the AST,
+#: the symbol table, or the generated Java class -- every real reference to
+#: one of those fields became an undeclared Java identifier. ``FD <file-name>
+#: . <record>`` is now parsed with the exact same data-item grammar
+#: (``ElementaryItemNode``/``GroupItemNode``/``ConditionNameNode``) a
+#: WORKING-STORAGE ``01`` record already uses, so every downstream consumer
+#: already generic over any registered ``VariableSymbol`` -- symbol
+#: collection, Java field construction, condition-type awareness -- needed no
+#: FILE-SECTION-specific code at all; only the AST traversal needed to walk
+#: the new section. Exactly **4 sources** have a FILE SECTION
+#: (`t_batch_acct_update`, `t_daily_trans_report`, `t_inventory_extract`,
+#: `t_payroll_file_post`); their generated Java text changes (their FD
+#: fields are now declared, and any text comparison over one whose type was
+#: previously unknown now correctly gets Stage 24's ``_cobolEquals`` helper
+#: instead of identity ``==`` -- `t_daily_trans_report` joins
+#: `t_batch_acct_update`/`t_policy_redefines` as a helper user), their
+#: ``SYN101`` diagnostic disappears, and their embedded risks/strategy
+#: change (the ``DATA_COMPLEXITY`` risk and one of two ``UNSUPPORTED_SYNTAX``
+#: risk entries -- both driven directly off ``SYN101`` -- correctly
+#: disappear; `t_payroll_file_post`'s ``success`` flips ``False`` ->
+#: ``True``). AST/dependencies/business-rule *counts* for these 4 sources
+#: are unchanged (verified directly: only Java text, syntax diagnostics,
+#: risks, and strategy move). Verified directly, not assumed: the other 41
+#: sources are fingerprint-identical on every dimension that matters (their
+#: raw serialized-AST hash moves too, but only because ``DataDivisionNode``
+#: gained a new ``file_section`` field that serializes as ``null`` for every
+#: program without one -- a schema-shape artifact, not a content change),
+#: ``javac`` moves from 41/45 to **45/45**, and the 351-example count, the
+#: 226/71/54 split assignment and the leakage report are unchanged.
+#: ``dataset_version`` stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V24: str = "mmim-gen-v24"
+
 __all__ = [
+    "ANALYSIS_VERSION",
+    "BENCHMARK_VERSION",
     "DATASET_VERSION",
     "DATASET_VERSION_V2",
-    "BENCHMARK_VERSION",
-    "PROMPT_VERSION",
     "GENERATOR_VERSION",
-    "ANALYSIS_VERSION",
+    "MMIM_DATASET_VERSION",
+    "MMIM_DATASET_VERSION_V2",
+    "MMIM_GENERATOR_VERSION",
+    "MMIM_GENERATOR_VERSION_V2",
+    "MMIM_GENERATOR_VERSION_V3",
+    "MMIM_GENERATOR_VERSION_V4",
+    "MMIM_GENERATOR_VERSION_V5",
+    "MMIM_GENERATOR_VERSION_V6",
+    "MMIM_GENERATOR_VERSION_V7",
+    "MMIM_GENERATOR_VERSION_V8",
+    "MMIM_GENERATOR_VERSION_V9",
+    "MMIM_GENERATOR_VERSION_V10",
+    "MMIM_GENERATOR_VERSION_V11",
+    "MMIM_GENERATOR_VERSION_V12",
+    "MMIM_GENERATOR_VERSION_V13",
+    "MMIM_GENERATOR_VERSION_V14",
+    "MMIM_GENERATOR_VERSION_V15",
+    "MMIM_GENERATOR_VERSION_V16",
+    "MMIM_GENERATOR_VERSION_V17",
+    "MMIM_GENERATOR_VERSION_V18",
+    "MMIM_GENERATOR_VERSION_V19",
+    "MMIM_GENERATOR_VERSION_V20",
+    "MMIM_GENERATOR_VERSION_V21",
+    "MMIM_GENERATOR_VERSION_V22",
+    "MMIM_GENERATOR_VERSION_V23",
+    "MMIM_GENERATOR_VERSION_V24",
+    "MMIM_PROMPT_VERSION",
+    "MMIM_PROMPT_VERSION_V2",
+    "PROMPT_VERSION",
 ]

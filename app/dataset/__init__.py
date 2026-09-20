@@ -24,14 +24,14 @@ from app.dataset.version import (
 )
 
 __all__ = [
+    "ANALYSIS_VERSION",
+    "BENCHMARK_VERSION",
+    "DATASET_VERSION",
+    "GENERATOR_VERSION",
+    "PROMPT_VERSION",
     "DatasetExample",
     "Difficulty",
     "GroundTruthStatus",
     "Provenance",
     "TaskType",
-    "DATASET_VERSION",
-    "BENCHMARK_VERSION",
-    "PROMPT_VERSION",
-    "GENERATOR_VERSION",
-    "ANALYSIS_VERSION",
 ]

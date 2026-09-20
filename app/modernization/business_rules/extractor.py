@@ -26,12 +26,21 @@ Determinism:
     identical ordering, and identical IDs.
 
 Scope / non-fabrication:
-    * COBOL compound conditions (``A = 1 AND B = 2`` on one ``IF``) are
-      **not** representable in the current AST — the parser records only
-      a single ``condition_left/operator/right`` triple. This extractor
-      consumes exactly that; it never invents the missing conjuncts. A
-      genuinely nested ``IF`` *is* representable and is combined into an
-      explicit ``(outer) AND (inner)`` condition.
+    * A compound condition on one ``IF`` (``A = 1 AND B = 2``,
+      ``A = 1 OR B = 2``) is the first ``condition_left/operator/right``
+      triple plus ``IfStatementNode.extra_conditions`` (each term carries
+      the ``AND``/``OR`` connector that joined it to the previous one).
+      This extractor consumes **all** of them, in source order, and never
+      invents or drops a term: ``AND`` binds tighter than ``OR`` (the
+      parser's documented precedence), so a chain is a disjunction of
+      AND-runs. A pure-``AND`` chain is rendered as further conjuncts, a
+      chain containing ``OR`` as one explicit ``(a) OR (b)`` group, and
+      the ``ELSE`` branch as the exact De Morgan complement (one
+      ``NOT (...)`` conjunct per AND-run). If any term of the chain is
+      incomplete the whole condition is treated as unrepresentable --
+      never emitted with a term silently missing. A genuinely nested
+      ``IF`` is combined into an explicit ``(outer) AND (inner)``
+      condition.
     * A statement type with no business meaning (or one the AST cannot
       represent) is skipped, never turned into a fabricated action.
     * Top-level statements with no guarding condition are never rules.
@@ -44,6 +53,8 @@ Project:
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 from app.analysis.dependencies.analyzer import is_literal_operand
 from app.analysis.models import AnalysisResult
@@ -204,6 +215,68 @@ def classify_rule(
     return (BusinessRuleCategory.GENERAL, ["conditionally guarded action"])
 
 
+@dataclass(frozen=True)
+class _Level:
+    """One ``IF`` contribution to a rule guard condition.
+
+    ``parts`` are the conjunct texts it adds to the enclosing chain.
+    ``leaves`` are the positive comparisons behind it (variables/category);
+    ``negated_texts`` are the inner texts of each ``NOT (...)`` part of an
+    ELSE-branch level.
+    """
+
+    parts: tuple[str, ...]
+    leaves: tuple[tuple[str, str, str], ...] = ()
+    negated_texts: tuple[str, ...] = ()
+
+
+def _condition_runs(stmt: IfStatementNode) -> list[list[tuple[str, str, str]]] | None:
+    """The IF full condition as OR-separated runs of AND-connected terms
+    (``AND`` binds tighter than ``OR``), in source order -- or ``None`` if
+    any term is incomplete, so a partial condition is never emitted."""
+    first = (
+        (stmt.condition_left or "").strip(),
+        (stmt.condition_operator or "").strip(),
+        (stmt.condition_right or "").strip(),
+    )
+    if not all(first):
+        return None
+    runs: list[list[tuple[str, str, str]]] = [[first]]
+    for term in stmt.extra_conditions:
+        comp = (
+            (term.left or "").strip(),
+            (term.operator or "").strip(),
+            (term.right or "").strip(),
+        )
+        connector = (term.connector or "").strip().upper()
+        if not all(comp) or connector not in {"AND", "OR"}:
+            return None
+        if connector == "AND":
+            runs[-1].append(comp)
+        else:
+            runs.append([comp])
+    return runs
+
+
+def _run_text(run: list[tuple[str, str, str]]) -> str:
+    if len(run) == 1:
+        return _fmt_comparison(run[0])
+    return " AND ".join(f"({_fmt_comparison(t)})" for t in run)
+
+
+def _positive_level(runs: list[list[tuple[str, str, str]]]) -> _Level:
+    leaves = tuple(t for run in runs for t in run)
+    if len(runs) == 1:
+        return _Level(parts=tuple(_fmt_comparison(t) for t in runs[0]), leaves=leaves)
+    group = " OR ".join(f"({_run_text(run)})" for run in runs)
+    return _Level(parts=(group,), leaves=leaves)
+
+
+def _negated_level(runs: list[list[tuple[str, str, str]]]) -> _Level:
+    texts = tuple(_run_text(run) for run in runs)
+    return _Level(parts=tuple(f"NOT ({t})" for t in texts), negated_texts=texts)
+
+
 class BusinessRuleExtractor:
     """
     Extract structured business rules from an ``AnalysisResult``.
@@ -245,7 +318,7 @@ class BusinessRuleExtractor:
         self,
         stmt: StatementNode,
         paragraph: str,
-        enclosing: tuple[tuple[str, str, str], ...],
+        enclosing: tuple[_Level, ...],
         out: list[BusinessRule],
         dep_paragraphs: set[str],
     ) -> None:
@@ -253,22 +326,14 @@ class BusinessRuleExtractor:
         if not isinstance(stmt, IfStatementNode):
             return
 
-        left = (stmt.condition_left or "").strip()
-        op = (stmt.condition_operator or "").strip()
-        right = (stmt.condition_right or "").strip()
-
-        # A condition we cannot represent reliably is not fabricated: we
-        # still descend into nested IFs (which carry their own complete
-        # comparisons) but emit nothing for this level.
-        this_comparison: tuple[str, str, str] | None
-        if left and op and right:
-            this_comparison = (left, op, right)
-        else:
-            this_comparison = None
+        # A condition we cannot represent reliably (any term incomplete)
+        # is not fabricated: we still descend into nested IFs (which carry
+        # their own complete comparisons) but emit nothing for this level.
+        runs = _condition_runs(stmt)
 
         # THEN branch
-        if this_comparison is not None:
-            then_ctx = enclosing + (this_comparison,)
+        if runs is not None:
+            then_ctx = enclosing + (_positive_level(runs),)
             self._emit_branch(
                 stmt,
                 stmt.then_statements,
@@ -285,8 +350,8 @@ class BusinessRuleExtractor:
 
         # ELSE branch
         if stmt.else_statements:
-            if this_comparison is not None:
-                else_ctx = enclosing + (("NOT", "", _fmt_comparison(this_comparison)),)
+            if runs is not None:
+                else_ctx = enclosing + (_negated_level(runs),)
                 self._emit_branch(
                     stmt,
                     stmt.else_statements,
@@ -305,7 +370,7 @@ class BusinessRuleExtractor:
         self,
         if_node: IfStatementNode,
         branch: tuple[StatementNode, ...],
-        ctx: tuple[tuple[str, str, str], ...],
+        ctx: tuple[_Level, ...],
         *,
         negated: bool,
         paragraph: str,
@@ -327,7 +392,7 @@ class BusinessRuleExtractor:
         # Deterministic confidence: a single flat comparison is a direct
         # read of the AST; a conjunction reconstructed from nested IFs is
         # a mild structural inference (the nesting *implies* AND).
-        real_comparisons = [c for c in ctx if c[0] != "NOT"]
+        real_comparisons = [leaf for level in ctx for leaf in level.leaves]
         confidence = 1.0 if len(ctx) == 1 else 0.75
 
         reads: set[str] = set(condition_vars)
@@ -391,9 +456,16 @@ class BusinessRuleExtractor:
         if negated:
             evidence.append("ELSE branch — condition negated")
         if len(ctx) > 1:
+            positive_levels = sum(1 for level in ctx if level.leaves)
             evidence.append(
-                f"condition is a conjunction reconstructed from {len(real_comparisons)} "
+                f"condition is a conjunction reconstructed from {positive_levels} "
                 "nested IF comparison(s)"
+            )
+        if if_node.extra_conditions:
+            evidence.append(
+                f"IF condition has {len(if_node.extra_conditions)} additional "
+                "AND/OR term(s) (extra_conditions): "
+                + ", ".join(t.connector.upper() for t in if_node.extra_conditions)
             )
         if paragraph in dep_paragraphs:
             evidence.append(
@@ -487,34 +559,28 @@ def _fmt_pos(pos: Position | None) -> str:
     return f"{pos.filename}:{pos.line}:{pos.column}"
 
 
-def _render_condition(ctx: tuple[tuple[str, str, str], ...]) -> str:
-    """Render the enclosing-comparison stack into canonical condition text."""
-    parts: list[str] = []
-    for comp in ctx:
-        if comp[0] == "NOT":
-            parts.append(f"NOT ({comp[2]})")
-        else:
-            parts.append(_fmt_comparison(comp))
+def _render_condition(ctx: tuple[_Level, ...]) -> str:
+    """Render the enclosing-level stack into canonical condition text."""
+    parts = [part for level in ctx for part in level.parts]
     if len(parts) == 1:
         return parts[0]
     return " AND ".join(f"({p})" for p in parts)
 
 
-def _condition_variables(ctx: tuple[tuple[str, str, str], ...]) -> set[str]:
+def _condition_variables(ctx: tuple[_Level, ...]) -> set[str]:
     variables: set[str] = set()
-    for comp in ctx:
-        if comp[0] == "NOT":
+    for level in ctx:
+        for text in level.negated_texts:
             # Re-parse the negated inner text's operands.
-            text = comp[2]
             for token in text.replace("(", " ").replace(")", " ").split():
                 kind, value = _operand_bucket(token)
                 if kind == "variable" and _looks_like_identifier(value):
                     variables.add(value)
-            continue
-        for operand in (comp[0], comp[2]):
-            kind, value = _operand_bucket(operand)
-            if kind == "variable":
-                variables.add(value)
+        for leaf in level.leaves:
+            for operand in (leaf[0], leaf[2]):
+                kind, value = _operand_bucket(operand)
+                if kind == "variable":
+                    variables.add(value)
     return variables
 
 

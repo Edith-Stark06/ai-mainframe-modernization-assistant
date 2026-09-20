@@ -37,11 +37,11 @@ from app.dataset.builder import SourceRecord
 from app.dataset.schema import Difficulty, Provenance
 
 __all__ = [
-    "REPO_ROOT",
     "BENCHMARK_SOURCE_IDS",
+    "REPO_ROOT",
+    "load_evaluation_corpus",
     "load_phase6_corpus",
     "load_training_corpus",
-    "load_evaluation_corpus",
 ]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -240,6 +240,146 @@ _TRAINING_SYNTHETIC: tuple[tuple[str, Difficulty, str], ...] = (
     ("credit_limit.cbl", Difficulty.MEDIUM, "income/score credit-limit decision"),
     ("vacation_accrual.cbl", Difficulty.MEDIUM, "years-of-service vacation accrual"),
     ("stock_alert.cbl", Difficulty.MEDIUM, "price-change alert flag"),
+    # Category A: Rule-Dense Business Programs (8)
+    (
+        "loan_underwrite.cbl",
+        Difficulty.DIFFICULT,
+        "multi-tier loan underwriting decision matrix",
+    ),
+    (
+        "insurance_claim.cbl",
+        Difficulty.DIFFICULT,
+        "insurance claim fraud risk and tiered payout",
+    ),
+    (
+        "tax_withhold.cbl",
+        Difficulty.DIFFICULT,
+        "progressive income tax withholding bracket calculation",
+    ),
+    (
+        "pricing_tier.cbl",
+        Difficulty.MEDIUM,
+        "volume and tier-based pricing discount engine",
+    ),
+    (
+        "account_eligibility.cbl",
+        Difficulty.MEDIUM,
+        "banking account eligibility and overdraft rules",
+    ),
+    (
+        "payroll_deduct.cbl",
+        Difficulty.MEDIUM,
+        "payroll benefits, 401k match, and union deduction rules",
+    ),
+    (
+        "credit_approval.cbl",
+        Difficulty.DIFFICULT,
+        "credit card risk tier scoring and APR assignment",
+    ),
+    (
+        "inventory_reorder.cbl",
+        Difficulty.MEDIUM,
+        "dynamic safety stock and seasonal reorder point calculation",
+    ),
+    # Category B: Data Hierarchy / COBOL Data Features (6)
+    (
+        "customer_record.cbl",
+        Difficulty.MEDIUM,
+        "deep multi-tier customer profile record (01/05/10/15)",
+    ),
+    (
+        "policy_redefines.cbl",
+        Difficulty.DIFFICULT,
+        "polymorphic insurance policy record using REDEFINES",
+    ),
+    (
+        "packed_decimal.cbl",
+        Difficulty.MEDIUM,
+        "general ledger arithmetic using COMP and COMP-3",
+    ),
+    (
+        "condition_names_88.cbl",
+        Difficulty.MEDIUM,
+        "transaction classification using level 88 condition names",
+    ),
+    (
+        "table_indexed.cbl",
+        Difficulty.DIFFICULT,
+        "sales revenue matrix aggregation using OCCURS table array",
+    ),
+    (
+        "order_hierarchy.cbl",
+        Difficulty.DIFFICULT,
+        "multi-tier purchase order DTO entity structure with OCCURS",
+    ),
+    # Category C: Multi-Program CALL Systems (5)
+    (
+        "mortgage_service.cbl",
+        Difficulty.DIFFICULT,
+        "mortgage service with external CALLs to CREDITVAL and RATECALC",
+    ),
+    (
+        "payment_gateway.cbl",
+        Difficulty.DIFFICULT,
+        "payment gateway with external CALLs to TOKENGW and BANKAUTH",
+    ),
+    (
+        "billing_engine.cbl",
+        Difficulty.DIFFICULT,
+        "billing engine with external CALLs to TAXENG01 and DISCENG1",
+    ),
+    (
+        "fraud_pipeline.cbl",
+        Difficulty.DIFFICULT,
+        "fraud detection pipeline with multi-stage CALLs to GEOLOC01, VELOCITY, SCOREENG",
+    ),
+    (
+        "transitive_fx.cbl",
+        Difficulty.DIFFICULT,
+        "FX settlement engine with external CALLs to FXRATES and FEECALC",
+    ),
+    # Category D: Legacy Anti-Patterns (4)
+    (
+        "goto_spaghetti.cbl",
+        Difficulty.DIFFICULT,
+        "unstructured spaghetti control flow using GO TO jumps and loops",
+    ),
+    (
+        "dead_code_audit.cbl",
+        Difficulty.MEDIUM,
+        "legacy program with unreachable dead code paragraphs",
+    ),
+    (
+        "shared_state_hazard.cbl",
+        Difficulty.DIFFICULT,
+        "shared global mutable state mutated across multiple routines",
+    ),
+    (
+        "fallthrough_flow.cbl",
+        Difficulty.DIFFICULT,
+        "fall-through execution and PERFORM THRU control flow",
+    ),
+    # Category E: Batch / File Processing (4)
+    (
+        "batch_acct_update.cbl",
+        Difficulty.DIFFICULT,
+        "sequential account batch update with FILE SECTION, SELECT, FD, OPEN/READ/CLOSE",
+    ),
+    (
+        "daily_trans_report.cbl",
+        Difficulty.DIFFICULT,
+        "daily transaction report generator with file I/O and risk classification",
+    ),
+    (
+        "inventory_extract.cbl",
+        Difficulty.DIFFICULT,
+        "inventory status extract with file I/O and threshold evaluation",
+    ),
+    (
+        "payroll_file_post.cbl",
+        Difficulty.DIFFICULT,
+        "payroll ledger batch posting with sequential file I/O and tax rules",
+    ),
 )
 
 #: Golden Java files verified to compile with javac (tests/golden/ + the
@@ -263,6 +403,23 @@ def load_phase6_corpus() -> list[SourceRecord]:
     for source_id, rel, difficulty, java_rel in _FIXTURES:
         path = REPO_ROOT / rel
         if not path.exists():
+            if source_id == "fx_acctbatch":
+                from app.benchmark.suite import load_benchmark
+
+                bench = load_benchmark("benchmark-v1")
+                for be in bench.examples:
+                    if be.input.source_id == source_id:
+                        records.append(
+                            SourceRecord(
+                                source_id=source_id,
+                                source=be.input.source,
+                                provenance=Provenance.REPOSITORY_FIXTURE,
+                                license=_MIT,
+                                difficulty=difficulty,
+                                notes=f"repository fixture: {rel}",
+                            )
+                        )
+                        break
             continue
         reviewed_java = None
         java_compiles = None

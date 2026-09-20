@@ -224,6 +224,19 @@ class CobolLexer:
                     )
                     scanner.advance()
                     scanner.advance()
+                elif ch == "<" and next_ch == ">":
+                    # COBOL's own "not equal" spelling (ANSI relational-operator
+                    # ``<>``). Unlike the ``+``/``-`` VALUE-clause sign (task
+                    # #stage21), ``<`` and ``>`` have no other single-character
+                    # meaning to protect here -- they are dedicated relational
+                    # operators already -- so combining them at the lexer, the
+                    # same way ``<=``/``>=``/``==``/``!=`` already are, is safe
+                    # and keeps the parser's operator-token contract uniform.
+                    tokens.append(
+                        Token(type=TokenType.OPERATOR_NEQ, lexeme="<>", position=pos)
+                    )
+                    scanner.advance()
+                    scanner.advance()
                 elif ch == ">" and next_ch == "=":
                     tokens.append(
                         Token(type=TokenType.OPERATOR_GE, lexeme=">=", position=pos)
@@ -362,9 +375,17 @@ class CobolLexer:
 
     def _read_number(self, scanner: CharacterScanner, filename: str) -> Token:
         """
-        Read an integer numeric literal, or a word that begins with digits.
+        Read an integer or decimal numeric literal, or a word that begins
+        with digits.
 
-        Consumes consecutive digit characters.  No decimal-point handling.
+        Consumes consecutive digit characters, then — when the digits are
+        immediately followed by a decimal point that is itself immediately
+        followed by another digit (:meth:`_at_decimal_point`) — consumes
+        the point and the fractional digit run too, producing a single
+        ``NUMBER`` token such as ``"12.50"``. A period that is *not*
+        immediately followed by a digit is left untouched for the main
+        loop's statement-terminator handling, so ``MOVE 12. TO X`` and
+        every other integer-literal-then-terminator case is unaffected.
 
         A COBOL user-defined word may begin with digits — procedure names
         such as ``0000-MAIN`` and ``3000-VALIDATE-INPUT`` are the common
@@ -390,6 +411,17 @@ class CobolLexer:
             else:
                 break
 
+        if self._at_decimal_point(scanner):
+            digits.append(".")
+            scanner.advance()  # consume the decimal point
+            while not scanner.eof():
+                ch = scanner.current()
+                if ch is not None and ch.isdigit():
+                    digits.append(ch)
+                    scanner.advance()
+                else:
+                    break
+
         if self._at_numeric_prefixed_word(scanner):
             return self._read_word_continuation(scanner, start_pos, digits)
 
@@ -398,6 +430,26 @@ class CobolLexer:
             lexeme="".join(digits),
             position=start_pos,
         )
+
+    @staticmethod
+    def _at_decimal_point(scanner: CharacterScanner) -> bool:
+        """
+        Return ``True`` when the scanner sits on a ``.`` that is a decimal
+        point inside a numeric literal (``12.50``), not a COBOL statement
+        /sentence/paragraph-terminating period.
+
+        Mirrors COBOL's own lexical rule: a terminating period is always
+        followed by whitespace (or is the last character of the source);
+        a decimal point is immediately followed by another digit, with no
+        separating whitespace. Checking only "is the next character a
+        digit" is therefore sufficient and does not touch any case where
+        the period already behaved as a terminator — ``12.`` followed by
+        whitespace, a bare ``.``, or any non-numeric use are all unchanged.
+        """
+        if scanner.current() != ".":
+            return False
+        following = scanner.peek(1)
+        return following is not None and following.isdigit()
 
     @staticmethod
     def _at_numeric_prefixed_word(scanner: CharacterScanner) -> bool:

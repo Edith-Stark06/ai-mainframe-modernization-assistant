@@ -71,12 +71,7 @@ def test_literals_never_become_dependencies_or_variables(analyze) -> None:
     assert "'ACTIVE'" not in rule.dependencies
 
 
-def test_condition_is_not_fabricated_beyond_the_ast(analyze) -> None:
-    # The parser cannot represent "A >= 18 AND B = 'X'" on one IF.
-    # Whatever survives must not claim an AND the AST never produced.
-    _, result = _run(
-        analyze,
-        """\
+_COMPOUND_IF_SRC = """\
        IDENTIFICATION DIVISION.
        PROGRAM-ID. T.
        DATA DIVISION.
@@ -86,17 +81,29 @@ def test_condition_is_not_fabricated_beyond_the_ast(analyze) -> None:
        01 WS-R PIC X(4) VALUE SPACE.
        PROCEDURE DIVISION.
        MAIN.
-           IF WS-A >= 18 AND WS-B = 'X'
+           IF WS-A >= 18{extra}
                MOVE 'OK' TO WS-R
            END-IF.
            STOP RUN.
-    """,
-    )
-    for rule in result.business_rules:
-        # a fabricated conjunction would mention WS-B; the AST triple does not.
-        if "AND" in rule.condition:
-            # only allowed when it came from genuine IF nesting
-            assert rule.confidence == 0.75
+"""
+
+
+def test_condition_is_not_fabricated_beyond_the_ast(analyze) -> None:
+    # The parser records "A >= 18 AND B = 'X'" on one IF as the first
+    # comparison plus one AND-joined extra term, so the conjunction the
+    # rule states is genuinely in the AST -- and must be stated exactly,
+    # in full, as a direct (confidence 1.0) read of that single IF.
+    _, result = _run(analyze, _COMPOUND_IF_SRC.format(extra=" AND WS-B = 'X'"))
+    assert [r.condition for r in result.business_rules] == [
+        "(WS-A >= 18) AND (WS-B = 'X')"
+    ]
+    assert result.business_rules[0].confidence == 1.0
+
+    # ...and a plain IF never gains a conjunct the AST did not produce.
+    _, plain = _run(analyze, _COMPOUND_IF_SRC.format(extra=""))
+    assert [r.condition for r in plain.business_rules] == ["WS-A >= 18"]
+    for rule in plain.business_rules:
+        assert "AND" not in rule.condition and "OR" not in rule.condition
 
 
 # ---------------------------------------------------------------------------

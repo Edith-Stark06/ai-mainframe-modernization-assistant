@@ -153,6 +153,10 @@ class _DeferredEdge:
     source_id: str
     target_paragraph: str
     edge_type: EdgeType
+    #: The range end for ``PERFORM A THRU C`` (task #stage16); ``""`` for
+    #: an ordinary single-target PERFORM/GO TO, which resolves exactly as
+    #: it always did (see :meth:`FlowGenerationVisitor.finish`).
+    thru_target: str = ""
 
 
 class FlowGenerationVisitor(IRVisitor):
@@ -165,8 +169,38 @@ class FlowGenerationVisitor(IRVisitor):
     to be reused across programs.
     """
 
-    def __init__(self, known_functions: Dict[str, List[str]]) -> None:
+    def __init__(
+        self,
+        known_functions: Dict[str, List[str]],
+        real_paragraphs: Optional[Set[str]] = None,
+        real_paragraph_order: Optional[List[str]] = None,
+    ) -> None:
         self.known_functions = known_functions
+        #: Every paragraph name genuinely declared in this program's
+        #: PROCEDURE DIVISION AST (task #stage15) -- independent of whether
+        #: any of its statements lowered to an IR instruction. A paragraph
+        #: whose only statement is one this parser cannot represent (e.g.
+        #: ``READ``) produces zero IR instructions, so it would otherwise be
+        #: entirely invisible to this visitor (``_known_paragraphs`` and
+        #: ``_paragraph_entry`` are both populated purely from IR
+        #: instructions' ``.paragraph`` attribute) and a ``PERFORM``/``GO TO``
+        #: reaching it would be misclassified as unresolved/external, even
+        #: though the paragraph genuinely exists. See :meth:`finish`.
+        self._real_paragraphs: Set[str] = real_paragraphs or set()
+        #: The same paragraph names as ``real_paragraphs``, but in their
+        #: genuine PROCEDURE DIVISION source order (task #stage16). Used
+        #: only to resolve a ``PERFORM A THRU C`` range to the ordered
+        #: slice of real paragraphs from ``A`` to ``C`` inclusive -- COBOL
+        #: defines a THRU range by physical source position, not by
+        #: paragraph naming. Falls back to ``real_paragraphs`` in
+        #: arbitrary order when no explicit order is supplied (e.g. this
+        #: module's hand-built-IR unit tests, none of which exercise
+        #: THRU).
+        self._real_paragraph_order: List[str] = (
+            list(real_paragraph_order)
+            if real_paragraph_order is not None
+            else list(self._real_paragraphs)
+        )
         self.nodes: Dict[str, FlowNode] = {}
         # Keep track of logical edges to prevent duplicates
         self._seen_logical_edges: Set[Tuple[str, str, EdgeType]] = set()
@@ -341,9 +375,7 @@ class FlowGenerationVisitor(IRVisitor):
 
     def visit_if(self, node: IRIf) -> None:
         self._maybe_enter_paragraph(node)
-        decision_id = self._new_node(
-            NodeType.DECISION, f"IF {node.left} {node.operator} {node.right}"
-        )
+        decision_id = self._new_node(NodeType.DECISION, f"IF {node.condition_text()}")
         self._link_pending_to(decision_id)
         self._branch_stack.append(_BranchFrame(decision_id=decision_id))
         # The next node created is the first statement of the THEN branch.
@@ -449,10 +481,20 @@ class FlowGenerationVisitor(IRVisitor):
             # PERFORM statement's own node AND the deferred PERFORMS
             # edge are created here, since the paragraph may be defined
             # later in the source than this PERFORM.
-            node_id = self._new_node(NodeType.PROCESS, f"PERFORM {node.target}")
+            #
+            # ``node.thru_target`` (task #stage16, ``PERFORM A THRU C``)
+            # is "" for an ordinary PERFORM, so the label and the deferred
+            # edge are byte-identical to before in that case; see
+            # :meth:`finish` for how a THRU range is resolved.
+            label = (
+                f"PERFORM {node.target} THRU {node.thru_target}"
+                if node.thru_target
+                else f"PERFORM {node.target}"
+            )
+            node_id = self._new_node(NodeType.PROCESS, label)
             self._link_pending_to(node_id)
             self._deferred_edges.append(
-                _DeferredEdge(node_id, node.target, EdgeType.PERFORMS)
+                _DeferredEdge(node_id, node.target, EdgeType.PERFORMS, node.thru_target)
             )
             self._pending = [(node_id, EdgeType.FLOWS_TO)]
             return
@@ -505,6 +547,100 @@ class FlowGenerationVisitor(IRVisitor):
     # Finalisation
     # ------------------------------------------------------------------
 
+    def _resolve_target_entry(self, target_paragraph: str) -> str:
+        """
+        Resolve one paragraph name to its CFG entry node id, creating it
+        if necessary -- exactly the single-target logic task #stage15
+        introduced, extracted unchanged so task #stage16's THRU-range
+        resolution (:meth:`_resolve_thru_edges`) can reuse it per
+        paragraph in the range instead of duplicating it.
+
+        Three cases, checked in order:
+
+        1. The paragraph already has an IR-derived entry node
+           (``_paragraph_entry``) -- return it as-is.
+        2. No IR-derived entry, but the paragraph is one of this
+           program's genuine PROCEDURE DIVISION paragraphs
+           (``_real_paragraphs``) -- it simply never produced an IR
+           instruction (e.g. its only statement is unsupported, like
+           ``READ``). Existence, not executable content, is what makes a
+           target resolved: create (and cache, so every call site
+           targeting it shares one node) a single ``NodeType.PROCESS``
+           anchor node. This is a structural CFG placeholder marking
+           where control enters and immediately leaves the paragraph --
+           it does not assert any COBOL operation happened, so no
+           executable statement is fabricated.
+        3. Neither -- the name does not match any paragraph actually
+           present in this program: a genuinely unresolved reference. Do
+           not fabricate a target; report it as an ``EXTERNAL`` node
+           instead, exactly as an unresolved CALL target already is.
+        """
+        target_entry = self._paragraph_entry.get(target_paragraph)
+        if target_entry is not None:
+            return target_entry
+
+        if target_paragraph in self._real_paragraphs:
+            mod_prefix = self.current_module or "unknown"
+            target_entry = f"empty_{mod_prefix}_{target_paragraph}"
+            if target_entry not in self.nodes:
+                self.nodes[target_entry] = FlowNode(
+                    id=target_entry,
+                    node_type=NodeType.PROCESS,
+                    name=f"{target_paragraph} (no representable statements)",
+                )
+            self._paragraph_entry[target_paragraph] = target_entry
+            return target_entry
+
+        target_entry = f"ext_{target_paragraph}"
+        if target_entry not in self.nodes:
+            self.nodes[target_entry] = FlowNode(
+                id=target_entry, node_type=NodeType.EXTERNAL, name=target_paragraph
+            )
+        return target_entry
+
+    def _resolve_thru_edges(self, deferred: _DeferredEdge) -> None:
+        """
+        Resolve a ``PERFORM A THRU C`` deferred edge (task #stage16).
+
+        COBOL defines a THRU range by *physical source position*, not by
+        paragraph naming: it covers ``A``, ``C``, and every real
+        paragraph physically between them in the PROCEDURE DIVISION,
+        regardless of what any of them are named. One ``PERFORMS`` edge
+        is added from the PERFORM statement's own node directly to each
+        paragraph's resolved entry (:meth:`_resolve_target_entry`, the
+        same per-paragraph resolution -- and the same shared/cached
+        nodes -- as an ordinary single-target PERFORM), so the whole
+        range is explicitly reachable from this one statement rather
+        than relying on paragraph-to-paragraph FALLTHROUGH, which does
+        not connect an empty paragraph that was never itself a PERFORM
+        target directly.
+
+        If either endpoint does not match a real paragraph, or the range
+        is reversed (``A`` occurs after ``C`` in source order -- not
+        legal COBOL, and not fabricated a route for here), each endpoint
+        is resolved independently instead: a missing endpoint still
+        resolves to an ``EXTERNAL`` node (never silently upgraded to a
+        real one), exactly like a plain unresolved PERFORM target.
+        """
+        try:
+            start_index = self._real_paragraph_order.index(deferred.target_paragraph)
+        except ValueError:
+            start_index = None
+        try:
+            end_index = self._real_paragraph_order.index(deferred.thru_target)
+        except ValueError:
+            end_index = None
+
+        names: Tuple[str, ...]
+        if start_index is None or end_index is None or start_index > end_index:
+            names = (deferred.target_paragraph, deferred.thru_target)
+        else:
+            names = tuple(self._real_paragraph_order[start_index : end_index + 1])
+
+        for name in names:
+            entry = self._resolve_target_entry(name)
+            self._add_edge(deferred.source_id, entry, deferred.edge_type)
+
     def finish(self) -> None:
         """
         Resolve deferred PERFORM/GO TO edges and add paragraph fallthrough.
@@ -515,20 +651,10 @@ class FlowGenerationVisitor(IRVisitor):
         self._close_paragraph()
 
         for deferred in self._deferred_edges:
-            target_entry = self._paragraph_entry.get(deferred.target_paragraph)
-            if target_entry is None:
-                # The PERFORM/GO TO target does not match any paragraph
-                # actually present in this program -- an unresolved
-                # reference.  Do not fabricate a target; report it as an
-                # EXTERNAL node instead, exactly as an unresolved CALL
-                # target already is.
-                target_entry = f"ext_{deferred.target_paragraph}"
-                if target_entry not in self.nodes:
-                    self.nodes[target_entry] = FlowNode(
-                        id=target_entry,
-                        node_type=NodeType.EXTERNAL,
-                        name=deferred.target_paragraph,
-                    )
+            if deferred.thru_target:
+                self._resolve_thru_edges(deferred)
+                continue
+            target_entry = self._resolve_target_entry(deferred.target_paragraph)
             self._add_edge(deferred.source_id, target_entry, deferred.edge_type)
 
         for i in range(len(self._paragraph_order) - 1):
@@ -641,7 +767,21 @@ def generate_flow(analysis: AnalysisResult) -> Flow:
                 known_functions[fn.name] = []
             known_functions[fn.name].append(mod.name)
 
-    visitor = FlowGenerationVisitor(known_functions)
+    # Every paragraph the AST actually declares, independent of whether the
+    # parser could lower any of its statements to IR -- see the docstring on
+    # FlowGenerationVisitor._real_paragraphs. Kept in source order too
+    # (FlowGenerationVisitor._real_paragraph_order) so a PERFORM ... THRU
+    # ... range can be resolved by physical position (task #stage16).
+    real_paragraph_order: List[str] = []
+    if analysis.ast is not None and analysis.ast.procedure_division is not None:
+        real_paragraph_order = [
+            p.name for p in analysis.ast.procedure_division.paragraphs
+        ]
+    real_paragraphs: Set[str] = set(real_paragraph_order)
+
+    visitor = FlowGenerationVisitor(
+        known_functions, real_paragraphs, real_paragraph_order
+    )
     traverse_ir(analysis.ir, visitor)
     visitor.finish()
 

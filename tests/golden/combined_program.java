@@ -1,6 +1,6 @@
 public class CombinedProgram {
 
-    private int counter;
+    private int counter = 1;
 
     public static void main(String[] args) {
         new CombinedProgram().run();

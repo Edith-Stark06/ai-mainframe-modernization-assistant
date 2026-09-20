@@ -181,6 +181,8 @@ class RecoveryContext(Enum):
             Error occurred inside the PROCEDURE DIVISION parser.
         WORKING_STORAGE_SECTION:
             Error occurred while parsing the WORKING-STORAGE SECTION.
+        FILE_SECTION:
+            Error occurred while parsing the FILE SECTION (task #stage27).
         PARAGRAPH:
             Error occurred inside a paragraph body.
         STATEMENT:
@@ -198,6 +200,7 @@ class RecoveryContext(Enum):
     DATA_DIVISION = "data_division"
     PROCEDURE_DIVISION = "procedure_division"
     WORKING_STORAGE_SECTION = "working_storage_section"
+    FILE_SECTION = "file_section"
     PARAGRAPH = "paragraph"
     STATEMENT = "statement"
     UNKNOWN = "unknown"

@@ -17,6 +17,8 @@ Responsibilities:
       ``visit_identification_division``,
       ``visit_data_division``,
       ``visit_working_storage_section``,
+      ``visit_file_section``,
+      ``visit_file_description``,
       ``visit_data_item``,
       ``visit_elementary_item``,
       ``visit_group_item``,
@@ -80,6 +82,7 @@ if TYPE_CHECKING:
         ElementaryItemNode,
         GroupItemNode,
     )
+    from app.parser.ast.file_section import FileDescriptionNode, FileSectionNode
     from app.parser.ast.identification import IdentificationDivisionNode
     from app.parser.ast.paragraphs import ParagraphNode
     from app.parser.ast.procedure import ProcedureDivisionNode
@@ -159,6 +162,31 @@ class SemanticVisitor(ASTVisitor):
 
         Args:
             node: The working-storage section node.
+
+        Returns:
+            ``None`` by default.
+        """
+        return None
+
+    def visit_file_section(self, node: FileSectionNode) -> Any:
+        """
+        Visit a :class:`~app.parser.ast.file_section.FileSectionNode` (task #stage27).
+
+        Args:
+            node: The file section node.
+
+        Returns:
+            ``None`` by default.
+        """
+        return None
+
+    def visit_file_description(self, node: FileDescriptionNode) -> Any:
+        """
+        Visit a :class:`~app.parser.ast.file_section.FileDescriptionNode`
+        (one ``FD`` entry, task #stage27).
+
+        Args:
+            node: The file description node.
 
         Returns:
             ``None`` by default.
@@ -338,6 +366,9 @@ def traverse_program(program: ProgramNode, visitor: SemanticVisitor) -> None:
         └── DataDivisionNode
             └── WorkingStorageSectionNode
                 └── DataItemNode   (ElementaryItemNode | GroupItemNode | ConditionNameNode)
+            └── FileSectionNode
+                └── FileDescriptionNode (×N)
+                    └── DataItemNode   (ElementaryItemNode | GroupItemNode | ConditionNameNode)
         └── ProcedureDivisionNode
             └── ParagraphNode (×N)
                 └── StatementNode (×M)  (DisplayStatementNode | MoveStatementNode | …)
@@ -371,6 +402,13 @@ def traverse_program(program: ProgramNode, visitor: SemanticVisitor) -> None:
             visitor.visit_working_storage_section(ws)
             for item in ws.items:
                 item.accept(visitor)
+        fs = data_div.file_section
+        if fs is not None:
+            visitor.visit_file_section(fs)
+            for record in fs.records:
+                visitor.visit_file_description(record)
+                for item in record.items:
+                    item.accept(visitor)
 
     # --- procedure division -----------------------------------------------
     proc_div = program.procedure_division

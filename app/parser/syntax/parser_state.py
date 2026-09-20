@@ -115,6 +115,7 @@ class ParserState:
         self._stream: TokenStream = stream
         self._error_count: int = 0
         self._recovery: RecoveryManager = RecoveryManager()
+        self._known_condition_names: frozenset[str] = frozenset()
 
     # ------------------------------------------------------------------
     # Token access (delegates to TokenStream)
@@ -296,3 +297,43 @@ class ParserState:
             ``True`` when the recovery manager is actively synchronising.
         """
         return self._recovery.in_recovery
+
+    # ------------------------------------------------------------------
+    # Cross-division lookahead: level-88 condition-name identifiers
+    # ------------------------------------------------------------------
+
+    @property
+    def known_condition_names(self) -> frozenset[str]:
+        """
+        The uppercased names of every level-88 condition-name declared in
+        this program's DATA DIVISION (empty if the DATA DIVISION had none,
+        was absent, or has not been parsed into this state yet).
+
+        Populated once, by :class:`~app.parser.syntax.program_parser.ProgramParser`,
+        after the DATA DIVISION is parsed and before the PROCEDURE DIVISION
+        is — the only two grammar rules that must agree on this set. It
+        exists so :class:`~app.parser.syntax.procedure_parser.ProcedureDivisionParser`
+        can distinguish a genuine condition-name reference in an ``IF``
+        (``IF TX-DEPOSIT``) from an arbitrary, unrelated identifier that
+        merely lacks a comparison operator — the parser never treats a
+        bare identifier as a condition-name unless it was actually
+        declared as one, per the same "do not invent semantics from
+        syntax alone" discipline every other grammar rule in this parser
+        follows.
+
+        Returns:
+            The current known-condition-name set (empty until set).
+        """
+        return self._known_condition_names
+
+    def set_known_condition_names(self, names: frozenset[str]) -> None:
+        """
+        Record the set of level-88 condition-name identifiers visible to
+        the PROCEDURE DIVISION about to be parsed.
+
+        Args:
+            names:
+                Uppercased condition-name identifiers collected from the
+                already-parsed DATA DIVISION AST.
+        """
+        self._known_condition_names = names

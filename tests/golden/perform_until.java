@@ -1,6 +1,6 @@
 public class PerformTest {
 
-    private int cnt;
+    private int cnt = 0;
 
     public static void main(String[] args) {
         new PerformTest().run();
