@@ -180,6 +180,7 @@ from loguru import logger
 
 from app.ir.blocks import IRBasicBlock
 from app.ir.instructions import (
+    IRConditionTerm,
     IREndIf,
     IRIf,
     IRElse,
@@ -856,8 +857,24 @@ class IRBuilder:
     def build_if_statement(self, stmt: IfStatementNode) -> None:
         ir_left = self.build_operand(stmt.condition_left)
         ir_right = self.build_operand(stmt.condition_right)
+        # Every AND/OR-joined term the parser recorded, in source order --
+        # the first triple alone is only the first term of a compound IF.
+        extra_terms = tuple(
+            IRConditionTerm(
+                connector=term.connector,
+                left=self.build_operand(term.left),
+                operator=term.operator,
+                right=self.build_operand(term.right),
+            )
+            for term in stmt.extra_conditions
+        )
         self._emit(
-            IRIf(left=ir_left, operator=stmt.condition_operator, right=ir_right),
+            IRIf(
+                left=ir_left,
+                operator=stmt.condition_operator,
+                right=ir_right,
+                extra_terms=extra_terms,
+            ),
             stmt.start_position,
         )
         for then_stmt in stmt.then_statements:
@@ -879,12 +896,22 @@ class IRBuilder:
         the identically-shaped ``IRCall`` -- without this, a PERFORM to
         a paragraph name that does not resolve locally was
         indistinguishable from, and mis-treated as, an external CALL.
+
+        ``stmt.thru_target`` (task #stage16, ``PERFORM A THRU C``) is
+        carried through verbatim as ``IRCall.thru_target``; it is ``""``
+        for an ordinary ``PERFORM A``, which serializes identically to
+        before (``thru_target`` is omitted from the IR while empty).
         """
         if not stmt.target:
             logger.warning("Unsupported PERFORM form: missing target. Continuing.")
         else:
             self._emit(
-                IRCall(target=stmt.target, comment="PERFORM"), stmt.start_position
+                IRCall(
+                    target=stmt.target,
+                    thru_target=stmt.thru_target,
+                    comment="PERFORM",
+                ),
+                stmt.start_position,
             )
 
     def build_go_to_statement(self, stmt: GoToStatementNode) -> None:

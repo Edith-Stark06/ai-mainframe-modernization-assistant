@@ -26,23 +26,24 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 __all__ = [
-    "TaskType",
-    "Difficulty",
-    "Provenance",
-    "GroundTruthStatus",
-    "SourceLocation",
-    "ExampleInput",
-    "ExampleAnalysis",
-    "ExampleMetadata",
-    "DatasetExample",
     "REQUIRES_EXPECTED_OUTPUT",
+    "DatasetExample",
+    "Difficulty",
+    "ExampleAnalysis",
+    "ExampleInput",
+    "ExampleMetadata",
+    "GroundTruthStatus",
+    "Provenance",
+    "SourceLocation",
+    "TaskType",
     "derive_example_id",
 ]
 
 
 class TaskType(str, Enum):
-    """The eight Phase 6 task types."""
+    """Phase 6 and MMIM task types."""
 
+    # Phase 6 baseline task types (preserved for backwards compatibility)
     COBOL_EXPLANATION = "cobol_explanation"
     BUSINESS_RULE_EXTRACTION = "business_rule_extraction"
     MODERNIZATION_RECOMMENDATION = "modernization_recommendation"
@@ -51,6 +52,15 @@ class TaskType(str, Enum):
     COBOL_TO_JAVA = "cobol_to_java"
     MODERNIZATION_QA = "modernization_qa"
     SOURCE_GROUNDED_QA = "source_grounded_qa"
+
+    # MMIM dedicated task types
+    PROGRAM_UNDERSTANDING = "program_understanding"
+    DEPENDENCY_REASONING = "dependency_reasoning"
+    RISK_CLASSIFICATION = "risk_classification"
+    MODERNIZATION_STRATEGY = "modernization_strategy"
+    TRANSFORMATION_PLANNING = "transformation_planning"
+    VALIDATION_REASONING = "validation_reasoning"
+    REPAIR_REASONING = "repair_reasoning"
 
 
 #: Task types that MUST carry a non-empty ``expected_output``.
@@ -279,6 +289,6 @@ def derive_example_id(task_type: TaskType, source_id: str, variant: str = "") ->
     random, never dependent on Python object identity.
     """
     digest = hashlib.sha1(
-        f"{task_type.value}␟{source_id}␟{variant}".encode("utf-8")
+        f"{task_type.value}␟{source_id}␟{variant}".encode()
     ).hexdigest()[:12]
     return f"{task_type.value}-{digest}"

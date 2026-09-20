@@ -9,13 +9,15 @@ Responsibilities:
     - Hold an optional
       :class:`~app.parser.ast.working_storage.WorkingStorageSectionNode`
       for the WORKING-STORAGE SECTION.
+    - Hold an optional :class:`~app.parser.ast.file_section.FileSectionNode`
+      for the FILE SECTION (task #stage27).
     - Implement :meth:`accept` for visitor-pattern dispatch.
     - Remain immutable after construction (``frozen=True``).
 
 Non-responsibilities:
     - Parsing or lexical analysis.
     - Semantic validation of section or item contents.
-    - Unimplemented sections (FILE, LINKAGE, LOCAL-STORAGE, SCREEN, REPORT).
+    - Unimplemented sections (LINKAGE, LOCAL-STORAGE, SCREEN, REPORT).
 
 Dependencies:
     - :mod:`app.parser.ast.node`             — ``ASTNode`` base class.
@@ -46,6 +48,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.parser.ast.file_section import FileSectionNode
 from app.parser.ast.node import ASTNode
 from app.parser.ast.working_storage import WorkingStorageSectionNode
 
@@ -58,9 +61,8 @@ class DataDivisionNode(ASTNode):
     Immutable AST node representing the COBOL DATA DIVISION.
 
     The DATA DIVISION is the container for all data-definition sections.
-    In this milestone only the WORKING-STORAGE SECTION is supported;
-    future tasks will add FILE, LINKAGE, LOCAL-STORAGE, SCREEN, and
-    REPORT sections.
+    WORKING-STORAGE and FILE (task #stage27) are supported; LINKAGE,
+    LOCAL-STORAGE, SCREEN, and REPORT sections remain unsupported.
 
     Attributes:
         start_position:
@@ -69,6 +71,8 @@ class DataDivisionNode(ASTNode):
             Source position of the last token consumed in this division.
         working_storage:
             The WORKING-STORAGE SECTION node, or ``None`` if absent.
+        file_section:
+            The FILE SECTION node, or ``None`` if absent.
 
     Examples:
         >>> from app.parser.lexer.position import Position
@@ -76,9 +80,12 @@ class DataDivisionNode(ASTNode):
         >>> node = DataDivisionNode(start_position=pos, end_position=pos)
         >>> node.working_storage is None
         True
+        >>> node.file_section is None
+        True
     """
 
     working_storage: WorkingStorageSectionNode | None = None
+    file_section: FileSectionNode | None = None
 
     def accept(self, visitor: object) -> object:
         """

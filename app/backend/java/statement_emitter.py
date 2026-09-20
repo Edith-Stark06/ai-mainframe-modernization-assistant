@@ -738,24 +738,55 @@ def emit_return(
     return ["return;"]
 
 
+def _escape_java_string_content(text: str) -> str:
+    r"""
+    Escape *text* for safe embedding inside a Java ``"..."`` string literal.
+
+    Only backslash and double-quote need escaping: the lexer that produced
+    every COBOL string-literal token forbids an embedded newline or carriage
+    return (``LexerError: unterminated string literal``), so *text* is always
+    a single line, and it can never contain the literal's own delimiter
+    (single quote) since the lexer stops scanning at the first one. Anything
+    else -- including non-ASCII characters -- is valid, unescaped Java source
+    text and is passed through unchanged.
+
+    Examples:
+        >>> _escape_java_string_content("PLAIN")
+        'PLAIN'
+        >>> _escape_java_string_content('HAS "QUOTES"')
+        'HAS \\"QUOTES\\"'
+        >>> _escape_java_string_content("BACK\\SLASH")
+        'BACK\\\\SLASH'
+    """
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _translate_operand(operand: str) -> str:
     """
     Convert an IR operand string into a Java expression string.
 
     Translation rules (applied in order):
 
-    1. **Quoted string literal** — operand starts and ends with ``"``:
+    1. **Double-quoted string literal** — operand starts and ends with ``"``:
        returned unchanged (e.g. ``'"HELLO"'`` → ``'"HELLO"'``).
-    2. **Numeric literal** — operand matches ``[-+]?[0-9]+(\\.?[0-9]*)``:\
+    2. **Single-quoted string literal** — operand starts and ends with ``'``:
+       COBOL's own string-literal delimiter. Re-emitted as a Java
+       double-quoted string literal with the same content, escaped via
+       :func:`_escape_java_string_content` (e.g. ``"'Y'"`` → ``'"Y"'``).
+       Without this rule the content was treated as rule 4's COBOL
+       identifier and silently turned into an undeclared Java variable
+       reference (``'Y'`` → ``y``) -- a ``javac`` compile failure, not a
+       translation of the literal's value.
+    3. **Numeric literal** — operand matches ``[-+]?[0-9]+(\\.?[0-9]*)``:\
        returned unchanged (e.g. ``'42'`` → ``'42'``).
-    3. **Identifier** — everything else is treated as a COBOL name and
+    4. **Identifier** — everything else is treated as a COBOL name and
        converted to lowerCamelCase via
        :func:`~app.backend.java.naming.to_java_field_name`.
 
     Args:
         operand:
-            An IR operand string such as ``'"HELLO"'``, ``'42'``, or
-            ``'WS-GREETING'``.
+            An IR operand string such as ``'"HELLO"'``, ``"'Y'"``, ``'42'``,
+            or ``'WS-GREETING'``.
 
     Returns:
         A Java expression string ready for embedding in a statement.
@@ -763,18 +794,24 @@ def _translate_operand(operand: str) -> str:
     Examples:
         >>> _translate_operand('"HELLO"')
         '"HELLO"'
+        >>> _translate_operand("'Y'")
+        '"Y"'
         >>> _translate_operand('42')
         '42'
         >>> _translate_operand('WS-GREETING')
         'wsGreeting'
     """
-    # 1. Quoted string literal
+    # 1. Double-quoted string literal
     if operand.startswith('"') and operand.endswith('"') and len(operand) >= 2:
         return operand
 
-    # 2. Numeric literal (integer or decimal, optional sign)
+    # 2. Single-quoted string literal (COBOL's own delimiter)
+    if operand.startswith("'") and operand.endswith("'") and len(operand) >= 2:
+        return f'"{_escape_java_string_content(operand[1:-1])}"'
+
+    # 3. Numeric literal (integer or decimal, optional sign)
     if re.match(r"^[+-]?\d+(\.\d+)?$", operand):
         return operand
 
-    # 3. COBOL identifier → lowerCamelCase
+    # 4. COBOL identifier → lowerCamelCase
     return to_java_field_name(operand)

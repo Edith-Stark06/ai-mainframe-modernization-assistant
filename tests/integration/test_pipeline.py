@@ -53,8 +53,8 @@ def test_combined_program_pipeline() -> None:
     result = compile_cobol_pipeline(FIXTURES_DIR / "combined_program.cbl")
     assert result.success
     src = result.java_source
-    assert "private int wsA;" in src
-    assert "private int wsB;" in src
+    assert "private int wsA = 10;" in src  # VALUE 10
+    assert "private int wsB = 20;" in src  # VALUE 20
     assert "wsA = 30;" in src
     assert "wsA += wsB;" in src
     assert "if (" in src

@@ -37,8 +37,8 @@ Responsibilities:
       only for fatal conditions (e.g. malformed division header).
 
 Non-responsibilities:
-    - FILE SECTION, LINKAGE SECTION, LOCAL-STORAGE, SCREEN SECTION,
-      REPORT SECTION parsing.
+    - LINKAGE SECTION, LOCAL-STORAGE, SCREEN SECTION, REPORT SECTION
+      parsing. (FILE SECTION is supported -- task #stage27.)
     - OCCURS, REDEFINES, RENAMES (66), COMP, COMP-3, INDEXED BY,
       JUSTIFIED, SYNCHRONIZED clauses.
     - COPY book expansion.
@@ -83,6 +83,7 @@ from app.parser.ast.data_items import (
     ElementaryItemNode,
     GroupItemNode,
 )
+from app.parser.ast.file_section import FileDescriptionNode, FileSectionNode
 from app.parser.ast.working_storage import WorkingStorageSectionNode
 from app.parser.diagnostics.recovery import RecoveryContext
 from app.parser.grammar_words import WORD_TOKEN_TYPES, matches_grammar_word
@@ -168,10 +169,11 @@ _NEXT_DIVISION_KEYWORDS: frozenset[str] = frozenset(
 # Section names this parser recognises but cannot model.  Their contents
 # are skipped explicitly (with a diagnostic) so that a supported section
 # following them is still parsed.  None of these is a reserved lexer word,
-# so they must be matched by lexeme, not by TokenType.KEYWORD.
+# so they must be matched by lexeme, not by TokenType.KEYWORD. "FILE" moved
+# out (task #stage27): the FILE SECTION is now modelled in full, the same
+# way WORKING-STORAGE already was.
 _UNSUPPORTED_SECTION_KEYWORDS: frozenset[str] = frozenset(
     {
-        "FILE",
         "LINKAGE",
         "LOCAL-STORAGE",
         "SCREEN",
@@ -184,8 +186,16 @@ _UNSUPPORTED_SECTION_KEYWORDS: frozenset[str] = frozenset(
 # Not a reserved lexer word either.
 _SECTION_WORD: frozenset[str] = frozenset({"SECTION"})
 
-# The one DATA DIVISION section this parser models in full.
+# The two DATA DIVISION sections this parser models in full.
 _WORKING_STORAGE_WORD: frozenset[str] = frozenset({"WORKING-STORAGE"})
+_FILE_SECTION_WORD: frozenset[str] = frozenset({"FILE"})
+
+# Not a reserved lexer word (lexes as TokenType.IDENTIFIER, confirmed
+# directly) -- an "FD" entry marks the start of the next file description
+# within the FILE SECTION, the same role a section header plays for
+# _parse_data_items's other caller (WORKING-STORAGE). Matched by lexeme via
+# _parse_data_items's extra_stop_words parameter, not by TokenType.KEYWORD.
+_FD_WORD: str = "FD"
 
 # PICTURE clause introducers.  Only PIC is a reserved lexer word; the
 # ISO long form PICTURE arrives as IDENTIFIER.
@@ -196,8 +206,46 @@ _PICTURE_WORDS: frozenset[str] = frozenset({"PIC", "PICTURE"})
 # picture string ("PIC IS X(10)" -> "ISX(10)").
 _IS_WORD: frozenset[str] = frozenset({"IS"})
 
+# The optional noise words after a level-88 ``VALUES`` ("VALUES IS 1 2", "VALUES ARE 1 2").
+_VALUES_NOISE_WORDS: frozenset[str] = frozenset({"IS", "ARE"})
+
 # The VALUE clause introducer (a reserved lexer word).
 _VALUE_WORD: frozenset[str] = frozenset({"VALUE"})
+
+# The sign of a signed numeric literal (``VALUE +450.00``, ``VALUE -5``).  The
+# lexer deliberately emits ``+`` and ``-`` as their own ``UNKNOWN`` tokens
+# everywhere (they are also the arithmetic operators, and ``B - C`` / ``VALUE
+# -1`` are pinned that way), so the VALUE clause joins the sign to the number
+# that immediately follows it.
+_NUMERIC_SIGNS: frozenset[str] = frozenset({"+", "-"})
+
+
+def _adjacent(first: Token, second: Token) -> bool:
+    """
+    Return ``True`` if *second* starts exactly where *first* ends, on the
+    same line -- i.e. the two tokens are written with no whitespace between.
+
+    COBOL requires the sign of a numeric literal to sit directly against its
+    digits, and a decimal point to sit directly against the fraction digits
+    that follow it (a *terminating* period is always followed by whitespace),
+    so this is the test that separates a literal from a separator.
+    """
+    return (
+        first.position.line == second.position.line
+        and second.position.offset == first.position.offset + len(first.lexeme)
+    )
+
+
+def _is_fraction(point: Token, digits: Token) -> bool:
+    """``point`` is a ``.`` immediately followed by a run of digits, i.e. the
+    lexer split a leading-decimal-point literal such as ``.50`` in two."""
+    return (
+        point.type is TokenType.PERIOD
+        and digits.type is TokenType.NUMBER
+        and digits.lexeme.isdigit()
+        and _adjacent(point, digits)
+    )
+
 
 # Data-item clauses this parser recognises but cannot represent, because
 # ElementaryItemNode carries only `picture` and `value`.  They are
@@ -351,6 +399,7 @@ class DataDivisionParser:
         # Optional sections
         # ----------------------------------------------------------------
         working_storage: WorkingStorageSectionNode | None = None
+        file_section: FileSectionNode | None = None
 
         while not stream.eof():
             tok = stream.current()
@@ -370,10 +419,13 @@ class DataDivisionParser:
             # FILE, LINKAGE, LOCAL-STORAGE, SCREEN, REPORT and
             # COMMUNICATION reach us as IDENTIFIER, so a TokenType.KEYWORD
             # gate made every unsupported-section branch unreachable
-            # (task #104, F-01).
+            # (task #104, F-01). FILE is now modelled too (task #stage27),
+            # matched by lexeme the same way WORKING-STORAGE already is.
             if self._at_section_header(state):
                 if matches_grammar_word(tok, _WORKING_STORAGE_WORD):
                     working_storage = self._parse_working_storage(state)
+                elif matches_grammar_word(tok, _FILE_SECTION_WORD):
+                    file_section = self._parse_file_section(state)
                 else:
                     self._skip_unsupported_section(state)
                 continue
@@ -441,6 +493,7 @@ class DataDivisionParser:
             start_position=start,
             end_position=end,
             working_storage=working_storage,
+            file_section=file_section,
         )
 
     # ------------------------------------------------------------------
@@ -497,11 +550,210 @@ class DataDivisionParser:
             items=tuple(items),
         )
 
+    def _parse_file_section(self, state: ParserState) -> FileSectionNode:
+        """
+        Parse the FILE SECTION (task #stage27).
+
+        Grammar rule (supported subset)::
+
+            file-section ::=
+                FILE SECTION PERIOD
+                file-description*
+
+            file-description ::=
+                FD file-name [fd-clause]* PERIOD
+                data-item
+
+        Exactly the ``data-item`` grammar :meth:`_parse_working_storage`
+        already parses -- see :meth:`_parse_file_description`, which
+        shares :meth:`_parse_data_items` verbatim.
+
+        The cursor must be on the ``FILE`` token when this method is
+        called. ``FILE`` is not a reserved lexer word (confirmed
+        directly: it lexes as ``TokenType.IDENTIFIER``, exactly like the
+        other unsupported section names -- task #104, F-01), so it is
+        matched by lexeme, not via :meth:`_expect_keyword`.
+
+        Args:
+            state: The active parser state.
+
+        Returns:
+            An immutable :class:`~app.parser.ast.file_section.FileSectionNode`.
+
+        Raises:
+            ParserError: If the section header is fatally malformed.
+        """
+        stream = state.stream
+        start: Position = stream.current().position
+
+        logger.debug("Parsing FILE SECTION at {}.", start)
+
+        file_tok = stream.advance()  # FILE
+        if (
+            file_tok.lexeme.upper() != "FILE"
+        ):  # pragma: no cover — dispatcher already checked
+            raise ParserError(
+                f"expected 'FILE', got {file_tok.lexeme!r}",
+                line=file_tok.position.line,
+                column=file_tok.position.column,
+                offset=file_tok.position.offset,
+            )
+        section = stream.advance()
+        if section.lexeme.upper() != "SECTION":
+            raise ParserError(
+                f"expected 'SECTION', got {section.lexeme!r}",
+                line=section.position.line,
+                column=section.position.column,
+                offset=section.position.offset,
+            )
+
+        stream.expect(TokenType.PERIOD)
+
+        records: list[FileDescriptionNode] = []
+
+        while not stream.eof():
+            tok = stream.current()
+
+            if tok.type is TokenType.EOF:
+                break
+
+            if (
+                tok.type is TokenType.KEYWORD
+                and tok.lexeme.upper() in _NEXT_DIVISION_KEYWORDS
+            ):
+                break
+
+            if self._at_section_header(state):
+                break
+
+            if tok.type is TokenType.IDENTIFIER and tok.lexeme.upper() == _FD_WORD:
+                try:
+                    records.append(self._parse_file_description(state))
+                except ParserError as exc:
+                    logger.debug(
+                        "DataDivisionParser: recovering from FD error: {}",
+                        exc.message,
+                    )
+                    state.record_and_synchronise(
+                        message=exc.message,
+                        error_token=stream.current(),
+                        context=RecoveryContext.FILE_SECTION,
+                        code="SYN005",
+                    )
+                continue
+
+            # Silently consume stray PERIOD tokens left behind by
+            # panic-mode recovery synchronising to a paragraph boundary,
+            # the same way _parse_data_items and DATA DIVISION-level
+            # parsing already do.
+            if tok.type is TokenType.PERIOD:
+                stream.advance()
+                continue
+
+            before = stream.position
+            state.record_and_synchronise(
+                message=(
+                    f"unexpected token {tok.lexeme!r} in FILE SECTION; "
+                    "attempting to resume at the next FD entry"
+                ),
+                error_token=tok,
+                context=RecoveryContext.FILE_SECTION,
+                code="SYN001",
+            )
+            if stream.position == before:
+                stream.advance()
+
+        end: Position = stream.current().position
+
+        return FileSectionNode(
+            start_position=start,
+            end_position=end,
+            records=tuple(records),
+        )
+
+    def _parse_file_description(self, state: ParserState) -> FileDescriptionNode:
+        """
+        Parse one ``FD`` entry and its record's data items.
+
+        Grammar rule (supported subset)::
+
+            file-description ::=
+                FD file-name PERIOD
+                data-item
+
+        Any FD clause between the file-name and the terminating period
+        (``LABEL RECORDS ARE ...``, ``BLOCK CONTAINS ...``, ``RECORD
+        CONTAINS ...``) is tolerated and skipped, not modelled -- the
+        real 45-source corpus's 4 FILE-SECTION sources use none
+        (verified directly before writing this method); only the
+        file-name is kept.
+
+        The cursor must be on the ``FD`` token when this method is
+        called. ``FD`` is not a reserved lexer word (confirmed directly:
+        it lexes as ``TokenType.IDENTIFIER``), so it is matched by
+        lexeme by the caller, exactly like a section name.
+
+        Args:
+            state: The active parser state.
+
+        Returns:
+            An immutable :class:`~app.parser.ast.file_section.FileDescriptionNode`.
+
+        Raises:
+            ParserError: If no file-name follows ``FD``.
+        """
+        stream = state.stream
+        start: Position = stream.current().position
+
+        stream.advance()  # FD
+
+        name_tok = stream.current()
+        if name_tok.type is not TokenType.IDENTIFIER:
+            raise ParserError(
+                f"expected a file-name after 'FD', got {name_tok.lexeme!r}",
+                line=name_tok.position.line,
+                column=name_tok.position.column,
+                offset=name_tok.position.offset,
+            )
+        name = name_tok.lexeme.upper()
+        stream.advance()
+
+        # Skip any FD clause up to the terminating period (see docstring).
+        while not stream.eof() and stream.current().type is not TokenType.PERIOD:
+            if stream.current().type is TokenType.EOF:
+                break
+            stream.advance()
+        if stream.current().type is TokenType.PERIOD:
+            stream.advance()
+
+        items: list[DataItemNode] = self._parse_data_items(
+            state,
+            extra_stop_words=frozenset({_FD_WORD}),
+            context=RecoveryContext.FILE_SECTION,
+            section_label="FILE SECTION",
+        )
+
+        end: Position = stream.current().position
+
+        return FileDescriptionNode(
+            start_position=start,
+            end_position=end,
+            name=name,
+            items=tuple(items),
+        )
+
     # ------------------------------------------------------------------
     # Data-item list parser
     # ------------------------------------------------------------------
 
-    def _parse_data_items(self, state: ParserState) -> list[DataItemNode]:
+    def _parse_data_items(
+        self,
+        state: ParserState,
+        *,
+        extra_stop_words: frozenset[str] = frozenset(),
+        context: RecoveryContext = RecoveryContext.WORKING_STORAGE_SECTION,
+        section_label: str = "WORKING-STORAGE SECTION",
+    ) -> list[DataItemNode]:
         """
         Parse a sequence of data-item declarations.
 
@@ -509,8 +761,27 @@ class DataDivisionParser:
         signalling the end of the current section.  Malformed individual
         items are recovered and parsing resumes with the next level number.
 
+        Shared verbatim between WORKING-STORAGE (the original caller) and
+        one FILE SECTION record's items (task #stage27,
+        :meth:`_parse_file_description`) -- the grammar for a data-item
+        list is identical either way. The three keyword-only arguments let
+        the FILE SECTION caller stop at the next ``FD`` (a plain
+        ``TokenType.IDENTIFIER``, not a section header, so it needs its own
+        stop condition -- see :data:`_FD_WORD`) and get correctly labelled
+        diagnostics, without changing WORKING-STORAGE's own behaviour or
+        message text at all (its call site passes none of them).
+
         Args:
             state: The active parser state.
+            extra_stop_words: Uppercased lexemes of any
+                ``TokenType.IDENTIFIER`` token that should end the item list
+                the same way a section header does, without being consumed.
+                Empty by default (WORKING-STORAGE has no such word).
+            context: The :class:`~app.parser.diagnostics.recovery.RecoveryContext`
+                to record on a per-item recovery. Defaults to
+                ``WORKING_STORAGE_SECTION``.
+            section_label: The section name used in the "unexpected token"
+                diagnostic message. Defaults to ``"WORKING-STORAGE SECTION"``.
 
         Returns:
             Ordered list of :class:`~app.parser.ast.data_items.DataItemNode`
@@ -529,6 +800,16 @@ class DataDivisionParser:
             # IDENTIFIER-typed, so they must be checked before (and
             # independently of) the KEYWORD test below (task #104, F-02).
             if self._at_section_header(state):
+                break
+
+            # Stop at the next FD entry (task #stage27) -- an ordinary
+            # IDENTIFIER token that no other check here catches; matched by
+            # lexeme, without consuming it, the same way a section header
+            # ends WORKING-STORAGE's own item list above.
+            if (
+                tok.type is TokenType.IDENTIFIER
+                and tok.lexeme.upper() in extra_stop_words
+            ):
                 break
 
             # Any keyword at item level ends the item list: either it
@@ -556,7 +837,7 @@ class DataDivisionParser:
                     state.record_and_synchronise(
                         message=exc.message,
                         error_token=stream.current(),
-                        context=RecoveryContext.WORKING_STORAGE_SECTION,
+                        context=context,
                         code="SYN005",
                     )
                 continue
@@ -570,11 +851,11 @@ class DataDivisionParser:
             before = stream.position
             state.record_and_synchronise(
                 message=(
-                    f"unexpected token {tok.lexeme!r} in WORKING-STORAGE "
-                    "SECTION; attempting to resume at the next data item"
+                    f"unexpected token {tok.lexeme!r} in {section_label}; "
+                    "attempting to resume at the next data item"
                 ),
                 error_token=tok,
-                context=RecoveryContext.WORKING_STORAGE_SECTION,
+                context=context,
                 code="SYN001",
             )
             if stream.position == before:
@@ -744,9 +1025,17 @@ class DataDivisionParser:
         """
         Parse a level-88 condition-name entry.
 
-        Grammar rule::
+        Grammar rule (supported)::
 
             88 condition-name VALUE literal PERIOD
+            88 condition-name VALUES literal literal ... PERIOD
+
+        ``VALUES`` (plural) is not in the lexer's reserved-word set (see
+        :mod:`app.parser.grammar_words`), so it reaches this method as an
+        ``IDENTIFIER`` token exactly like any data-name would; it is
+        recognised here by lexeme via :func:`matches_grammar_word`, the
+        same mechanism already used elsewhere in this parser for grammar
+        words the lexer does not classify as ``KEYWORD``.
 
         The cursor must be positioned immediately after the condition name
         when this method is called.
@@ -760,39 +1049,59 @@ class DataDivisionParser:
             An immutable :class:`~app.parser.ast.data_items.ConditionNameNode`.
 
         Raises:
-            ParserError: If the VALUE keyword or literal is missing.
+            ParserError:
+                If the VALUE/VALUES keyword is present but a literal is
+                missing, or a ``THRU``/``THROUGH`` range is used (a real,
+                standard COBOL form, but one no corpus source currently
+                uses and this method does not silently misparse it as a
+                second discrete value).
         """
         stream = state.stream
         value: str | None = None
+        values: tuple[str, ...] = ()
 
         tok = stream.current()
 
-        # VALUE clause is expected for 88-level items
-        if tok.type is TokenType.KEYWORD and tok.lexeme.upper() == "VALUE":
+        if matches_grammar_word(tok, {"VALUE"}):
+            # Singular form: exactly one literal. Unchanged from before
+            # VALUES support was added.
             stream.advance()  # consume VALUE
-            value_tok = stream.current()
-            if value_tok.type is TokenType.EOF:
-                raise ParserError(
-                    f"expected literal after VALUE for condition {name!r}",
-                    line=value_tok.position.line,
-                    column=value_tok.position.column,
-                    offset=value_tok.position.offset,
-                )
-            if value_tok.type not in (
-                TokenType.STRING,
-                TokenType.NUMBER,
-                TokenType.IDENTIFIER,
-                TokenType.KEYWORD,
-            ):
-                raise ParserError(
-                    f"expected literal after VALUE for condition {name!r}, "
-                    f"got {value_tok.lexeme!r}",
-                    line=value_tok.position.line,
-                    column=value_tok.position.column,
-                    offset=value_tok.position.offset,
-                )
-            value = value_tok.lexeme
-            stream.advance()  # consume literal
+            if matches_grammar_word(stream.current(), _IS_WORD):
+                stream.advance()  # optional IS ("VALUE IS 1")
+            value = self._read_condition_literal(state, name, "VALUE")
+            values = (value,)
+
+        elif matches_grammar_word(tok, {"VALUES"}):
+            # Plural form: one or more literals, juxtaposed with no
+            # separator (COBOL's own VALUES syntax uses none), collected
+            # until the terminating period.
+            stream.advance()  # consume VALUES
+            if matches_grammar_word(stream.current(), _VALUES_NOISE_WORDS):
+                stream.advance()  # optional IS / ARE ("VALUES ARE 1 2")
+            collected: list[str] = []
+            while True:
+                lit_tok = stream.current()
+                if matches_grammar_word(lit_tok, {"THRU", "THROUGH"}):
+                    raise ParserError(
+                        f"VALUES ... THRU range form is not supported for "
+                        f"condition {name!r}",
+                        line=lit_tok.position.line,
+                        column=lit_tok.position.column,
+                        offset=lit_tok.position.offset,
+                    )
+                collected.append(self._read_condition_literal(state, name, "VALUES"))
+                # A PERIOD ends the clause -- unless it is the point of the
+                # next leading-decimal literal (``VALUES 1 .5``).
+                end_tok = stream.current()
+                if end_tok.type is TokenType.PERIOD and not _is_fraction(
+                    end_tok, stream.peek()
+                ):
+                    break
+            values = tuple(collected)
+            # No single literal is "the" value of a multi-value
+            # condition-name -- value stays None, matching the existing
+            # "no VALUE clause" convention rather than fabricating a
+            # canonical first value.
 
         # Consume terminating period
         end: Position = stream.current().position
@@ -804,7 +1113,80 @@ class DataDivisionParser:
             level=88,
             name=name,
             value=value,
+            values=values,
         )
+
+    def _read_condition_literal(
+        self, state: ParserState, name: str, keyword: str
+    ) -> str:
+        """
+        Consume and return one level-88 ``VALUE``/``VALUES`` literal.
+
+        Accepts what the entry always accepted -- a string, a number, or a
+        figurative-constant word -- plus the numeric forms the lexer splits
+        into several tokens, joined here only when each piece sits directly
+        against the next (COBOL requires it):
+
+        * a signed number: ``UNKNOWN('-')`` + ``NUMBER`` -> ``"-1"``;
+        * a leading-decimal number: ``PERIOD`` + ``NUMBER`` -> ``".5"``;
+        * both: ``"-.5"``.
+
+        A sign that is not joined to a number (``- 1``) is still rejected,
+        exactly as before.  The elementary-item ``VALUE`` clause has its own
+        code for the same token shapes and is not touched.
+
+        Args:
+            state:   The active parser state.
+            name:    The condition-name being parsed (for diagnostics).
+            keyword: ``"VALUE"`` or ``"VALUES"`` (for diagnostics).
+
+        Returns:
+            The literal exactly as written (sign and point included).
+
+        Raises:
+            ParserError: If no literal is present.
+        """
+        stream = state.stream
+        tok = stream.current()
+        if tok.type is TokenType.EOF:
+            raise ParserError(
+                f"expected literal after {keyword} for condition {name!r}",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+        if tok.type is TokenType.UNKNOWN and tok.lexeme in _NUMERIC_SIGNS:
+            head = stream.peek()
+            if head.type is TokenType.NUMBER and _adjacent(tok, head):
+                stream.advance()  # the sign
+                stream.advance()  # the digits
+                return tok.lexeme + head.lexeme
+            digits = stream.peek(2)
+            if _adjacent(tok, head) and _is_fraction(head, digits):
+                stream.advance()  # the sign
+                stream.advance()  # the point
+                stream.advance()  # the fraction digits
+                return tok.lexeme + "." + digits.lexeme
+        elif _is_fraction(tok, stream.peek()):
+            digits = stream.peek()
+            stream.advance()  # the point
+            stream.advance()  # the fraction digits
+            return "." + digits.lexeme
+        if tok.type not in (
+            TokenType.STRING,
+            TokenType.NUMBER,
+            TokenType.IDENTIFIER,
+            TokenType.KEYWORD,
+        ):
+            raise ParserError(
+                f"expected literal after {keyword} for condition {name!r}, "
+                f"got {tok.lexeme!r}",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+        stream.advance()  # consume literal
+        return tok.lexeme
 
     def _parse_elementary_or_group(
         self,
@@ -908,7 +1290,43 @@ class DataDivisionParser:
                     offset=val_tok.position.offset,
                 )
             value = val_tok.lexeme
-            stream.advance()  # consume literal
+            stream.advance()  # consume literal (or the sign of one)
+
+            # The lexer emits a sign as its own UNKNOWN token, and it splits a
+            # leading-decimal-point literal (``.50``) into PERIOD + NUMBER.
+            # Taking only that first token as the whole literal left the rest
+            # behind, so the terminating-period check failed and the entire
+            # data item was abandoned (a sign, or the point of ``-.50``, was
+            # kept as the "value" and the digits were left in the stream).
+            # Each piece is joined only when it sits directly against the
+            # next, as COBOL requires; a detached ``+ 5`` / ``+ .50`` is not.
+            if val_tok.type is TokenType.UNKNOWN and value in _NUMERIC_SIGNS:
+                head = stream.current()
+                if head.type is TokenType.NUMBER and _adjacent(val_tok, head):
+                    # +5  /  -000450000.00
+                    value += head.lexeme
+                    stream.advance()
+                elif _adjacent(val_tok, head) and _is_fraction(head, stream.peek()):
+                    # +.50  /  -.50
+                    value += "." + stream.peek().lexeme
+                    stream.advance()  # the point
+                    stream.advance()  # the fraction digits
+                elif head.type is TokenType.PERIOD:
+                    # A sign that is not joined to a literal is never a value.
+                    # Before this, ``VALUE + .50`` took the bare sign as the
+                    # value and the detached period as the item terminator,
+                    # keeping the item with the garbage value ``'+'``.
+                    raise ParserError(
+                        f"expected a numeric literal directly after the sign "
+                        f"in VALUE for {name!r}, got {head.lexeme!r}",
+                        line=val_tok.position.line,
+                        column=val_tok.position.column,
+                        offset=val_tok.position.offset,
+                    )
+            elif _is_fraction(val_tok, stream.current()):
+                # .50
+                value += stream.current().lexeme
+                stream.advance()  # the fraction digits
 
         # ...and again after VALUE (e.g. "PIC 9(4) VALUE 0 COMP-3.").
         self._skip_unmodelled_clauses(state, name)

@@ -229,9 +229,10 @@ class ConditionNameNode(DataItemNode):
     specifying the VALUE (or VALUES) that make the condition true.
     Level 88 items always appear immediately subordinate to a data item.
 
-    COBOL syntax example::
+    COBOL syntax examples::
 
         88 END-OF-FILE   VALUE 'Y'.
+        88 TX-VALID-KIND VALUES 'D' 'W' 'T' 'F'.
 
     Attributes:
         level:
@@ -239,21 +240,42 @@ class ConditionNameNode(DataItemNode):
         name:
             The condition-name string (uppercased).
         value:
-            The VALUE literal string (e.g. ``"'Y'"``), or ``None`` if
-            the VALUE clause was absent (partial parse).
+            The single VALUE literal string (e.g. ``"'Y'"``), for backward
+            compatibility with every existing reader of this field. Set for
+            a singular ``VALUE literal`` clause; ``None`` when the clause
+            was absent *or* when it was the plural ``VALUES`` form (which
+            has no single canonical value — see :attr:`values` instead).
+        values:
+            The complete, ordered tuple of VALUE/VALUES literal strings.
+            One element for a singular ``VALUE literal`` clause (mirroring
+            :attr:`value`), two or more for a plural ``VALUES literal
+            literal ...`` clause, and empty when no clause was present.
+            This is the authoritative field — a consumer that needs every
+            literal a condition-name can take (not just "the" one) should
+            read this rather than :attr:`value`.
 
     Examples:
         >>> from app.parser.lexer.position import Position
         >>> pos = Position(line=10, column=4, offset=200, filename="x.cbl")
         >>> node = ConditionNameNode(
         ...     start_position=pos, end_position=pos,
-        ...     level=88, name="END-OF-FILE", value="'Y'",
+        ...     level=88, name="END-OF-FILE", value="'Y'", values=("'Y'",),
         ... )
         >>> node.value
         "'Y'"
+        >>> multi = ConditionNameNode(
+        ...     start_position=pos, end_position=pos,
+        ...     level=88, name="TX-VALID-KIND",
+        ...     values=("'D'", "'W'", "'T'", "'F'"),
+        ... )
+        >>> multi.value is None
+        True
+        >>> multi.values
+        ("'D'", "'W'", "'T'", "'F'")
     """
 
     value: str | None = None
+    values: tuple[str, ...] = ()
 
     def accept(self, visitor: object) -> object:
         """

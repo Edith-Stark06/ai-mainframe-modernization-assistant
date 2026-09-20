@@ -71,6 +71,7 @@ from app.analysis.models import AnalysisCoverage, AnalysisResult
 from app.parser.ast.program import ProgramNode
 from app.parser.diagnostics.recovery import SyntaxCategory
 from app.parser.syntax.program_parser import ParseResult
+from app.backend.java.condition_context import build_condition_names
 from app.backend.java.generator import (
     build_fields_from_symbols,
     generate_with_diagnostics,
@@ -365,8 +366,22 @@ class AnalysisService:
         # Stage 6 — Java code generation
         # ------------------------------------------------------------------
         logger.debug("AnalysisService: generating Java source.")
+        # Every paragraph name in source order (empty ones included): the IR
+        # cannot represent a paragraph with no statements, so the backend
+        # needs this to tell an empty GO TO target from a missing one
+        # (task #stage19).  Names only -- the backend still never reads the AST.
+        paragraph_order = (
+            [p.name for p in ast.procedure_division.paragraphs]
+            if ast is not None and ast.procedure_division is not None
+            else None
+        )
         try:
-            gen_result = generate_with_diagnostics(ir_program, fields)
+            gen_result = generate_with_diagnostics(
+                ir_program,
+                fields,
+                paragraph_order=paragraph_order,
+                condition_names=build_condition_names(ast),
+            )
         except Exception as exc:
             logger.error("AnalysisService: generation error in '{}': {}.", path, exc)
             return AnalysisResult(

@@ -240,6 +240,15 @@ class DependencyAnalyzer(ASTVisitor):
         self._maybe_add_operand_dependency(
             DependencyType.CONDITION, node.condition_right, node.start_position
         )
+        # Every operand of every AND/OR-joined term is read by the
+        # condition too; literals are filtered exactly as for the first term.
+        for term in node.extra_conditions:
+            self._maybe_add_operand_dependency(
+                DependencyType.CONDITION, term.left, node.start_position
+            )
+            self._maybe_add_operand_dependency(
+                DependencyType.CONDITION, term.right, node.start_position
+            )
         for statement in node.then_statements:
             statement.accept(self)
         for statement in node.else_statements:

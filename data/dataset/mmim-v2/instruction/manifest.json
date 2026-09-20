@@ -1,0 +1,101 @@
+{
+  "adapter_version": "mmim-inst-v1",
+  "benchmark_leakage": {
+    "clean": true,
+    "overlap_count": 0,
+    "overlap_sources": []
+  },
+  "character_statistics": {
+    "total_chars": {
+      "avg": 5082.46,
+      "max": 57036,
+      "min": 863
+    }
+  },
+  "dataset_version": "mmim-v2",
+  "example_count": 351,
+  "per_ground_truth_status": {
+    "deterministic": 349,
+    "executable_verified": 2
+  },
+  "per_task": {
+    "business_rule_extraction": 45,
+    "cobol_to_java": 45,
+    "dependency_reasoning": 45,
+    "modernization_strategy": 45,
+    "program_understanding": 45,
+    "risk_classification": 45,
+    "transformation_planning": 45,
+    "validation_reasoning": 36
+  },
+  "source_count": 45,
+  "source_ids": [
+    "fx_combined",
+    "fx_perform_until",
+    "fx_simple_proc",
+    "t_account_eligibility",
+    "t_account_validate",
+    "t_batch_acct_update",
+    "t_billing_engine",
+    "t_bonus_calc",
+    "t_condition_names_88",
+    "t_credit_approval",
+    "t_credit_limit",
+    "t_customer_record",
+    "t_daily_trans_report",
+    "t_dead_code_audit",
+    "t_discount_tier",
+    "t_fallthrough_flow",
+    "t_fraud_pipeline",
+    "t_goto_spaghetti",
+    "t_grade_letter",
+    "t_insurance_claim",
+    "t_interest_accrue",
+    "t_inventory_extract",
+    "t_inventory_reorder",
+    "t_late_fee",
+    "t_loan_balance",
+    "t_loan_underwrite",
+    "t_mortgage_service",
+    "t_order_hierarchy",
+    "t_overdraft_fee",
+    "t_packed_decimal",
+    "t_payment_gateway",
+    "t_payroll_deduct",
+    "t_payroll_file_post",
+    "t_payroll_net_pay",
+    "t_policy_redefines",
+    "t_pricing_tier",
+    "t_reorder_point",
+    "t_shared_state_hazard",
+    "t_shipping_zone",
+    "t_stock_alert",
+    "t_table_indexed",
+    "t_tax_withhold",
+    "t_temp_convert",
+    "t_transitive_fx",
+    "t_vacation_accrual"
+  ],
+  "split_counts": {
+    "test": 54,
+    "train": 226,
+    "validation": 71
+  },
+  "token_statistics": {
+    "assistant_tokens": {
+      "avg": 757.86,
+      "max": 14011,
+      "min": 10
+    },
+    "total_tokens": {
+      "avg": 1338.44,
+      "max": 15010,
+      "min": 228
+    },
+    "user_tokens": {
+      "avg": 580.58,
+      "max": 1056,
+      "min": 198
+    }
+  }
+}

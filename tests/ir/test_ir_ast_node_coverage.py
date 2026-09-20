@@ -16,31 +16,33 @@ Purpose:
     statement type without one is treated as a coverage gap by
     :func:`test_every_ast_statement_type_is_classified`.
 
-Coverage as of task #109 (see the module-level ``EXPECTED_IR_MAPPING``
+Coverage as of task #stage17 (see the module-level ``EXPECTED_IR_MAPPING``
 table below for specifics):
 
     Supported + mapped:
-        MOVE, DISPLAY, ACCEPT, ADD, SUBTRACT, MULTIPLY, DIVIDE, IF,
-        PERFORM, PERFORM UNTIL, CALL, STOP RUN, GOBACK.
+        MOVE, DISPLAY, ADD, SUBTRACT, MULTIPLY, DIVIDE, IF, PERFORM,
+        PERFORM UNTIL, CALL, STOP RUN, GOBACK, GO TO.
         (STOP RUN and GOBACK were the confirmed #109 node-loss bugs
-        fixed by this task -- previously they silently produced no IR
+        fixed by that task -- previously they silently produced no IR
         instruction at all despite IRReturn existing for exactly this
-        purpose.)
+        purpose. GO TO's ``build_go_to_statement`` -> ``IRJump`` mapping
+        existed since before #109 but was unreachable from real source
+        until task #stage17 gave the parser a dispatch path for it --
+        see ``docs/MMIM_GO_TO_FIX.md`` and
+        ``tests/parser/test_go_to_parsing_fix.py``.)
 
-    Supported by the IR builder, but unreachable from real COBOL source:
-        GO TO and ACCEPT. ``build_go_to_statement`` correctly lowers a
-        ``GoToStatementNode`` to ``IRJump``, and ``build_accept_instruction``
-        correctly lowers an ``AcceptStatementNode`` to ``IRAccept``
-        (both proven below by constructing the AST node directly), but
-        the parser currently classifies ``GO``/``GO TO`` (since
-        inception) and ``ACCEPT`` (deliberately, by task #108 -- to fix
-        the phantom-paragraph/syntax-error bug at
-        ``_parse_statement``'s fallback -- see #108's PR) as unsupported
-        statements, so no real COBOL source can produce either AST node
-        today. This is a confirmed parser limitation, not an IR gap --
-        #109 does not touch the parser, and this working IR translation
-        being unreachable is exactly why it must be documented rather
-        than silently left looking untested.
+    Supported by the IR builder, but still unreachable from real COBOL
+    source:
+        ACCEPT. ``build_accept_instruction`` correctly lowers an
+        ``AcceptStatementNode`` to ``IRAccept`` (proven below by
+        constructing the AST node directly), but the parser deliberately
+        classifies ``ACCEPT`` (task #108 -- to fix the
+        phantom-paragraph/syntax-error bug at ``_parse_statement``'s
+        fallback -- see #108's PR) as an unsupported statement, so no
+        real COBOL source can produce that AST node today. This is a
+        confirmed parser limitation, not an IR gap, and is deliberately
+        NOT touched by task #stage17 (its own scope is GO TO only) -- see
+        ``docs/MMIM_GO_TO_FIX.md`` §13.
 
     Unsupported/unmodelled (no AST representation to translate):
         EVALUATE, OPEN, CLOSE, READ, WRITE, COMPUTE, STRING, and every
@@ -126,7 +128,7 @@ EXPECTED_IR_MAPPING: dict[type, tuple[type[IRInstruction], ...] | None] = {
     ast_statements.CallStatementNode: (IRCall,),
     ast_statements.StopRunStatementNode: (IRReturn,),
     ast_statements.GobackStatementNode: (IRReturn,),
-    ast_statements.GoToStatementNode: None,  # see module docstring
+    ast_statements.GoToStatementNode: (IRJump,),  # task #stage17; was None
 }
 
 
@@ -368,11 +370,11 @@ class TestDisplayAcceptMapping:
     DISPLAY: represented in IR from real source.
 
     ACCEPT: the IR mapping (``build_accept_instruction`` -> ``IRAccept``)
-    exists and works (verified directly in
-    ``TestGoToUnreachableFromParser`` below, alongside GO TO, since both
-    share the same "IR-ready, parser-unreachable" status) but is no
-    longer reachable from real COBOL source: task #108 deliberately
-    moved ``ACCEPT`` into the parser's unsupported-statement set to fix
+    exists and works (verified directly in ``TestAcceptUnreachableFromParser``
+    below -- GO TO shared this same "IR-ready, parser-unreachable" status
+    until task #stage17 fixed it) but is no longer reachable from real
+    COBOL source: task #108 deliberately moved ``ACCEPT`` into the
+    parser's unsupported-statement set to fix
     a phantom-paragraph/syntax-error bug, which means the parser can no
     longer construct an ``AcceptStatementNode`` at all. This is
     confirmed below and must not be mistaken for a #109 IR gap.
@@ -450,19 +452,17 @@ def _empty_semantic_context() -> Any:
     return SemanticContext(symbol_table=SymbolTable(), diagnostics=[])
 
 
-class TestGoToAndAcceptUnreachableFromParser:
+class TestGoToLowersDirectlyAndAcceptStillUnreachable:
     """
-    GO TO and ACCEPT: the IR mapping exists and is correct for both; the
-    parser cannot currently produce either AST node from real source.
+    GO TO: the IR mapping (``build_go_to_statement`` -> ``IRJump``)
+    existed since before task #109 and is proven here two ways -- direct
+    AST construction (unaffected by any parser change) and, since task
+    #stage17 gave the parser a dispatch path for ``GO TO``, from real
+    source too (``test_parser_now_produces_goto_from_real_source``).
 
-    This is deliberately NOT "inventing an AST/IR representation" for an
-    unsupported construct -- both mappings already existed before task
-    #109 (``build_go_to_statement`` -> ``IRJump``,
-    ``build_accept_instruction`` -> ``IRAccept``). These tests prove the
-    mappings still work when the AST nodes are constructed directly, so
-    the gap is accurately attributed to the parser rather than the IR.
-    The companion parser-side proofs are
-    ``test_parser_cannot_produce_goto_from_real_source`` below, and
+    ACCEPT: still unreachable from real source (task #108's deliberate,
+    untouched decision) -- proven here by direct AST construction only;
+    the parser-side proof is
     ``TestDisplayAcceptMapping.test_accept_is_explicitly_diagnosed_not_silently_lost``
     above.
     """
@@ -492,19 +492,21 @@ class TestGoToAndAcceptUnreachableFromParser:
         assert isinstance(result, IRAccept)
         assert result.result == "WS-INPUT"
 
-    def test_parser_cannot_produce_goto_from_real_source(self) -> None:
+    def test_parser_now_produces_goto_from_real_source(self) -> None:
         """
-        Confirms the actual, current limitation: real ``GO TO`` syntax
-        is diagnosed as an unsupported statement (task #105/#108) and
-        never reaches the AST, so this repository's node-loss guarantee
-        does not apply to it -- there is no AST node for the IR to lose.
+        Confirms the task #stage17 fix: real ``GO TO`` syntax now reaches
+        the AST as a ``GoToStatementNode`` and lowers to a real ``IRJump``
+        -- the opposite of this test's pre-#stage17 name and assertions
+        (``test_parser_cannot_produce_goto_from_real_source``), kept here
+        under its old name's former location so the file's git history
+        stays legible about exactly what changed.
         """
         program, instrs = _build(
             _ID + "PROCEDURE DIVISION.\nMAIN.\n    GO TO OTHER-PARA.\n    STOP RUN.\n"
         )
-        assert not any(isinstance(i, IRJump) for i in instrs)
+        assert any(isinstance(i, IRJump) and i.target == "OTHER-PARA" for i in instrs)
         paragraph = program.procedure_division.paragraphs[0]
-        assert not any(
-            isinstance(s, ast_statements.GoToStatementNode)
+        assert any(
+            isinstance(s, ast_statements.GoToStatementNode) and s.target == "OTHER-PARA"
             for s in paragraph.statements
         )

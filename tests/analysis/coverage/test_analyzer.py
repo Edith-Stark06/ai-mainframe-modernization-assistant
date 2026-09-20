@@ -73,12 +73,16 @@ def test_unknown_tokens_lower_lexical_coverage(tmp_path) -> None:
 
 
 def test_unsupported_statement_lowers_statement_and_ast(tmp_path) -> None:
+    # GO TO was the original example here; task #stage17
+    # (docs/MMIM_GO_TO_FIX.md) made it a supported statement, so OPEN
+    # (still unsupported) now exercises this test's actual intent.
     src = (
         "       IDENTIFICATION DIVISION.\n       PROGRAM-ID. U.\n"
         "       DATA DIVISION.\n       WORKING-STORAGE SECTION.\n"
         "       01 WS-A PIC 9(3) VALUE 0.\n"
         "       PROCEDURE DIVISION.\n       MAIN.\n"
-        "           MOVE 1 TO WS-A.\n           GO TO OTHER.\n           STOP RUN.\n"
+        "           MOVE 1 TO WS-A.\n           OPEN INPUT OTHER-FILE.\n"
+        "           STOP RUN.\n"
         "       OTHER.\n           DISPLAY WS-A.\n"
     )
     _, cr = _cov(src, tmp_path)
@@ -232,12 +236,16 @@ def test_business_rule_ignores_112_rule_count_when_analysis_complete(tmp_path) -
 
 
 def test_overall_is_min_of_measurable(tmp_path) -> None:
+    # GO TO was the original example here; task #stage17
+    # (docs/MMIM_GO_TO_FIX.md) made it a supported statement, so OPEN
+    # (still unsupported) now exercises this test's actual intent.
     src = (
         "       IDENTIFICATION DIVISION.\n       PROGRAM-ID. M.\n"
         "       DATA DIVISION.\n       WORKING-STORAGE SECTION.\n"
         "       01 WS-A PIC 9(3) COMP-3 VALUE 0.\n"
         "       PROCEDURE DIVISION.\n       MAIN.\n"
-        "           MOVE 1 TO WS-A.\n           GO TO X.\n           STOP RUN.\n"
+        "           MOVE 1 TO WS-A.\n           OPEN INPUT X-FILE.\n"
+        "           STOP RUN.\n"
         "       X.\n           DISPLAY WS-A.\n"
     )
     _, cr = _cov(src, tmp_path)

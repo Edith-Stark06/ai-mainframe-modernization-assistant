@@ -88,5 +88,11 @@ def _serialize_dataclass_default(
         **{
             field.name: serialize_value(getattr(node, field.name), dataclass_visitor)
             for field in dataclasses.fields(node)
+            # A field flagged ``omit_if_empty`` is left out while empty, so
+            # adding an optional field never changes how existing values
+            # serialize.
+            if not (
+                field.metadata.get("omit_if_empty") and not getattr(node, field.name)
+            )
         },
     }

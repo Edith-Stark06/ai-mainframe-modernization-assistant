@@ -1,0 +1,11 @@
+{
+  "dataset_version": "mmim-v1",
+  "error_count": 0,
+  "issues": [],
+  "ok": true,
+  "path": "data\\dataset\\mmim-v1\\all.jsonl",
+  "secret_findings": [],
+  "total": 144,
+  "valid": 144,
+  "warning_count": 0
+}
