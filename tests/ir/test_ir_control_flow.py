@@ -3,7 +3,7 @@ Unit tests for IR translation of control flow statements (TASK-029).
 """
 
 from app.ir.builder import IRBuilder
-from app.ir.instructions import IRConditionalBranch, IRJump, IRCall, IRMove
+from app.ir.instructions import IRCall, IRElse, IREndIf, IRIf, IRJump, IRMove
 from app.parser.ast.paragraphs import ParagraphNode
 from app.parser.ast.procedure import ProcedureDivisionNode
 from app.parser.ast.program import ProgramNode
@@ -30,12 +30,21 @@ def _move(source: str, target: str) -> MoveStatementNode:
 
 
 def _if(
-    condition: str, then_stmts: list, else_stmts: list | None = None
+    left: str,
+    then_stmts: list,
+    else_stmts: list | None = None,
+    operator: str = "=",
+    right: str = "1",
 ) -> IfStatementNode:
+    """Build ``IF <left> <operator> <right>`` -- the AST's condition is a
+    ``(left, operator, right)`` triple since TASK-039 (it was one string in
+    TASK-029, when these tests were written)."""
     return IfStatementNode(
         start_position=_POS,
         end_position=_POS,
-        condition=condition,
+        condition_left=left,
+        condition_operator=operator,
+        condition_right=right,
         then_statements=tuple(then_stmts),
         else_statements=tuple(else_stmts or []),
     )
@@ -97,6 +106,14 @@ class TestIRControlFlowTranslation:
         assert isinstance(jmp, IRJump)
         assert jmp.target == "ERROR-PARA"
 
+    # ------------------------------------------------------------------
+    # IF lowers to a *structured* instruction sequence in one basic block:
+    # IRIf ... [IRElse ...] IREndIf. (TASK-029 originally lowered IF to
+    # separate then/else/merge blocks joined by IRConditionalBranch; the
+    # structured form replaced it in TASK-039 and is what the CFG builder
+    # and the Java backend consume today.)
+    # ------------------------------------------------------------------
+
     def test_if_without_else(self) -> None:
         para = ParagraphNode(
             start_position=_POS,
@@ -109,28 +126,18 @@ class TestIRControlFlowTranslation:
         )
         prog = IRBuilder(context=_empty_ctx()).build(_make_program_node([para]))
         func = prog.modules[0].functions[0]
-        # We expect 3 blocks: entry, then, merge
-        assert len(func.blocks) == 3
+        assert len(func.blocks) == 1
 
-        entry, then_block, merge_block = func.blocks
+        instrs = func.blocks[0].instructions
+        assert [type(i) for i in instrs] == [IRIf, IRMove, IREndIf, IRMove]
 
-        assert entry.label == "entry"
-        assert len(entry.instructions) == 1
-        branch = entry.instructions[0]
-        assert isinstance(branch, IRConditionalBranch)
-        assert branch.condition == "WS-FLAG"
-        assert branch.then_target == then_block.label
-        assert branch.else_target == merge_block.label
-
-        assert len(then_block.instructions) == 2
-        assert isinstance(then_block.instructions[0], IRMove)
-        assert then_block.instructions[0].source == "1"
-        assert isinstance(then_block.instructions[1], IRJump)
-        assert then_block.instructions[1].target == merge_block.label
-
-        assert len(merge_block.instructions) == 1
-        assert isinstance(merge_block.instructions[0], IRMove)
-        assert merge_block.instructions[0].source == "2"
+        branch = instrs[0]
+        assert isinstance(branch, IRIf)
+        assert (branch.left, branch.operator, branch.right) == ("WS-FLAG", "=", "1")
+        assert branch.extra_terms == ()
+        assert (instrs[1].source, instrs[1].result) == ("1", "WS-OUT")
+        # the statement after END-IF is outside the conditional
+        assert (instrs[3].source, instrs[3].result) == ("2", "WS-END")
 
     def test_if_with_else(self) -> None:
         para = ParagraphNode(
@@ -143,26 +150,18 @@ class TestIRControlFlowTranslation:
         )
         prog = IRBuilder(context=_empty_ctx()).build(_make_program_node([para]))
         func = prog.modules[0].functions[0]
-        # We expect 4 blocks: entry, then, else, merge
-        assert len(func.blocks) == 4
+        assert len(func.blocks) == 1
 
-        entry, then_block, else_block, merge_block = func.blocks
-
-        assert entry.label == "entry"
-        branch = entry.instructions[0]
-        assert isinstance(branch, IRConditionalBranch)
-        assert branch.then_target == then_block.label
-        assert branch.else_target == else_block.label
-
-        assert isinstance(then_block.instructions[0], IRMove)
-        assert then_block.instructions[0].source == "1"
-        assert isinstance(then_block.instructions[1], IRJump)
-        assert then_block.instructions[1].target == merge_block.label
-
-        assert isinstance(else_block.instructions[0], IRMove)
-        assert else_block.instructions[0].source == "0"
-        assert isinstance(else_block.instructions[1], IRJump)
-        assert else_block.instructions[1].target == merge_block.label
+        instrs = func.blocks[0].instructions
+        assert [type(i) for i in instrs] == [IRIf, IRMove, IRElse, IRMove, IREndIf]
+        assert (instrs[0].left, instrs[0].operator, instrs[0].right) == (
+            "WS-FLAG",
+            "=",
+            "1",
+        )
+        # then-branch precedes IRElse, else-branch follows it
+        assert instrs[1].source == "1"
+        assert instrs[3].source == "0"
 
     def test_nested_if(self) -> None:
         para = ParagraphNode(
@@ -173,21 +172,11 @@ class TestIRControlFlowTranslation:
         )
         prog = IRBuilder(context=_empty_ctx()).build(_make_program_node([para]))
         func = prog.modules[0].functions[0]
+        assert len(func.blocks) == 1
 
-        # entry -> branch1
-        # then1 -> branch2
-        # then2 -> move, jump merge2
-        # merge2 -> jump merge1
-        # merge1 -> empty
-        assert len(func.blocks) == 5
-        entry, then1, then2, merge2, merge1 = func.blocks
-
-        assert isinstance(entry.instructions[0], IRConditionalBranch)
-        assert entry.instructions[0].condition == "WS-FLAG1"
-        assert entry.instructions[0].then_target == then1.label
-        assert entry.instructions[0].else_target == merge1.label
-
-        assert isinstance(then1.instructions[0], IRConditionalBranch)
-        assert then1.instructions[0].condition == "WS-FLAG2"
-        assert then1.instructions[0].then_target == then2.label
-        assert then1.instructions[0].else_target == merge2.label
+        instrs = func.blocks[0].instructions
+        # outer IF opens, inner IF opens/closes around the MOVE, outer closes
+        assert [type(i) for i in instrs] == [IRIf, IRIf, IRMove, IREndIf, IREndIf]
+        assert instrs[0].left == "WS-FLAG1"
+        assert instrs[1].left == "WS-FLAG2"
+        assert instrs[2].source == "1"

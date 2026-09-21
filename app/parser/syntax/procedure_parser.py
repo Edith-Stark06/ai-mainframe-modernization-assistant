@@ -489,6 +489,10 @@ class ProcedureDivisionParser:
         # ----------------------------------------------------------------
         paragraphs: list[ParagraphNode] = self._parse_paragraphs(state)
 
+        self._diagnose_unterminated_final_sentence(
+            state, has_paragraphs=bool(paragraphs)
+        )
+
         end: Position = stream.current().position
 
         return ProcedureDivisionNode(
@@ -1602,6 +1606,46 @@ class ProcedureDivisionParser:
     def _consume_optional_period(self, state: ParserState) -> None:
         if state.stream.current().type is TokenType.PERIOD:
             state.stream.advance()
+
+    def _diagnose_unterminated_final_sentence(
+        self, state: ParserState, *, has_paragraphs: bool
+    ) -> None:
+        """
+        Record ``SYN002`` when the PROCEDURE DIVISION ends without a period.
+
+        Statement parsers treat their trailing period as optional
+        (:meth:`_consume_optional_period`), because a statement nested in
+        ``IF``/``PERFORM UNTIL`` legitimately has none and a bare statement
+        parser cannot know its context. That leniency also silently
+        accepted the one place a period is always required -- the final
+        sentence of the program -- so ``MOVE 1 TO X`` ending the source
+        produced no diagnostic at all, although the diagnostic taxonomy
+        (``SYN002 "Missing period"``) and this method's documented
+        contract both promise one. Only end-of-input is checked here: a
+        period-less statement followed by more statements is idiomatic
+        COBOL and stays accepted.
+
+        Args:
+            state: The active parser state, positioned after the last
+                paragraph.
+            has_paragraphs: Whether at least one paragraph was parsed;
+                an empty division has no sentence to terminate.
+        """
+        stream = state.stream
+        if not has_paragraphs or not stream.eof() or stream.position == 0:
+            return
+        last = stream.peek(-1)
+        if last.type is TokenType.PERIOD:
+            return
+        state.recovery_manager.record_error(
+            message=(
+                f"expected '.' to end the last sentence, got end of input "
+                f"after {last.lexeme!r}"
+            ),
+            error_token=last,
+            context=RecoveryContext.PROCEDURE_DIVISION,
+            code="SYN002",
+        )
 
     def _consume_period(self, state: ParserState, context: str) -> None:
         """

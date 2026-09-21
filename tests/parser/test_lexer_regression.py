@@ -295,10 +295,18 @@ class TestPunctuationRegressions:
         assert result == [TokenType.PERIOD, TokenType.PERIOD, TokenType.PERIOD]
 
     def test_operator_symbols_are_unknown(self) -> None:
-        """Arithmetic/comparison operators are UNKNOWN at this milestone."""
-        for sym in ("+", "-", "/", "=", "<", ">"):
-            result = types(sym)
-            assert result == [TokenType.UNKNOWN], f"{sym!r} should be UNKNOWN"
+        """Arithmetic operators stay UNKNOWN (``+``/``-`` are deliberately not
+        promoted: they double as numeric-literal signs, see Stage 21); the
+        relational operators are promoted to their own token types (TASK-039)."""
+        for sym in ("+", "-", "/"):
+            assert types(sym) == [TokenType.UNKNOWN], f"{sym!r} should be UNKNOWN"
+        expected = {
+            "=": TokenType.OPERATOR_EQ,
+            "<": TokenType.OPERATOR_LT,
+            ">": TokenType.OPERATOR_GT,
+        }
+        for sym, token_type in expected.items():
+            assert types(sym) == [token_type], f"{sym!r} should be {token_type.name}"
 
     def test_star_at_column_one_is_comment(self) -> None:
         """A bare * at the start of a line is treated as a comment."""

@@ -294,12 +294,14 @@ class TestSymbols:
 
     def test_arithmetic_symbols(self) -> None:
         """Arithmetic operators are produced as UNKNOWN until the parser promotes them."""
-        result = types("+ - / =")
-        assert all(t is TokenType.UNKNOWN for t in result)
+        result = types("+ - /")
+        assert result == [TokenType.UNKNOWN] * 3
 
     def test_comparison_symbols(self) -> None:
-        result = types("< >")
-        assert all(t is TokenType.UNKNOWN for t in result)
+        """Relational operators are promoted by the lexer itself (TASK-039), so
+        IF/PERFORM UNTIL conditions can be parsed; ``=`` is one of them."""
+        assert types("=") == [TokenType.OPERATOR_EQ]
+        assert types("< >") == [TokenType.OPERATOR_LT, TokenType.OPERATOR_GT]
 
     def test_currency_symbol(self) -> None:
         """
