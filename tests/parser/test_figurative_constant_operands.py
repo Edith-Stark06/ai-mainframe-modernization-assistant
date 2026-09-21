@@ -280,7 +280,7 @@ def test_no_corpus_source_uses_a_figurative_constant_as_a_comparison_operand() -
 #    diagnostics before and after this fix
 # ===========================================================================
 
-_FIXTURE = Path("workspace/2e87036d-b90e-488f-b199-3162eb7c1c7e/complex_acctbatch.cbl")
+_FIXTURE = Path("tests/fixtures/complex_acctbatch.cbl")
 
 
 @pytest.mark.skipif(

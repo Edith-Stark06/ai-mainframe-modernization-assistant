@@ -381,7 +381,7 @@ def test_no_corpus_source_has_an_unsupported_verb_inside_perform_until() -> None
 #    a real, independently-confirmed corpus of COBOL exercising this fix)
 # ---------------------------------------------------------------------------
 
-_FIXTURE = Path("workspace/2e87036d-b90e-488f-b199-3162eb7c1c7e/complex_acctbatch.cbl")
+_FIXTURE = Path("tests/fixtures/complex_acctbatch.cbl")
 
 
 @pytest.mark.skipif(

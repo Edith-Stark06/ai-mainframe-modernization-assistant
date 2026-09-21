@@ -10,10 +10,7 @@ from app.analysis.models import AnalysisResult
 from app.analysis.service import AnalysisService
 
 _COMPLEX_FIXTURE = (
-    Path(__file__).resolve().parents[2]
-    / "workspace"
-    / "2e87036d-b90e-488f-b199-3162eb7c1c7e"
-    / "complex_acctbatch.cbl"
+    Path(__file__).resolve().parents[1] / "fixtures" / "complex_acctbatch.cbl"
 )
 
 _ELIGIBILITY_FIXTURE = (

@@ -22,10 +22,7 @@ from app.parser.lexer.lexer import CobolLexer
 from app.parser.syntax.program_parser import ProgramParser
 
 COMPLEX_FIXTURE = (
-    Path(__file__).resolve().parents[3]
-    / "workspace"
-    / "2e87036d-b90e-488f-b199-3162eb7c1c7e"
-    / "complex_acctbatch.cbl"
+    Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "complex_acctbatch.cbl"
 )
 
 

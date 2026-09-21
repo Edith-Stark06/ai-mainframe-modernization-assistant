@@ -41,8 +41,8 @@ dev = [
     "mypy"
 ]
 
-[tool.setuptools]
-packages = ["app"]
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [tool.black]
 line-length = 88

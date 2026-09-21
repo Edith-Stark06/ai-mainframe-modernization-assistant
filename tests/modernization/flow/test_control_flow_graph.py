@@ -41,9 +41,7 @@ from app.parser.semantic.analyzer import SemanticAnalyzer
 from app.parser.syntax.program_parser import ProgramParser
 
 _ID = "IDENTIFICATION DIVISION.\nPROGRAM-ID. T.\n"
-_COMPLEX_FIXTURE = Path(
-    "workspace/2e87036d-b90e-488f-b199-3162eb7c1c7e/complex_acctbatch.cbl"
-)
+_COMPLEX_FIXTURE = Path("tests/fixtures/complex_acctbatch.cbl")
 
 
 def _flow_for(source: str) -> Flow:

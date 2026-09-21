@@ -351,9 +351,13 @@ class TestOrdinaryIdentifiersUnaffected:
         """Defensive: if a READ's clause runs to the very end of a
         paragraph with no period and no END-READ (malformed input), the
         skip must still stop at EOF/division boundary, never hang or
-        consume past the procedure division."""
+        consume past the procedure division.
+
+        The input really is malformed (its last sentence has no period), so
+        besides the unsupported-``READ`` diagnostic the parser also reports
+        the missing terminating period (``SYN002``, at end of input only)."""
         program, state = _parse(
             "    READ F1 AT END MOVE 'Y' TO WS-EOF\n", paragraph="ONLY-PARA"
         )
         assert _statements(program) == []
-        assert len(state.diagnostics) == 1
+        assert [d.code for d in state.diagnostics] == ["SYN100", "SYN002"]

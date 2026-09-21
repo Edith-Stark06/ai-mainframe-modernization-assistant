@@ -47,6 +47,14 @@ REQUIRED_MEMBERS: frozenset[str] = frozenset(
         "RPAREN",
         "EOF",
         "UNKNOWN",
+        # Relational operators are promoted out of UNKNOWN by the lexer
+        # (TASK-039) so IF/PERFORM UNTIL conditions can be parsed.
+        "OPERATOR_EQ",
+        "OPERATOR_GT",
+        "OPERATOR_LT",
+        "OPERATOR_GE",
+        "OPERATOR_LE",
+        "OPERATOR_NEQ",
     }
 )
 

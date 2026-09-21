@@ -35,9 +35,7 @@ from app.parser.syntax.program_parser import ProgramParser
 from app.parser.syntax.token_stream import TokenStream
 
 _ID = "IDENTIFICATION DIVISION.\nPROGRAM-ID. T.\n"
-_COMPLEX_FIXTURE = Path(
-    "workspace/2e87036d-b90e-488f-b199-3162eb7c1c7e/complex_acctbatch.cbl"
-)
+_COMPLEX_FIXTURE = Path("tests/fixtures/complex_acctbatch.cbl")
 
 
 def _parse(source: str) -> tuple[Any, ParserState]:
