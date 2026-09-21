@@ -16,7 +16,7 @@
 
 ### 🚀 Building the Next Generation AI Platform for Mainframe Modernization
 
-Enterprise backend for parsing COBOL, JCL, Copybooks, building dependency graphs, extracting business rules, and assisting modernization using Large Language Models.
+Enterprise backend for parsing COBOL, building dependency graphs, extracting business rules, generating Java, and assisting modernization using Large Language Models. JCL files and copybooks are inventoried and cross-referenced; a JCL parser and copybook expansion are not implemented yet (see [Known Limitations](#-known-limitations)).
 
 </div>
 
@@ -35,9 +35,9 @@ Modernizing these systems is difficult because of:
 - Limited documentation
 - High modernization risk
 
-This project aims to build an **AI-powered enterprise modernization platform** capable of understanding legacy applications before applying Generative AI.
+This project is an **AI-powered enterprise modernization platform** that understands legacy applications before applying Generative AI.
 
-Unlike traditional AI wrappers around source code, this platform first builds a structured understanding of the application through deterministic analysis, then uses AI for intelligent modernization.
+Unlike traditional AI wrappers around source code, this platform first builds a structured understanding of the application through deterministic analysis, then uses AI for intelligent modernization. The parser is the source of truth; the LLM is an assistant and is never sent raw COBOL.
 
 ---
 
@@ -45,12 +45,31 @@ Unlike traditional AI wrappers around source code, this platform first builds a 
 
 ## Enterprise Backend
 
-- ✅ FastAPI REST API
+- ✅ FastAPI REST API (15 operations under `/api/v1`)
 - ✅ Enterprise project architecture
 - ✅ Configuration management
 - ✅ Structured logging
 - ✅ Global exception framework
 - ✅ Request correlation middleware
+
+---
+
+## COBOL Analysis & Modernization Pipeline
+
+```text
+COBOL → Lexer → Parser → AST → Semantic Analysis → IR
+      → Control-Flow Graph → Dependencies / Business Rules / Risk / Strategy
+      → Java generation (validated with a real javac)
+```
+
+- ✅ COBOL lexer, parser, AST, semantic analyzer and structured IR
+- ✅ Syntax diagnostics with a stable code taxonomy (`SYN001`–`SYN005` errors, `SYN1xx` unsupported constructs, `SYN2xx` unmodelled constructs)
+- ✅ Dependency analysis (COPY / CALL / PERFORM references, variable reads and writes, conditions)
+- ✅ Business-rule extraction, risk assessment and modernization strategy
+- ✅ COBOL → Java backend; the 45-program verification corpus compiles with `javac` and runs
+- ✅ Retrieval-augmented explanation and documentation services (LangChain / ChromaDB / Ollama providers). When no LLM backend is configured the API reports `LLM_PROVIDER_NOT_CONFIGURED` instead of failing
+- ✅ Streamlit UI with Overview, Business Rules, Dependencies, Architecture, COBOL ↔ Java, Java Workspace, Validation Center, Report and Modernization Chat views
+- ✅ MMIM training dataset generator (`mmim-gen-v24`, dataset `mmim-v2`): 351 deterministic examples, source-level 226 / 71 / 54 train / validation / test split, leakage and validation reports
 
 ---
 
@@ -126,7 +145,16 @@ Workspace
                 Project Summary
                         │
                         ▼
-             (Upcoming COBOL Parser)
+      COBOL Lexer → Parser → AST → Semantic Analysis → IR
+                        │
+                        ▼
+      CFG · Dependencies · Business Rules · Risk · Strategy
+                        │
+                        ▼
+        Java Backend · RAG · LLM (assistant only)
+                        │
+                        ▼
+            FastAPI  ←→  Streamlit UI
 ```
 
 ---
@@ -139,13 +167,14 @@ Workspace
 | Language | Python 3.12 |
 | Validation | Pydantic v2 |
 | Logging | Loguru |
+| Frontend | Streamlit |
 | Testing | Pytest |
 | Formatting | Black |
 | Linting | Ruff |
 | Type Checking | MyPy |
-| AI Framework | LangChain *(planned)* |
-| Vector Database | ChromaDB *(planned)* |
-| LLM | Llama 3 *(planned)* |
+| AI Framework | LangChain |
+| Vector Database | ChromaDB |
+| LLM | Ollama (Llama 3.x), optional — not required to run analysis |
 
 ---
 
@@ -154,16 +183,29 @@ Workspace
 ```text
 app/
 │
-├── api/
-├── core/
-├── ingestion/
-├── workspace/
+├── api/              FastAPI routers and schemas
+├── core/             configuration, logging, exceptions
+├── ingestion/        upload, ZIP extraction, validation
+├── workspace/        scanner, inventory, classification, summary
+├── parser/           lexer, syntax parser, AST, semantic analysis, diagnostics
+├── ir/               intermediate representation
+├── analysis/         analysis service, dependencies, rules, coverage
+├── modernization/    business rules, flow, risk, scoring, strategy
+├── backend/          Java code generation
+├── java_modernization/  Java workspace and validation
+├── knowledge/, rag/, ai/, grounded/   retrieval and LLM-assisted explanation
+├── advisor/, behavioral/, evaluation/, quality_loop/   quality and evaluation tooling
+├── dataset/, benchmark/, training/    MMIM dataset generation and benchmarks
+├── frontend/         Streamlit UI
+├── compiler.py       standalone COBOL frontend driver
 │
 tests/
 │
-docs/
+docs/                 design notes and per-fix audit reports
 │
-scripts/
+data/                 verification corpus and generated datasets
+│
+scripts/              dataset, benchmark, evaluation and training tools
 ```
 
 ---
@@ -199,32 +241,40 @@ scripts/
 
 ---
 
-## 🚧 Phase 4 — Mainframe Parsing
+## ✅ Phase 4 — Mainframe Parsing
 
-- COBOL Lexer
-- COBOL Parser
-- Copybook Resolver
-- JCL Parser
-- AST Generation
-
----
-
-## 🚧 Phase 5 — Static Analysis
-
-- Dependency Graph
-- Call Graph
-- Business Rule Extraction
-- Data Flow Analysis
+- ✅ COBOL Lexer
+- ✅ COBOL Parser and AST
+- ✅ Semantic Analysis and IR
+- 🚧 Copybook Resolver (COPY references are detected, not expanded)
+- 🚧 JCL Parser (JCL files are inventoried, not parsed)
+- 🚧 Fixed-format (columns 1-6 / 7 / 73-80) normalization: implemented as a component but not yet wired into the analysis pipeline
 
 ---
 
-## 🚧 Phase 6 — AI Modernization Engine
+## ✅ Phase 5 — Static Analysis
 
-- Retrieval-Augmented Generation (RAG)
-- LLM Integration
-- Documentation Generation
-- Modernization Recommendations
-- Code Explanation
+- ✅ Dependency Graph
+- ✅ Control-Flow Graph
+- ✅ Business Rule Extraction
+- ✅ Risk Assessment and Modernization Strategy
+
+---
+
+## ✅ Phase 6 — AI Modernization Engine
+
+- ✅ Retrieval-Augmented Generation (RAG)
+- ✅ LLM Integration (optional Ollama backend)
+- ✅ Documentation Generation
+- ✅ COBOL → Java Generation
+- ✅ Code Explanation and Modernization Chat
+
+---
+
+## ✅ Phase 7 — Dashboard & Training Data
+
+- ✅ Streamlit UI
+- ✅ MMIM training dataset (`mmim-v2`) with leakage and determinism checks
 
 ---
 
@@ -236,10 +286,15 @@ scripts/
 | File Upload | ✅ |
 | Workspace Management | ✅ |
 | Workspace Intelligence | ✅ |
-| COBOL Lexer | 🚧 |
-| COBOL Parser | 🚧 |
-| Static Analysis | 🚧 |
-| AI Modernization | 🚧 |
+| COBOL Lexer / Parser / IR | ✅ (free-format source; see limitations) |
+| Static Analysis | ✅ |
+| Java Generation | ✅ |
+| AI Modernization (RAG / LLM) | ✅ (needs a configured LLM backend for generative answers) |
+| Streamlit UI | ✅ |
+| JCL Parser | 🚧 |
+| Copybook Expansion | 🚧 |
+| Fixed-format Source Normalization in Pipeline | 🚧 |
+| Continuous Integration | 🚧 |
 
 ---
 
@@ -247,7 +302,7 @@ scripts/
 
 Current Quality Metrics
 
-- ✅ 265 Automated Tests
+- ✅ 4,772 Automated Tests (full suite passes with no failures or skips when a JDK is installed)
 - ✅ MyPy Type Checking
 - ✅ Ruff Linting
 - ✅ Black Formatting
@@ -261,6 +316,18 @@ ruff check .
 black --check .
 mypy app
 ```
+
+Tests are self-contained: git-ignored dataset splits (`train.jsonl`, `validation.jsonl`) are regenerated automatically from the tracked `all.jsonl` and split manifest when missing, and the tests that compile generated Java are skipped when no JDK (`javac`) is on `PATH`. Install a JDK to exercise them.
+
+---
+
+# ⚠️ Known Limitations
+
+- **Fixed-format COBOL.** Column-based source (sequence area, indicator column, columns 73-80) is not normalized by the analysis pipeline; a `FormatDetector` / `SourceNormalizer` exists but is not wired into `AnalysisService`. Analysis is reliable for free-format style sources such as the verification corpus.
+- **JCL and copybooks.** JCL is not parsed and `COPY` members are not expanded.
+- **Unsupported COBOL constructs.** Constructs the parser does not model are reported as `SYN1xx` / `SYN2xx` diagnostics rather than silently accepted; the generated Java for such programs is not guaranteed to be complete.
+- **Generative AI.** Explanation and chat features need a running Ollama (or other configured) backend; without one the API returns `LLM_PROVIDER_NOT_CONFIGURED`.
+- **CI.** There is no continuous-integration workflow in the repository yet; run the four commands above locally before committing.
 
 ---
 
@@ -299,10 +366,16 @@ Install dependencies
 pip install -e ".[dev]"
 ```
 
-Run
+Run the API
 
 ```bash
 uvicorn app.main:app --reload
+```
+
+Run the Streamlit UI (in a second terminal; set `API_BASE_URL` if the API is not on the default address)
+
+```bash
+streamlit run app/frontend/app.py
 ```
 
 ---
