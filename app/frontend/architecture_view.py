@@ -34,27 +34,81 @@ def _type_sort_key(component_type: str) -> tuple[int, str]:
         return (len(_TYPE_ORDER), component_type)
 
 
-def _render_component_layers(components: List[Dict[str, Any]]) -> None:
-    by_type: Dict[str, List[Dict[str, Any]]] = {}
-    for c in components:
-        by_type.setdefault(c.get("type", "UNKNOWN"), []).append(c)
+def _render_blueprint(components: List[Dict[str, Any]]) -> None:
+    # 1. Mainframe Layer
+    mainframe_html = """
+    <div style="border: 1px solid #333; border-radius: 4px; padding: 15px; margin-bottom: 20px; text-align: center; background: rgba(0,0,0,0.2);">
+        <div style="font-size: 10px; letter-spacing: 1px; color: #888; margin-bottom: 10px; font-weight: 600;">1. MAINFRAME</div>
+        <div style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap;">
+            <span class="mf-topbar-badge">COBOL</span>
+            <span class="mf-topbar-badge">JCL</span>
+            <span class="mf-topbar-badge">DB2</span>
+            <span class="mf-topbar-badge">VSAM</span>
+            <span class="mf-topbar-badge">CICS</span>
+        </div>
+    </div>
+    <div style="text-align: center; color: #555; margin-bottom: 20px;">↓</div>
+    """
 
-    for component_type in sorted(by_type, key=_type_sort_key):
-        group = by_type[component_type]
-        st.markdown(
-            f'<div class="mf-eyebrow-sm">{component_type} ({len(group)})</div>',
-            unsafe_allow_html=True,
+    # 2. Intelligence Layer
+    intelligence_html = """
+    <div style="border: 1px solid #333; border-radius: 4px; padding: 15px; margin-bottom: 20px; text-align: center; background: rgba(0,0,0,0.2);">
+        <div style="font-size: 10px; letter-spacing: 1px; color: #888; margin-bottom: 10px; font-weight: 600;">2. MODERNIZATION INTELLIGENCE</div>
+        <div style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap;">
+            <span class="mf-topbar-badge" style="background:#111827;border-color:#374151;">Parser</span>
+            <span class="mf-topbar-badge" style="background:#111827;border-color:#374151;">IR</span>
+            <span class="mf-topbar-badge" style="background:#111827;border-color:#374151;">CFG</span>
+            <span class="mf-topbar-badge" style="background:#111827;border-color:#374151;">Business Rules</span>
+            <span class="mf-topbar-badge" style="background:#111827;border-color:#374151;">Dependencies</span>
+            <span class="mf-topbar-badge" style="background:#111827;border-color:#374151;">Risk</span>
+            <span class="mf-topbar-badge" style="background:#111827;border-color:#374151;">Strategy</span>
+        </div>
+    </div>
+    <div style="text-align: center; color: #555; margin-bottom: 20px;">↓</div>
+    """
+
+    # 3. Target Architecture Layer (dynamic from backend)
+    services_html = ""
+    for c in components:
+        color = (
+            "#1d4ed8"
+            if c.get("type") == "SERVICE"
+            else "#047857" if c.get("type") == "DOMAIN" else "#4338ca"
         )
-        chips = "".join(
-            f'<span class="mf-topbar-badge" style="margin:0.15rem 0.3rem 0.3rem 0;">'
-            f'{c.get("name", "")}</span>'
-            for c in group
-        )
-        st.markdown(f"<div>{chips}</div>", unsafe_allow_html=True)
-    st.caption(
-        "Components are grouped by type -- the architecture model has no "
-        "component-to-component edge list, so none is drawn here."
-    )
+        services_html += f'<div style="border: 1px solid {color}; border-radius: 4px; padding: 8px 12px; font-size: 13px; color: #e2e8f0; font-weight: 500;">{c.get("name", "Unknown")}</div>'
+
+    target_html = f"""
+    <div style="border: 1px solid #333; border-radius: 4px; padding: 15px; margin-bottom: 20px; text-align: center; background: rgba(0,0,0,0.2);">
+        <div style="font-size: 10px; letter-spacing: 1px; color: #888; margin-bottom: 10px; font-weight: 600;">3. TARGET ARCHITECTURE</div>
+        <div style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap;">
+            {services_html if components else '<span style="color:#666; font-size:12px;">No components derived</span>'}
+        </div>
+    </div>
+    <div style="text-align: center; color: #555; margin-bottom: 20px;">↓</div>
+    """
+
+    # 4. Modern Application Layer
+    modern_html = """
+    <div style="border: 1px solid #333; border-radius: 4px; padding: 15px; margin-bottom: 20px; text-align: center; background: rgba(0,0,0,0.2);">
+        <div style="font-size: 10px; letter-spacing: 1px; color: #888; margin-bottom: 10px; font-weight: 600;">4. MODERN APPLICATION</div>
+        <div style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap;">
+            <span class="mf-topbar-badge" style="border-color:#059669;color:#10b981;">Java</span>
+            <span class="mf-topbar-badge" style="border-color:#059669;color:#10b981;">REST</span>
+            <span class="mf-topbar-badge" style="border-color:#059669;color:#10b981;">Data</span>
+            <span class="mf-topbar-badge" style="border-color:#059669;color:#10b981;">Tests</span>
+        </div>
+    </div>
+    """
+
+    blueprint = f"""
+    <div style="max-width: 800px; margin: 0 auto; font-family: ui-sans-serif, system-ui, sans-serif;">
+        {mainframe_html}
+        {intelligence_html}
+        {target_html}
+        {modern_html}
+    </div>
+    """
+    st.markdown(blueprint, unsafe_allow_html=True)
 
 
 def _component_detail(component: Dict[str, Any]) -> None:
@@ -110,9 +164,18 @@ def render_architecture(
 
     arch = architecture_response["architecture"]
     components = arch.get("components", [])
-    counts = Counter(c["type"] for c in components)
 
-    section_header("Architecture", f"{len(components)} component(s) generated.")
+    st.markdown(
+        "<h3 style='text-align:center; font-weight:600; font-size: 1.2rem; margin-bottom: 2rem; color: #f8fafc; letter-spacing:1px;'>MODERNIZATION ARCHITECTURE BLUEPRINT</h3>",
+        unsafe_allow_html=True,
+    )
+
+    _render_blueprint(components)
+
+    st.divider()
+
+    counts = Counter(c["type"] for c in components)
+    section_header("Architecture Summary", f"{len(components)} component(s) generated.")
     stat_row([(ctype, str(n)) for ctype, n in sorted(counts.items())])
 
     strategy = arch.get("primary_strategy")
@@ -124,8 +187,6 @@ def render_architecture(
     if not components:
         st.info("No architecture components were derived for this file.")
         return
-
-    _render_component_layers(components)
 
     st.markdown("**Component Inventory**")
     records = []
