@@ -41,7 +41,7 @@ from app.dataset.schema import (
 from app.dataset.version import (
     BENCHMARK_VERSION,
     MMIM_DATASET_VERSION_V2,
-    MMIM_GENERATOR_VERSION_V24,
+    MMIM_GENERATOR_VERSION_V25,
 )
 
 MMIM_V2_DATASET_DIR = Path("data/dataset/mmim-v2")
@@ -77,7 +77,7 @@ def mmim_v2_build(training_corpus):
             training_corpus,
             seed=42,
             dataset_version=MMIM_DATASET_VERSION_V2,
-            generator_version=MMIM_GENERATOR_VERSION_V24,
+            generator_version=MMIM_GENERATOR_VERSION_V25,
             strict_eligibility=True,
         )
     return None
@@ -141,7 +141,7 @@ def test_all_examples_conform_to_schema(mmim_all_examples):
     for ex in mmim_all_examples:
         assert ex.example_id.strip() != ""
         assert ex.dataset_version == MMIM_DATASET_VERSION_V2
-        assert ex.metadata.generator_version == MMIM_GENERATOR_VERSION_V24
+        assert ex.metadata.generator_version == MMIM_GENERATOR_VERSION_V25
         assert ex.input.source_id.strip() != ""
         assert len(ex.input.source) > 0
         assert len(ex.metadata.source_sha256) == 64
@@ -2072,7 +2072,9 @@ def test_signed_value_packed_decimal_java_declares_the_five_recovered_items(
 def test_signed_value_packed_decimal_no_longer_reports_syn005(mmim_all_examples):
     pu = _by_task(mmim_all_examples, TaskType.PROGRAM_UNDERSTANDING)
     diag = pu[_SIGNED_VALUE_SOURCE].expected_output["parser_diagnostics"]
-    assert diag["syntax_diagnostic_count"] == 11  # was 16
+    # was 16, then 11; task #stage30 (docs/FIXED_FORMAT_NORMALIZATION.md)
+    # drops the false SYN003 its column-7 "*" comment used to produce: 11 -> 10
+    assert diag["syntax_diagnostic_count"] == 10
     assert "SYN005" not in diag["diagnostic_codes"]
     # Was 5 sources (was 138 total); task #stage25
     # (docs/MMIM_NEGATED_COMPARISON_FIX.md) removes the "NOT =" SYN005 from
@@ -2087,9 +2089,11 @@ def test_signed_value_packed_decimal_no_longer_reports_syn005(mmim_all_examples)
             e.expected_output["parser_diagnostics"]["syntax_diagnostic_count"]
             for e in pu.values()
         )
-        == 130  # was 138, then 134 (task #stage25: -4 SYN005); task #stage27
+        == 104  # was 138, then 134 (task #stage25: -4 SYN005); task #stage27
         # (docs/MMIM_FILE_SECTION_FIELDS_FIX.md) removes the SYN101 on each of
-        # the 4 FILE-SECTION sources: 134 -> 130
+        # the 4 FILE-SECTION sources: 134 -> 130; task #stage30
+        # (docs/FIXED_FORMAT_NORMALIZATION.md) removes the false SYN003 on each
+        # of the 26 sources with a column-7 "*" comment line: 130 -> 104
     )
 
 
@@ -2104,13 +2108,16 @@ def test_signed_value_packed_decimal_ast_and_architecture_carry_all_items(
     assert len(ws) == 13  # was 8: 2 groups + 8 COMP/COMP-3 numerics + 3 flags
 
 
-def test_signed_value_packed_decimal_syntax_error_risk_shrinks(mmim_all_examples):
+def test_signed_value_packed_decimal_syntax_error_risk_disappears(mmim_all_examples):
     risks = _by_task(mmim_all_examples, TaskType.RISK_CLASSIFICATION)[
         _SIGNED_VALUE_SOURCE
     ].expected_output["risks"]
     syntax = [r for r in risks if r["category"] == "SYNTAX_ERROR"]
-    assert len(syntax) == 1
-    assert syntax[0]["occurrence_count"] == 1  # was 6 (SYN003 + 5 x SYN005)
+    # Was 6 occurrences (SYN003 + 5 x SYN005), then 1 (the SYN003). That last
+    # one was the false error from the source's column-7 "*" comment line;
+    # task #stage30 (docs/FIXED_FORMAT_NORMALIZATION.md) removes it, so the
+    # source has no syntax error left and no SYNTAX_ERROR risk at all.
+    assert syntax == []
 
 
 def test_signed_value_only_packed_decimal_changed_the_java_and_counts(
@@ -2485,7 +2492,7 @@ def test_deterministic_regeneration(tmp_path, training_corpus):
         corpus,
         seed=42,
         dataset_version=MMIM_DATASET_VERSION_V2,
-        generator_version=MMIM_GENERATOR_VERSION_V24,
+        generator_version=MMIM_GENERATOR_VERSION_V25,
         strict_eligibility=True,
     )
     res2, _, _, _ = build_mmim_dataset(
@@ -2493,7 +2500,7 @@ def test_deterministic_regeneration(tmp_path, training_corpus):
         corpus,
         seed=42,
         dataset_version=MMIM_DATASET_VERSION_V2,
-        generator_version=MMIM_GENERATOR_VERSION_V24,
+        generator_version=MMIM_GENERATOR_VERSION_V25,
         strict_eligibility=True,
     )
 
@@ -2577,3 +2584,65 @@ def test_mmim_v1_directory_untouched():
     assert v1_manifest["dataset_version"] == "mmim-v1"
     assert v1_manifest["example_count"] == 144
     assert v1_manifest["source_count"] == 18
+
+
+# ---------------------------------------------------------------------------
+# Stage 30 -- fixed-format normalization (docs/FIXED_FORMAT_NORMALIZATION.md,
+# mmim-gen-v25). Comment lines (``*`` in column 7) are blanked in place before
+# lexing, so the 26 corpus sources that carry one lose a false SYN003 and
+# everything derived from it.
+# ---------------------------------------------------------------------------
+
+_STAGE30_REMAINING_SYNTAX_ERROR_SOURCES = [
+    "t_batch_acct_update",
+    "t_daily_trans_report",
+    "t_inventory_extract",
+    "t_inventory_reorder",
+    "t_payroll_file_post",
+    "t_table_indexed",
+]
+
+
+def test_stage30_no_example_reports_a_false_column7_comment_syn003(mmim_all_examples):
+    pu = _by_task(mmim_all_examples, TaskType.PROGRAM_UNDERSTANDING)
+    assert [
+        sid
+        for sid, e in pu.items()
+        if "SYN003" in e.expected_output["parser_diagnostics"]["diagnostic_codes"]
+    ] == []  # was 26 sources
+
+
+def test_stage30_syntax_error_risk_remains_only_where_a_real_error_remains(
+    mmim_all_examples,
+):
+    rc = _by_task(mmim_all_examples, TaskType.RISK_CLASSIFICATION)
+    assert (
+        sorted(
+            sid
+            for sid, e in rc.items()
+            if any(r["category"] == "SYNTAX_ERROR" for r in e.expected_output["risks"])
+        )
+        == _STAGE30_REMAINING_SYNTAX_ERROR_SOURCES
+    )  # was 26 sources: 20 lose the risk, these 6 keep it for a real SYN001/SYN005
+    assert sum(e.expected_output["risk_count"] for e in rc.values()) == 160 - 20
+
+
+def test_stage30_strategies_the_false_syntax_error_had_skewed(mmim_all_examples):
+    ms = _by_task(mmim_all_examples, TaskType.MODERNIZATION_STRATEGY)
+    moved = {
+        "t_account_eligibility": "REFACTOR",  # was REHOST
+        "t_condition_names_88": "REFACTOR",  # was REHOST
+        "t_customer_record": "REFACTOR",  # was REHOST
+        "t_fallthrough_flow": "REFACTOR",  # was REHOST
+        "t_payroll_deduct": "REHOST",  # was PHASED_MIGRATION
+    }
+    assert {
+        sid: ms[sid].expected_output["primary"]["strategy"] for sid in moved
+    } == moved
+
+
+def test_stage30_counts_splits_and_java_are_unchanged(mmim_all_examples):
+    assert len(mmim_all_examples) == 351
+    java = _all_java(mmim_all_examples)
+    assert len(java) == 45
+    assert sum(1 for e in java.values() if e.expected_output["compiles"]) == 45

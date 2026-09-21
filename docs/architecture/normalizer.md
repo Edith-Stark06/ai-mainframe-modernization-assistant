@@ -128,7 +128,22 @@ normalized: str = normalizer.normalize(raw_source, SourceFormat.FIXED)
 
 # Free format -- source is returned unchanged.
 normalized: str = normalizer.normalize(raw_source, SourceFormat.FREE)
+
+# Position-preserving variant used by AnalysisService: non-code columns are
+# blanked, never deleted, so line/column/offset of every character survive.
+preserved: str = normalizer.normalize_preserving_positions(
+    raw_source, SourceFormat.FIXED
+)
 ```
+
+### `normalize` versus `normalize_preserving_positions`
+
+`normalize` deletes columns 1-6 and 73-80, so every remaining column shifts left by six and diagnostics would point
+at the wrong place. The analysis pipeline therefore uses `normalize_preserving_positions`, which overwrites the same
+areas -- plus comment (`*`, `/`) and debug (`D`) lines -- with spaces. Columns 73-80 are only ignored when the file is
+a genuine 80-column card image; a file with text beyond column 80, or a word straddling the column 72/73 boundary,
+is wide-margin and is never truncated. `AnalysisService.prepare_source` wires the detector and this method in front
+of the lexer. See `docs/FIXED_FORMAT_NORMALIZATION.md`.
 
 ---
 

@@ -411,10 +411,13 @@ def test_real_goto_spaghetti_other_risks_are_unchanged(goto_spaghetti):
     by = {}
     for r in risks:
         by[r.category.value] = by.get(r.category.value, 0) + r.occurrence_count
+    # A fourth category, SYNTAX_ERROR (1), used to appear here. Its only
+    # evidence was the false SYN003 the source's column-7 "*" comment line
+    # produced; task #stage30 (docs/FIXED_FORMAT_NORMALIZATION.md) blanks
+    # comment lines before lexing, so it is correctly gone.
     assert by == {
         "COMPLEX_CONTROL_FLOW": 10,
         "SHARED_MUTABLE_STATE": 4,
-        "SYNTAX_ERROR": 1,
     }
 
 

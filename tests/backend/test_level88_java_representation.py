@@ -340,7 +340,10 @@ def test_real_source_keeps_its_initializers_and_diagnostics(condition_names_88) 
     assert fields["outcomeAction"] == 'private String outcomeAction = "";'
     assert fields["feesLevied"] == "private double feesLevied = 0.00;"
     # the real compound-88 IF stays skipped (pinned elsewhere) -- unchanged
-    assert [d.code for d in condition_names_88.syntax_diagnostics]  # SYN003 for '*'
+    # It used to keep one SYN003 for the column-7 '*' comment line; task
+    # #stage30 (docs/FIXED_FORMAT_NORMALIZATION.md) blanks comment lines before
+    # lexing, so the source now parses with no syntax diagnostic at all.
+    assert condition_names_88.syntax_diagnostics == []
 
 
 @needs_java

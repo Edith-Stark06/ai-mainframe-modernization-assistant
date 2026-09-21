@@ -6,12 +6,14 @@ Purpose:
     the complete COBOL analysis pipeline.  The service orchestrates:
 
     1. Source reading
-    2. Lexical analysis (``CobolLexer``)
-    3. Parsing (``ProgramParser``)
-    4. Semantic analysis (``SemanticAnalyzer``)
-    5. IR construction (``IRBuilder``)
-    6. Java field construction (``build_fields_from_symbols``)
-    7. Java code generation (``generate_with_diagnostics``)
+    2. Source-format detection and, for fixed format, position-preserving
+       normalization (``FormatDetector``, ``SourceNormalizer``)
+    3. Lexical analysis (``CobolLexer``)
+    4. Parsing (``ProgramParser``)
+    5. Semantic analysis (``SemanticAnalyzer``)
+    6. IR construction (``IRBuilder``)
+    7. Java field construction (``build_fields_from_symbols``)
+    8. Java code generation (``generate_with_diagnostics``)
 
     The service returns an :class:`~app.analysis.models.AnalysisResult` that
     bundles the generated Java source with all collected diagnostics.
@@ -35,7 +37,10 @@ Dependencies:
     - :mod:`app.backend.java.generator`        — ``build_fields_from_symbols``,
                                                  ``generate_with_diagnostics``.
     - :mod:`app.ir.builder`                    — ``IRBuilder``.
+    - :mod:`app.parser.lexer.format_detector`  — ``FormatDetector``.
     - :mod:`app.parser.lexer.lexer`            — ``CobolLexer``.
+    - :mod:`app.parser.lexer.normalizer`       — ``SourceNormalizer``.
+    - :mod:`app.parser.lexer.source_format`    — ``SourceFormat``.
     - :mod:`app.parser.semantic.analyzer`       — ``SemanticAnalyzer``.
     - :mod:`app.parser.semantic.symbols`        — ``VariableSymbol``.
     - :mod:`app.parser.syntax.program_parser`   — ``ProgramParser``.
@@ -77,7 +82,10 @@ from app.backend.java.generator import (
     generate_with_diagnostics,
 )
 from app.ir.builder import IRBuilder
+from app.parser.lexer.format_detector import FormatDetector, SourceDocument
 from app.parser.lexer.lexer import CobolLexer
+from app.parser.lexer.normalizer import SourceNormalizer
+from app.parser.lexer.source_format import SourceFormat
 from app.parser.semantic.analyzer import SemanticAnalyzer
 from app.parser.semantic.symbols import VariableSymbol
 from app.parser.syntax.program_parser import ProgramParser
@@ -148,6 +156,34 @@ class AnalysisService:
     multiple analyses, or instantiated per analysis call.
     """
 
+    @staticmethod
+    def prepare_source(source: str, filename: str | Path) -> str:
+        """
+        Detect the source format and normalize fixed-format text for lexing.
+
+        Fixed-format source has its sequence area, comment/debug lines and
+        program-ID area blanked so they cannot become tokens.  Nothing is
+        moved, so every token and diagnostic position still refers to the
+        original file.  Free-format source, and source whose format the
+        detector cannot determine with confidence, is returned unchanged
+        -- the same text the lexer received before format handling existed.
+
+        Args:
+            source: The decoded COBOL source text.
+            filename: Path or name of the file, used only for diagnostics.
+
+        Returns:
+            The text to hand to the lexer; always the same shape as *source*.
+        """
+        document = SourceDocument(filename=str(filename), source=source)
+        source_format = FormatDetector().detect(document)
+        logger.debug(
+            "AnalysisService: detected source format '{}'.", source_format.value
+        )
+        if source_format is not SourceFormat.FIXED:
+            return source
+        return SourceNormalizer().normalize_preserving_positions(source, source_format)
+
     def analyze_file(self, source_path: str | Path) -> AnalysisResult:
         """
         Execute the full COBOL analysis pipeline on *source_path*.
@@ -193,6 +229,11 @@ class AnalysisService:
                 ast=None,
                 ir=None,
             )
+
+        # ------------------------------------------------------------------
+        # Stage 0.5 — source format detection and normalization
+        # ------------------------------------------------------------------
+        source = self.prepare_source(source, path)
 
         # ------------------------------------------------------------------
         # Stage 1 — lex
