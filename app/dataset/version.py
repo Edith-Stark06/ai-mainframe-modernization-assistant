@@ -570,6 +570,34 @@ MMIM_GENERATOR_VERSION_V23: str = "mmim-gen-v23"
 #: ``dataset_version`` stays ``"mmim-v2"``.
 MMIM_GENERATOR_VERSION_V24: str = "mmim-gen-v24"
 
+#: ``mmim-gen-v25`` -- a twenty-fourth regeneration of the same ``mmim-v2``
+#: dataset_version/corpus, produced after ``AnalysisService`` began detecting
+#: the source format and normalizing fixed-format text before lexing
+#: (``docs/FIXED_FORMAT_NORMALIZATION.md``, task #stage30). All 45 corpus
+#: sources are fixed-format-shaped (blank sequence area, code from column 8);
+#: 26 of them carry a ``*`` comment line in column 7, which the lexer used to
+#: read as a multiplication sign followed by the comment's words, so each got
+#: a spurious ``SYN003`` "expected a clause keyword, got '*'". The comment
+#: lines are now blanked before lexing, **in place, without moving any
+#: character**, so no token position changes. Verified directly against a
+#: byte-copy of the pre-fix ``app/`` tree, not assumed: for all 45 sources
+#: the serialized AST, IR, CFG, CFG summary, dependencies, business rules,
+#: paragraph list and generated Java are byte-identical and ``javac`` stays
+#: 45/45; what changes is downstream of the 26 removed ``SYN003``
+#: diagnostics -- the token/parser coverage totals (26 sources), the
+#: ``SYNTAX_ERROR`` risk that ``SYN003`` alone produced (20 sources; the
+#: other 6 keep it for a genuine ``SYN001``/``SYN005`` and only lose one
+#: occurrence), and the strategy recommendation that the false error had
+#: skewed (8 sources; 4 move ``REHOST`` -> ``REFACTOR``, 1 moves
+#: ``PHASED_MIGRATION`` -> ``REHOST``, and 3 keep ``PHASED_MIGRATION`` with
+#: changed evidence and rationale). 86 of 351 examples change
+#: (PROGRAM_UNDERSTANDING, RISK_CLASSIFICATION, MODERNIZATION_STRATEGY: 26
+#: each; TRANSFORMATION_PLANNING: 8); COBOL_TO_JAVA, DEPENDENCY_REASONING and
+#: BUSINESS_RULE_EXTRACTION are unchanged. The 351-example count, the
+#: 226/71/54 split assignment and the leakage and validation reports are
+#: unchanged. ``dataset_version`` stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V25: str = "mmim-gen-v25"
+
 __all__ = [
     "ANALYSIS_VERSION",
     "BENCHMARK_VERSION",
@@ -602,6 +630,7 @@ __all__ = [
     "MMIM_GENERATOR_VERSION_V22",
     "MMIM_GENERATOR_VERSION_V23",
     "MMIM_GENERATOR_VERSION_V24",
+    "MMIM_GENERATOR_VERSION_V25",
     "MMIM_PROMPT_VERSION",
     "MMIM_PROMPT_VERSION_V2",
     "PROMPT_VERSION",

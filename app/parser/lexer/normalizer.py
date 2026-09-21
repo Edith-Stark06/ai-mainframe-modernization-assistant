@@ -19,6 +19,19 @@ Responsibilities:
     For FREE format source:
         - Return the source unchanged.
 
+    Two entry points serve FIXED format:
+
+    * :meth:`SourceNormalizer.normalize` *removes* the sequence and
+      program-ID areas, so every remaining column shifts left by 6.
+    * :meth:`SourceNormalizer.normalize_preserving_positions` *blanks*
+      them instead, so every line, column and offset of the normalized
+      text equals the original.  This is the variant the analysis
+      pipeline uses, because token positions become diagnostic
+      positions.  It also blanks comment (``*``, ``/``) and debug
+      (``D``) lines, and only ignores columns 73–80 when the file is a
+      genuine 80-column card image (see
+      :meth:`SourceNormalizer.normalize_preserving_positions`).
+
 Non-responsibilities:
     - Continuation line handling.
     - COPY book expansion.
@@ -87,6 +100,11 @@ __all__ = ["SourceNormalizer"]
 # ---------------------------------------------------------------------------
 _FIXED_SEQ_END: int = 6  # end of sequence number area (0-indexed exclusive)
 _FIXED_BODY_END: int = 72  # end of Area B / start of card-id area (0-indexed exclusive)
+_CARD_WIDTH: int = 80  # last column of a punch-card image (1-indexed)
+_INDICATOR_INDEX: int = 6  # column 7, 0-indexed
+_SEQUENCE_AREA_CHARS: frozenset[str] = frozenset("0123456789 ")
+_COMMENT_INDICATORS: frozenset[str] = frozenset("*/")
+_DEBUG_INDICATORS: frozenset[str] = frozenset("Dd")
 
 
 class SourceNormalizer:
@@ -174,6 +192,87 @@ class SourceNormalizer:
         # FIXED format path
         return self._normalize_fixed(source)
 
+    def normalize_preserving_positions(
+        self,
+        source: str,
+        source_format: SourceFormat,
+    ) -> str:
+        """
+        Normalize *source* without moving any character.
+
+        The result has exactly the same line terminators, the same number
+        of characters on every line and therefore the same line, column
+        and offset for every surviving character as *source*.  Anything
+        that must not reach the lexer is overwritten with spaces instead
+        of being deleted.  For ``FIXED`` format, per line:
+
+        * Columns 1–6 (sequence area) are blanked.  A line whose first six
+          columns hold anything other than digits and spaces is not
+          card-formatted and is left untouched.
+        * A ``*`` or ``/`` in column 7 marks a comment or page-eject line;
+          the whole line is blanked.
+        * A ``D``/``d`` in column 7 followed by a blank is a debug line; it
+          is blanked (compiled as a comment, the IBM default without
+          ``WITH DEBUGGING MODE``).  A ``D`` directly followed by text is
+          code that starts in column 7 and is kept.
+        * A ``-`` (continuation) indicator is left untouched;
+          continuation lines are not supported by this stage.
+        * Columns 73–80 (program-ID area) are blanked -- unless the file
+          shows it is not an 80-column card image.  If any code line has
+          text beyond column 80, or a word straddling the column 72/73
+          boundary, the file uses a wider margin, its columns 73+ are code,
+          and nothing is blanked there.  Dropping code is never an
+          acceptable way to honour the margin.
+
+        ``FREE`` format is returned unchanged.
+
+        Args:
+            source:
+                The raw COBOL source text.  Must be a :class:`str`.
+            source_format:
+                :attr:`SourceFormat.FIXED` or :attr:`SourceFormat.FREE`.
+
+        Returns:
+            Text with the same line structure and character positions as
+            *source*.
+
+        Raises:
+            NormalizationError:
+                If *source* is not a :class:`str`, or *source_format* is
+                :attr:`SourceFormat.UNKNOWN`.
+
+        Examples:
+            >>> n = SourceNormalizer()
+            >>> src = "000100 STOP RUN.\\n000200* remark\\n"
+            >>> n.normalize_preserving_positions(src, SourceFormat.FIXED)
+            '       STOP RUN.\\n              \\n'
+        """
+        if not isinstance(source, str):
+            raise NormalizationError(
+                f"source must be a str, got {type(source).__name__!r}"
+            )
+
+        if source_format is SourceFormat.UNKNOWN:
+            raise NormalizationError(
+                "Cannot normalize source with SourceFormat.UNKNOWN. "
+                "Run the Format Detector first."
+            )
+
+        if source_format is SourceFormat.FREE:
+            return source
+
+        lines = [_split_line_ending(ln) for ln in _split_preserving_endings(source)]
+        honour_margin = not any(_overflows_card_margin(body) for body, _ in lines)
+        logger.debug(
+            "FIXED format: position-preserving normalization of {} line(s), "
+            "columns 73-80 {}",
+            len(lines),
+            "ignored" if honour_margin else "kept (file exceeds the card margin)",
+        )
+        return "".join(
+            _blank_fixed_line(body, honour_margin) + ending for body, ending in lines
+        )
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
@@ -223,6 +322,72 @@ class SourceNormalizer:
 # ---------------------------------------------------------------------------
 # Module-level helpers (not part of the public API)
 # ---------------------------------------------------------------------------
+
+
+def _is_card_layout(body: str) -> bool:
+    """Return ``True`` if columns 1–6 of *body* hold only digits and spaces."""
+    return all(ch in _SEQUENCE_AREA_CHARS for ch in body[:_FIXED_SEQ_END])
+
+
+def _is_ignored_line(body: str) -> bool:
+    """
+    Return ``True`` if *body* is a comment, page-eject or debug line.
+
+    Only card-formatted lines qualify.  A ``D`` in column 7 counts as a
+    debug indicator only when column 8 is blank (or absent), so a
+    statement such as ``DISPLAY`` that starts in column 7 is not mistaken
+    for one.
+    """
+    if len(body) <= _INDICATOR_INDEX or not _is_card_layout(body):
+        return False
+    indicator = body[_INDICATOR_INDEX]
+    if indicator in _COMMENT_INDICATORS:
+        return True
+    return indicator in _DEBUG_INDICATORS and (
+        len(body) == _INDICATOR_INDEX + 1 or body[_INDICATOR_INDEX + 1] == " "
+    )
+
+
+def _is_word_char(ch: str) -> bool:
+    """Return ``True`` for a character that can occur inside a COBOL word."""
+    return ch.isalnum() or ch == "-"
+
+
+def _overflows_card_margin(body: str) -> bool:
+    """
+    Return ``True`` if *body* proves its file is wider than an 80-column card.
+
+    Two facts cannot both be true of a card image: text past column 80,
+    and a word that runs across the column 72/73 boundary (an identification
+    area is separated from the code, it does not continue it).  Comment and
+    debug lines are ignored: they are blanked whole, whatever they hold.
+    """
+    if not _is_card_layout(body) or _is_ignored_line(body):
+        return False
+    content = body.rstrip()
+    if len(content) > _CARD_WIDTH:
+        return True
+    return (
+        len(content) > _FIXED_BODY_END
+        and _is_word_char(content[_FIXED_BODY_END - 1])
+        and _is_word_char(content[_FIXED_BODY_END])
+    )
+
+
+def _blank_fixed_line(body: str, honour_margin: bool) -> str:
+    """
+    Return *body* with its non-code columns overwritten by spaces.
+
+    The result always has ``len(body)`` characters.  See
+    :meth:`SourceNormalizer.normalize_preserving_positions` for the rules.
+    """
+    if not _is_card_layout(body):
+        return body
+    if len(body) <= _FIXED_SEQ_END or _is_ignored_line(body):
+        return " " * len(body)
+    code_end = min(len(body), _FIXED_BODY_END) if honour_margin else len(body)
+    kept = body[_FIXED_SEQ_END:code_end]
+    return " " * _FIXED_SEQ_END + kept + " " * (len(body) - code_end)
 
 
 def _split_preserving_endings(source: str) -> list[str]:

@@ -69,7 +69,7 @@ COBOL → Lexer → Parser → AST → Semantic Analysis → IR
 - ✅ COBOL → Java backend; the 45-program verification corpus compiles with `javac` and runs
 - ✅ Retrieval-augmented explanation and documentation services (LangChain / ChromaDB / Ollama providers). When no LLM backend is configured the API reports `LLM_PROVIDER_NOT_CONFIGURED` instead of failing
 - ✅ Streamlit UI with Overview, Business Rules, Dependencies, Architecture, COBOL ↔ Java, Java Workspace, Validation Center, Report and Modernization Chat views
-- ✅ MMIM training dataset generator (`mmim-gen-v24`, dataset `mmim-v2`): 351 deterministic examples, source-level 226 / 71 / 54 train / validation / test split, leakage and validation reports
+- ✅ MMIM training dataset generator (`mmim-gen-v25`, dataset `mmim-v2`): 351 deterministic examples, source-level 226 / 71 / 54 train / validation / test split, leakage and validation reports
 
 ---
 
@@ -248,7 +248,8 @@ scripts/              dataset, benchmark, evaluation and training tools
 - ✅ Semantic Analysis and IR
 - 🚧 Copybook Resolver (COPY references are detected, not expanded)
 - 🚧 JCL Parser (JCL files are inventoried, not parsed)
-- 🚧 Fixed-format (columns 1-6 / 7 / 73-80) normalization: implemented as a component but not yet wired into the analysis pipeline
+- ✅ Fixed-format source (sequence area, `*`/`/`/`D` indicator lines, columns 73-80) is detected and normalized in place before lexing, so diagnostic positions stay exact
+- 🚧 Continuation lines (`-` in column 7) are not supported
 
 ---
 
@@ -286,14 +287,14 @@ scripts/              dataset, benchmark, evaluation and training tools
 | File Upload | ✅ |
 | Workspace Management | ✅ |
 | Workspace Intelligence | ✅ |
-| COBOL Lexer / Parser / IR | ✅ (free-format source; see limitations) |
+| COBOL Lexer / Parser / IR | ✅ (fixed and free format; see limitations) |
 | Static Analysis | ✅ |
 | Java Generation | ✅ |
 | AI Modernization (RAG / LLM) | ✅ (needs a configured LLM backend for generative answers) |
 | Streamlit UI | ✅ |
 | JCL Parser | 🚧 |
 | Copybook Expansion | 🚧 |
-| Fixed-format Source Normalization in Pipeline | 🚧 |
+| Fixed-format Source Normalization in Pipeline | ✅ |
 | Continuous Integration | 🚧 |
 
 ---
@@ -302,7 +303,7 @@ scripts/              dataset, benchmark, evaluation and training tools
 
 Current Quality Metrics
 
-- ✅ 4,772 Automated Tests (full suite passes with no failures or skips when a JDK is installed)
+- ✅ 4,863 Automated Tests (full suite passes with no failures or skips when a JDK is installed)
 - ✅ MyPy Type Checking
 - ✅ Ruff Linting
 - ✅ Black Formatting
@@ -323,7 +324,7 @@ Tests are self-contained: git-ignored dataset splits (`train.jsonl`, `validation
 
 # ⚠️ Known Limitations
 
-- **Fixed-format COBOL.** Column-based source (sequence area, indicator column, columns 73-80) is not normalized by the analysis pipeline; a `FormatDetector` / `SourceNormalizer` exists but is not wired into `AnalysisService`. Analysis is reliable for free-format style sources such as the verification corpus.
+- **Fixed-format COBOL.** Format detection and position-preserving normalization run inside `AnalysisService` (see `docs/FIXED_FORMAT_NORMALIZATION.md`). Not covered: continuation lines (`-` in column 7, reported as a lexer error), fixed-format files with fewer than five non-empty lines (the detector cannot decide, so they are analyzed as written), and `>>SOURCE` directives. Files that use lines wider than 80 columns are recognized and never truncated.
 - **JCL and copybooks.** JCL is not parsed and `COPY` members are not expanded.
 - **Unsupported COBOL constructs.** Constructs the parser does not model are reported as `SYN1xx` / `SYN2xx` diagnostics rather than silently accepted; the generated Java for such programs is not guaranteed to be complete.
 - **Generative AI.** Explanation and chat features need a running Ollama (or other configured) backend; without one the API returns `LLM_PROVIDER_NOT_CONFIGURED`.

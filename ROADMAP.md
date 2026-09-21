@@ -32,7 +32,8 @@ history lives in `docs/`.
 - [x] Parser
 - [x] AST
 - [x] Intermediate Representation
-- [ ] Fixed-format source normalization wired into the analysis pipeline
+- [x] Fixed-format source normalization wired into the analysis pipeline (position-preserving)
+- [ ] Continuation lines (`-` in column 7)
 - [ ] Copybook (`COPY`) expansion
 - [ ] JCL parser
 
@@ -82,12 +83,12 @@ history lives in `docs/`.
 
 ## Phase 9 — Training Data
 
-- [x] MMIM dataset generator (`mmim-gen-v24`, dataset `mmim-v2`, deterministic, leakage-checked)
+- [x] MMIM dataset generator (`mmim-gen-v25`, dataset `mmim-v2`, deterministic, leakage-checked)
 
 ---
 
 ## Next
 
-- [ ] Wire `FormatDetector` / `SourceNormalizer` into `AnalysisService` (position-preserving), then re-audit the corpus and regenerate the dataset as its own investigated change
+- [ ] Consume `>>SOURCE FREE|FIXED` directives and support fixed-format continuation lines, each as its own investigated change
 - [ ] Add a continuous-integration workflow running `black --check .`, `ruff check .`, `mypy app` and `pytest`
 - [ ] Copybook expansion and JCL parsing

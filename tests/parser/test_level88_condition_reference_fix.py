@@ -502,8 +502,10 @@ def test_real_corpus_syntax_diagnostics_no_longer_include_condition_errors():
     """Before this fix: 5 SYN005 diagnostics tied to level-88 (3 DATA
     DIVISION VALUES-parse failures, 2 PROCEDURE DIVISION "expected
     comparison operator" failures). After: none. The one remaining
-    diagnostic (a `* CATEGORY B: ...` comment-line artifact at line 4) is
-    unrelated to level-88 and predates this fix."""
+    diagnostic (a `* CATEGORY B: ...` comment-line artifact at line 4) was
+    unrelated to level-88 and predated this fix; task #stage30
+    (docs/FIXED_FORMAT_NORMALIZATION.md) blanks column-7 comment lines
+    before lexing, so the source now has no syntax diagnostic at all."""
     bundle = build_analysis_bundle(
         "t_condition_names_88", _real_source(), tempfile.mkdtemp()
     )
@@ -515,8 +517,7 @@ def test_real_corpus_syntax_diagnostics_no_longer_include_condition_errors():
         or "VALUES" in d.get("message", "")
     ]
     assert condition_related == []
-    assert len(diagnostics) == 1
-    assert diagnostics[0]["line"] == 4
+    assert diagnostics == []
 
 
 def test_real_corpus_business_rules_now_derived_from_level88_conditions():
