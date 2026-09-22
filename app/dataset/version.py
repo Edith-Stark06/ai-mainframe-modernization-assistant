@@ -598,6 +598,46 @@ MMIM_GENERATOR_VERSION_V24: str = "mmim-gen-v24"
 #: unchanged. ``dataset_version`` stays ``"mmim-v2"``.
 MMIM_GENERATOR_VERSION_V25: str = "mmim-gen-v25"
 
+#: ``mmim-gen-v26`` -- a twenty-fifth regeneration of the same ``mmim-v2``
+#: dataset_version/corpus, produced after the Java backend learned COBOL
+#: DISPLAY's implicit PICTURE formatting (``docs/MMIM_DISPLAY_FORMATTING_FIX.md``,
+#: task #stage31). ``DISPLAY WS-COUNT`` (``PIC 9(3)``) used to print a plain
+#: Java ``int`` (``5``, not ``"005"``): the width/scale that COBOL DISPLAY
+#: implicitly zero-/space-pads to was known at the symbol table
+#: (``NumericType``/``AlphanumericType``) but discarded before it reached
+#: ``JavaField``/the Java statement emitter. ``JavaField`` now carries
+#: ``digits``/``decimal_places``/``signed``/``length`` straight from
+#: ``cobol_type`` (never recomputed), threaded through the existing
+#: ``ConditionContext`` (extended with a new ``fields`` map) to
+#: ``emit_display``, which wraps a plain, unformatted DISPLAY of an unsigned
+#: elementary numeric or alphanumeric field in ``String.format(...)``:
+#: unsigned ``PIC 9(n)``/``PIC 9(n)V9(m)`` zero-pads to its total declared
+#: digit width (the assumed ``V`` is never printed -- an integer ``%d``
+#: format specifier, not a floating-point one, is what guarantees this), and
+#: ``PIC X(n)`` space-pads (right-justified) to its declared length. Signed
+#: items (``PIC S9...``), group-item ``DISPLAY``, edited PICTUREs and
+#: numeric overflow/truncation are explicitly out of scope and left exactly
+#: as before -- a field's own ``signed``/``digits``/``length`` gate the
+#: change, not a heuristic. Verified directly against the corpus, not
+#: assumed: **13 of the 45 sources** have their generated Java text change
+#: (`fx_combined`, `t_credit_limit`, `t_discount_tier`, `t_grade_letter`,
+#: `t_interest_accrue`, `t_late_fee`, `t_loan_balance`, `t_loan_underwrite`,
+#: `t_overdraft_fee`, `t_shipping_zone`, `t_stock_alert`, `t_temp_convert`,
+#: `t_vacation_accrual`) -- every changed ``System.out.println(x)`` becomes
+#: ``System.out.println(String.format("<spec>", x))`` for exactly the
+#: DISPLAY'd unsigned elementary field(s) each source declares; 6 further
+#: sources with an in-scope DISPLAY'd variable (`fx_perform_until`,
+#: `fx_simple_proc`, `t_account_validate`, `t_bonus_calc`,
+#: `t_payroll_net_pay`, `t_reorder_point`) are unchanged because that
+#: DISPLAY sits in a paragraph whose body never reaches generated Java at
+#: all (a pre-existing, unrelated gap -- confirmed identical, `println`-free
+#: Java before and after). Only **COBOL_TO_JAVA** ground truth changes for
+#: the 13 sources; AST, IR, CFG, dependencies, business rules, risks,
+#: strategy and syntax diagnostics are byte-identical for all 45, and
+#: ``javac`` stays **45/45**. The corpus and task taxonomy are unchanged;
+#: ``dataset_version`` stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V26: str = "mmim-gen-v26"
+
 __all__ = [
     "ANALYSIS_VERSION",
     "BENCHMARK_VERSION",
@@ -631,6 +671,7 @@ __all__ = [
     "MMIM_GENERATOR_VERSION_V23",
     "MMIM_GENERATOR_VERSION_V24",
     "MMIM_GENERATOR_VERSION_V25",
+    "MMIM_GENERATOR_VERSION_V26",
     "MMIM_PROMPT_VERSION",
     "MMIM_PROMPT_VERSION_V2",
     "PROMPT_VERSION",

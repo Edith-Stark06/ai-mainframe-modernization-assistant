@@ -28,6 +28,16 @@ Purpose:
       (``ZERO``/``ZEROS``/``ZEROES``, ``SPACE``/``SPACES``) becomes a
       type-compatible Java literal instead of an undeclared identifier
       reference (task #stage31; see that function's docstring).
+    * :attr:`ConditionContext.fields` -- the full
+      :class:`~app.backend.java.field_model.JavaField` of every declared
+      field, keyed by its Java name.  ``field_types`` above is the flat Java
+      type string a comparison needs; ``fields`` is the whole object, which
+      also carries the declared PICTURE width/scale a *DISPLAY* needs to
+      reproduce COBOL's implicit zero-/space-padding (task #stage31;
+      :func:`~app.backend.java.statement_emitter.emit_display` is the
+      consumer). Reusing this same context object -- rather than adding a
+      second, parallel context type -- keeps one "what do we know about this
+      field" carrier threaded through the pipeline.
 
 COBOL alphanumeric comparison
 -----------------------------
@@ -151,10 +161,15 @@ class ConditionContext:
     Attributes:
         field_types: ``{java field name: java type}`` of every declared field.
         condition_names: ``{COBOL condition-name (upper case): entry}``.
+        fields: ``{java field name: JavaField}`` of every declared field --
+            the full object, including the declared PICTURE width/scale
+            (task #stage31; see this module's docstring, "Purpose" section,
+            fourth bullet).
     """
 
     field_types: Mapping[str, str] = field(default_factory=dict)
     condition_names: Mapping[str, ConditionName] = field(default_factory=dict)
+    fields: Mapping[str, JavaField] = field(default_factory=dict)
 
 
 def build_condition_context(
@@ -165,6 +180,7 @@ def build_condition_context(
     return ConditionContext(
         field_types={f.java_name: f.java_type for f in fields},
         condition_names=dict(condition_names or {}),
+        fields={f.java_name: f for f in fields},
     )
 
 

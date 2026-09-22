@@ -12,12 +12,22 @@ Purpose:
 
 Responsibilities:
     - Carry the field's Java name, Java type, and optional initial value.
+    - Carry the declared PICTURE width/scale (``digits``, ``decimal_places``,
+      ``signed``, ``length``) so a later stage can reproduce COBOL DISPLAY
+      formatting (zero-padding, space-padding) without recomputing it from
+      the raw PIC string (task #stage31; see
+      :mod:`app.backend.java.condition_context` and
+      :func:`~app.backend.java.statement_emitter.emit_display`). ``None``/
+      defaults mean "not a formattable elementary item" (a group, or a
+      symbol with no resolved ``cobol_type``).
     - Provide :meth:`render` to format the field as a Java source line.
 
 Non-responsibilities:
     - COBOL name conversion (handled by :mod:`app.backend.java.naming`).
     - COBOL type mapping (handled by :mod:`app.backend.java.type_mapper`).
     - Code emission (handled by :mod:`app.backend.java.generator`).
+    - Applying the formatting these attributes describe (handled by
+      :mod:`app.backend.java.statement_emitter`).
 
 Examples:
     Creating and rendering a field::
@@ -63,6 +73,29 @@ class JavaField:
         cobol_name:
             The original COBOL data-item name, preserved for diagnostics and
             documentation comments.  Optional.
+        digits:
+            Total declared PICTURE digit width (integer + decimal places
+            combined, e.g. ``9`` for ``PIC 9(7)V99``) for a numeric
+            elementary item, straight from
+            :attr:`~app.parser.semantic.types.NumericType.digits`.  ``None``
+            for a non-numeric field or one with no resolved type.
+        decimal_places:
+            Number of digits to the right of the assumed decimal point (the
+            ``V`` position), straight from
+            :attr:`~app.parser.semantic.types.NumericType.decimal_places`.
+            ``0`` for an integer field or a non-numeric field.
+        signed:
+            ``True`` when the PIC clause began with ``S``, straight from
+            :attr:`~app.parser.semantic.types.NumericType.signed`.  Signed
+            DISPLAY formatting is out of scope for task #stage31; carried
+            here only so a formatter can *decline* to format such a field
+            rather than guess. Defaults to ``False``.
+        length:
+            Declared character width of an alphanumeric elementary item,
+            straight from
+            :attr:`~app.parser.semantic.types.AlphanumericType.length`.
+            ``None`` for a non-alphanumeric field or one with no resolved
+            type.
 
     Examples:
         >>> from app.backend.java.field_model import JavaField
@@ -77,6 +110,10 @@ class JavaField:
     java_type: str = field(default="String")
     initial_value: str | None = field(default=None)
     cobol_name: str = field(default="")
+    digits: int | None = field(default=None)
+    decimal_places: int = field(default=0)
+    signed: bool = field(default=False)
+    length: int | None = field(default=None)
 
     def render(self, indent: str = "    ") -> str:
         """

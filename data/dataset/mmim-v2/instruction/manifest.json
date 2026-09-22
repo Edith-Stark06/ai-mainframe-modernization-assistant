@@ -7,7 +7,7 @@
   },
   "character_statistics": {
     "total_chars": {
-      "avg": 5073.27,
+      "avg": 5074.32,
       "max": 57036,
       "min": 863
     }
@@ -83,12 +83,12 @@
   },
   "token_statistics": {
     "assistant_tokens": {
-      "avg": 755.43,
+      "avg": 755.7,
       "max": 14011,
       "min": 10
     },
     "total_tokens": {
-      "avg": 1336.01,
+      "avg": 1336.28,
       "max": 15010,
       "min": 228
     },
