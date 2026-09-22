@@ -147,6 +147,10 @@ gap; it makes those two spellings symmetric with the 7 that already reached it (
 4. The independent business-rule-dependency defect (`_operand_bucket`), `docs/MMIM_NEGATED_COMPARISON_FIX.md`
    §7 — unrelated, still unfixed.
 5. The Java figurative-constant-value-translation gap, §6 above — newly found this stage, unfixed.
+   **Resolved for the `ZERO`/`ZEROS`/`ZEROES` (against a numeric field) and `SPACE`/`SPACES` (against a
+   `String` field) cases by task #stage31**, `docs/FIGURATIVE_CONSTANT_JAVA_EMISSION.md`.
+   `HIGH-VALUE(S)`/`LOW-VALUE(S)`, and a figurative constant of the wrong type for the field it is compared
+   with, remain unfixed there too — no established Java representation to reuse.
 6. `MOVE 09`, `DataModelElement.initial_value`, `GO TO … DEPENDING ON`, unsupported IF headers, FILE SECTION
    declarations, `COMPUTE`, `COMP`/`COMP-3` — as recorded before.
 

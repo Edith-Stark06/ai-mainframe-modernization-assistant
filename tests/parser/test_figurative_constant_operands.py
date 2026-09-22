@@ -339,27 +339,40 @@ def test_fixture_diagnostic_total_is_unchanged_by_this_fix() -> None:
 
 
 # ===========================================================================
-# 7. Regression guard: the pre-existing, unrelated, out-of-scope Java
-#    figurative-constant-translation gap is unchanged/symmetric, not fixed
-#    or worsened by this stage
+# 7. Regression guard: at the time of this stage (Stage 26), the pre-existing,
+#    unrelated, out-of-scope Java figurative-constant-translation gap was
+#    unchanged/symmetric across every spelling, not fixed or worsened here.
+#    Task #stage31 (docs/FIGURATIVE_CONSTANT_JAVA_EMISSION.md) later fixed
+#    the *type-compatible* cases (SPACES/SPACE against text, ZERO family
+#    against a number) -- see
+#    tests/backend/test_figurative_constant_java_emission.py for that. This
+#    test now pins what Stage 31 deliberately leaves exactly as broken as it
+#    was here: a figurative constant compared against a field of the *wrong*
+#    type, which no stage has proof enough to translate.
 # ===========================================================================
 
 
-def test_figurative_constant_java_translation_gap_is_symmetric_not_new() -> None:
-    """Neither this stage nor any prior one taught the Java backend what a
-    figurative constant *means*; every spelling -- old (``ZERO``) and newly
-    parseable (``SPACES``) alike -- is still translated as a bare,
-    undeclared Java identifier reference via the generic COBOL-identifier
-    fallback in ``_translate_operand``. Documented, not fixed, here
-    (docs/MMIM_FIGURATIVE_CONSTANT_OPERAND_FIX.md §7)."""
+def test_figurative_constant_java_translation_gap_remains_for_type_mismatches() -> None:
+    """``ZERO``/``ZEROS`` compared against a ``String`` field is a genuine
+    type mismatch (a numeric figurative constant on a text item): task
+    #stage31 requires proof of the *other* operand's type before
+    translating a figurative constant, and correctly finds none here, so
+    this stays the same undeclared Java identifier reference it always was.
+    ``SPACES`` against this same ``String`` field, by contrast, is exactly
+    the case Stage 31 now translates -- no longer symmetric with ``ZERO``/
+    ``ZEROS``, by design; asserted directly rather than assumed."""
     from app.backend.java.condition_context import ConditionContext
     from app.backend.java.control_flow_emitter import emit_if
     from app.ir.instructions import IRIf
 
     ctx = ConditionContext(field_types={"wsCode": "String"})
-    for word, java_ref in (("ZERO", "zero"), ("SPACES", "spaces"), ("ZEROS", "zeros")):
+    for word, java_ref in (("ZERO", "zero"), ("ZEROS", "zeros")):
         cond = IRIf(left="WS-CODE", operator="=", right=word)
         diagnostics: list = []
         (line,) = emit_if(cond, 0, diagnostics, ctx)
         assert line == f"if (wsCode == {java_ref}) {{"
         assert diagnostics == []
+
+    cond = IRIf(left="WS-CODE", operator="=", right="SPACES")
+    (line,) = emit_if(cond, 0, [], ctx)
+    assert line == 'if (_cobolEquals(wsCode, "")) {'

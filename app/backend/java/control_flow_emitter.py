@@ -41,6 +41,13 @@ Condition translation
     3. COBOL identifiers → lowerCamelCase via
        :func:`~app.backend.java.naming.to_java_field_name`.
 
+    Except (only when *context* is given): a ``ZERO``/``ZEROS``/``ZEROES`` or
+    ``SPACE``/``SPACES`` figurative-constant operand goes through
+    :func:`~app.backend.java.condition_context.translate_figurative_operand`
+    first (task #stage31), becoming a type-compatible Java literal (``0``,
+    ``0.0``, ``""``) instead of rule 3's undeclared-identifier fallback --
+    see that function's docstring for exactly when it applies.
+
 Responsibilities:
     - :func:`emit_if`     — translate :class:`IRIf` into ``if (<cond>) {``.
     - :func:`emit_else`   — emit ``} else {`` at the correct depth.
@@ -100,6 +107,7 @@ from app.backend.java.condition_context import (
     ConditionContext,
     translate_comparison,
     translate_condition_name,
+    translate_figurative_operand,
 )
 from app.backend.java.generator import BackendDiagnostic, BackendSeverity
 
@@ -419,7 +427,13 @@ def _build_condition(
       numeric, mixed, unknown-typed and ordering comparisons are unchanged;
     * the level-88 sentinels ``IS-TRUE``/``IS-FALSE`` are translated when
       *context* knows the condition-name, and reported (``BE007``) with the
-      reason when it cannot be translated safely.
+      reason when it cannot be translated safely;
+    * a ``ZERO``/``ZEROS``/``ZEROES`` or ``SPACE``/``SPACES`` operand is
+      translated to a type-compatible Java literal using the *other*
+      operand's known type (task #stage31,
+      :func:`~app.backend.java.condition_context.translate_figurative_operand`);
+      an operand this cannot prove type-compatible keeps its old,
+      undeclared-identifier translation.
 
     Args:
         left:
@@ -501,6 +515,10 @@ def _build_condition(
     if text_comparison is not None:
         return text_comparison
 
-    java_left = _translate_operand(left)
-    java_right = _translate_operand(right)
+    java_left = translate_figurative_operand(
+        left, right, java_operator, context
+    ) or _translate_operand(left)
+    java_right = translate_figurative_operand(
+        right, left, java_operator, context
+    ) or _translate_operand(right)
     return f"{java_left} {java_operator} {java_right}"
