@@ -32,6 +32,16 @@ Purpose:
     All other instruction types produce a ``// TODO:`` stub and a ``BE005``
     WARNING diagnostic so generation continues gracefully.
 
+    Task #stage31 adds COBOL DISPLAY formatting for unformatted PICTURE
+    fields: :func:`emit_display` zero-pads an unsigned ``PIC 9(n)``/
+    ``PIC 9(n)V9(m)`` operand to its declared digit width (never printing the
+    assumed ``V``) and space-pads a ``PIC X(n)`` operand to its declared
+    length, when an optional :class:`~app.backend.java.condition_context.ConditionContext`
+    carrying the operand's :class:`~app.backend.java.field_model.JavaField`
+    is supplied.  See :func:`emit_display` and :func:`_format_display_operand`
+    for the exact scope (signed items, edited PICTUREs and group ``DISPLAY``
+    are deliberately left unformatted).
+
 Design:
     Operand translation is shared across all emitters via the private helper
     :func:`_translate_operand`, which converts an IR operand string into the
@@ -121,6 +131,7 @@ from __future__ import annotations
 
 import re
 
+from app.backend.java.condition_context import ConditionContext
 from app.backend.java.control_flow_emitter import (
     emit_else,
     emit_end_if,
@@ -174,6 +185,7 @@ def emit_statement(
     instruction: IRInstruction,
     diagnostics: list[BackendDiagnostic],
     depth: int = 0,
+    context: ConditionContext | None = None,
 ) -> list[str]:
     """
     Translate *instruction* into one or more Java statement strings.
@@ -211,6 +223,17 @@ def emit_statement(
         depth:
             Nesting depth for control-flow instructions.  Defaults to ``0``
             (directly inside ``main()``).
+        context:
+            Optional :class:`~app.backend.java.condition_context.ConditionContext`.
+            Passed through to :func:`emit_display` (task #stage31), where it
+            supplies the declared PICTURE width/scale of a DISPLAY'd field
+            for zero-/space-padding.  Not otherwise consulted by this
+            dispatcher: an ``IRIf``/``IRPerformUntil`` reached here (a direct
+            call, not the depth-aware path in
+            :func:`~app.backend.java.generator._collect_statements`) is
+            translated exactly as before, with no condition context.
+            ``None`` (the default) reproduces the exact pre-#stage31
+            behavior for every instruction type.
 
     Returns:
         A list of Java statement strings (no base indentation).  May be
@@ -230,7 +253,7 @@ def emit_statement(
         return emit_move(instruction, diagnostics)
 
     if isinstance(instruction, IRDisplay):
-        return emit_display(instruction, diagnostics)
+        return emit_display(instruction, diagnostics, context)
 
     if isinstance(instruction, IRAdd):
         return emit_add(instruction, diagnostics)
@@ -347,6 +370,7 @@ def emit_move(
 def emit_display(
     instruction: IRDisplay,
     diagnostics: list[BackendDiagnostic],
+    context: ConditionContext | None = None,
 ) -> list[str]:
     """
     Translate an :class:`~app.ir.instructions.IRDisplay` into a Java
@@ -357,11 +381,22 @@ def emit_display(
         - ``DISPLAY WS-NAME``    → ``System.out.println(wsName);``
         - ``DISPLAY 42``         → ``System.out.println(42);``
 
+    With *context* supplied, an operand that is a plain field reference is
+    additionally formatted the way COBOL DISPLAY implicitly formats it
+    (task #stage31) -- see :func:`_format_display_operand` for the exact,
+    deliberately narrow scope. Without *context* (the default), this
+    function's behavior is byte-for-byte what it was before #stage31.
+
     Args:
         instruction:
             The :class:`~app.ir.instructions.IRDisplay` to lower.
         diagnostics:
             Mutable list; diagnostics appended on error.
+        context:
+            Optional :class:`~app.backend.java.condition_context.ConditionContext`
+            carrying the declared :class:`~app.backend.java.field_model.JavaField`
+            of every field (``digits``/``decimal_places``/``signed``/
+            ``length``). ``None`` disables DISPLAY formatting entirely.
 
     Returns:
         A list containing exactly one ``System.out.println(...)`` string, or
@@ -380,6 +415,7 @@ def emit_display(
         return []
 
     java_operand = _translate_operand(operand)
+    java_operand = _format_display_operand(operand, java_operand, context)
     return [f"System.out.println({java_operand});"]
 
 
@@ -815,3 +851,105 @@ def _translate_operand(operand: str) -> str:
 
     # 4. COBOL identifier → lowerCamelCase
     return to_java_field_name(operand)
+
+
+# ---------------------------------------------------------------------------
+# DISPLAY formatting (task #stage31)
+# ---------------------------------------------------------------------------
+
+#: Matches the same bare numeric-literal IR operand shape
+#: :func:`_translate_operand` itself recognises (rule 3). Duplicated rather
+#: than shared so this module's public translation rule is not disturbed by
+#: a change scoped to DISPLAY formatting alone.
+_NUMERIC_OPERAND_RE = re.compile(r"^[+-]?\d+(\.\d+)?$")
+
+
+def _format_display_operand(
+    operand: str,
+    java_operand: str,
+    context: ConditionContext | None,
+) -> str:
+    """
+    Apply COBOL DISPLAY's implicit PICTURE formatting to *java_operand*,
+    when *operand* is a plain field reference whose declared width is known.
+
+    A COBOL ``DISPLAY`` of an elementary item is not "print the value" --
+    it is "print exactly the item's storage", which for an unedited
+    ``USAGE DISPLAY`` PICTURE means the value is already zero-padded
+    (numeric) or space-padded (alphanumeric) to the declared width by the
+    runtime *before* ``DISPLAY`` ever sees it. The Java backend has no such
+    storage representation (a COBOL ``PIC 9(3)`` becomes a plain Java
+    ``int``), so without this, the printed value has whatever width the
+    number or string naturally prints with (``5``, not ``"005"``).
+
+    Scope (Category A only -- see ``docs/MMIM_DISPLAY_FORMATTING_FIX.md``):
+        - Unsigned ``PIC 9(n)``      → zero-padded to *n* digits.
+        - Unsigned ``PIC 9(n)V9(m)`` → zero-padded to *n+m* digits, with the
+          assumed decimal point never printed (COBOL DISPLAY never prints
+          ``V``).
+        - ``PIC X(n)``               → space-padded (right-justified) to
+          *n* characters.
+
+    Deliberately NOT formatted (left exactly as *java_operand*, matching
+    behavior before #stage31):
+        - A signed field (``PIC S9...``) -- ``JavaField.signed`` is ``True``.
+        - A group item ``DISPLAY``, or any field whose type could not be
+          resolved -- ``JavaField.digits``/``length`` are both ``None``.
+        - A quoted string literal or a bare numeric literal operand -- it is
+          not a field reference at all, so no declared width exists for it.
+        - Anything else *context* does not know about (no *context*, or the
+          operand does not resolve to a declared field).
+
+    Args:
+        operand:
+            The raw IR operand string (before translation), used only to
+            tell a field reference apart from a literal.
+        java_operand:
+            *operand* already translated via :func:`_translate_operand` --
+            the expression this function may wrap.
+        context:
+            Optional :class:`~app.backend.java.condition_context.ConditionContext`.
+            ``None`` returns *java_operand* unchanged.
+
+    Returns:
+        A Java expression string: either *java_operand* unchanged, or a
+        ``String.format(...)`` call wrapping it.
+
+    Examples:
+        >>> from app.backend.java.condition_context import ConditionContext
+        >>> from app.backend.java.field_model import JavaField
+        >>> ctx = ConditionContext(
+        ...     fields={"wsCount": JavaField(java_name="wsCount",
+        ...                                  java_type="int", digits=3)}
+        ... )
+        >>> _format_display_operand("WS-COUNT", "wsCount", ctx)
+        'String.format("%03d", wsCount)'
+        >>> _format_display_operand("WS-COUNT", "wsCount", None)
+        'wsCount'
+    """
+    if context is None:
+        return java_operand
+
+    # Only a plain field reference has a declared width; a literal has none.
+    if operand.startswith('"') or operand.startswith("'"):
+        return java_operand
+    if _NUMERIC_OPERAND_RE.match(operand):
+        return java_operand
+
+    fld = context.fields.get(java_operand)
+    if fld is None:
+        return java_operand
+
+    if fld.digits is not None and not fld.signed:
+        width = fld.digits
+        if fld.decimal_places:
+            scale = 10**fld.decimal_places
+            return (
+                f'String.format("%0{width}d", ' f"Math.round({java_operand} * {scale}))"
+            )
+        return f'String.format("%0{width}d", {java_operand})'
+
+    if fld.length is not None:
+        return f'String.format("%-{fld.length}s", {java_operand})'
+
+    return java_operand

@@ -41,7 +41,7 @@ from app.dataset.schema import (
 from app.dataset.version import (
     BENCHMARK_VERSION,
     MMIM_DATASET_VERSION_V2,
-    MMIM_GENERATOR_VERSION_V25,
+    MMIM_GENERATOR_VERSION_V26,
 )
 
 MMIM_V2_DATASET_DIR = Path("data/dataset/mmim-v2")
@@ -77,7 +77,7 @@ def mmim_v2_build(training_corpus):
             training_corpus,
             seed=42,
             dataset_version=MMIM_DATASET_VERSION_V2,
-            generator_version=MMIM_GENERATOR_VERSION_V25,
+            generator_version=MMIM_GENERATOR_VERSION_V26,
             strict_eligibility=True,
         )
     return None
@@ -141,7 +141,7 @@ def test_all_examples_conform_to_schema(mmim_all_examples):
     for ex in mmim_all_examples:
         assert ex.example_id.strip() != ""
         assert ex.dataset_version == MMIM_DATASET_VERSION_V2
-        assert ex.metadata.generator_version == MMIM_GENERATOR_VERSION_V25
+        assert ex.metadata.generator_version == MMIM_GENERATOR_VERSION_V26
         assert ex.input.source_id.strip() != ""
         assert len(ex.input.source) > 0
         assert len(ex.metadata.source_sha256) == 64
@@ -2492,7 +2492,7 @@ def test_deterministic_regeneration(tmp_path, training_corpus):
         corpus,
         seed=42,
         dataset_version=MMIM_DATASET_VERSION_V2,
-        generator_version=MMIM_GENERATOR_VERSION_V25,
+        generator_version=MMIM_GENERATOR_VERSION_V26,
         strict_eligibility=True,
     )
     res2, _, _, _ = build_mmim_dataset(
@@ -2500,7 +2500,7 @@ def test_deterministic_regeneration(tmp_path, training_corpus):
         corpus,
         seed=42,
         dataset_version=MMIM_DATASET_VERSION_V2,
-        generator_version=MMIM_GENERATOR_VERSION_V25,
+        generator_version=MMIM_GENERATOR_VERSION_V26,
         strict_eligibility=True,
     )
 

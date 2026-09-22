@@ -5,7 +5,7 @@
     "private int numA = 10;",
     "private int numB = 20;",
     "numB += numA;",
-    "System.out.println(numB);"
+    "System.out.println(String.format(\"%04d\", numB));"
   ],
   "expected_diagnostics": []
 }

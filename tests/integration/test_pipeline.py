@@ -17,7 +17,9 @@ def test_move_display_pipeline() -> None:
     result = compile_cobol_pipeline(FIXTURES_DIR / "move_display.cbl")
     assert result.success
     assert "wsCount = 5;" in result.java_source
-    assert "System.out.println(wsCount);" in result.java_source
+    # WS-COUNT is PIC 9(3): DISPLAY zero-pads to its declared width
+    # (task #stage31; see docs/MMIM_DISPLAY_FORMATTING_FIX.md).
+    assert 'System.out.println(String.format("%03d", wsCount));' in result.java_source
 
 
 def test_arithmetic_pipeline() -> None:
@@ -60,7 +62,9 @@ def test_combined_program_pipeline() -> None:
     assert "if (" in src
     assert "overLimit();" in src
     assert "while (" in src
-    assert "System.out.println(wsB);" in src
+    # WS-B is PIC 9(2): DISPLAY zero-pads to its declared width
+    # (task #stage31; see docs/MMIM_DISPLAY_FORMATTING_FIX.md).
+    assert 'System.out.println(String.format("%02d", wsB));' in src
 
 
 def test_invalid_syntax_pipeline() -> None:

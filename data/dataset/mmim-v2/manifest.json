@@ -3,7 +3,7 @@
   "created_at": "2026-09-17T00:00:00Z",
   "dataset_version": "mmim-v2",
   "example_count": 351,
-  "generator_version": "mmim-gen-v25",
+  "generator_version": "mmim-gen-v26",
   "per_difficulty": {
     "difficult": 180,
     "easy": 7,

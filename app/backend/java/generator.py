@@ -205,6 +205,13 @@ def build_fields_from_symbols(
        octal).  A symbol with no ``VALUE`` clause, or one whose literal has no
        provably correct Java equivalent for the field's type, keeps no
        initializer.
+    4. The declared PICTURE width/scale is copied onto the field's
+       ``digits``/``decimal_places``/``signed``/``length`` attributes
+       straight from ``cobol_type`` (task #stage31) — never recomputed from
+       the raw PIC string — so a later stage can reproduce COBOL DISPLAY
+       formatting.  A :class:`~app.parser.semantic.types.GroupType` symbol
+       (also mapped to Java ``String``) gets none of these: it is not an
+       elementary item and has no PICTURE of its own.
 
     Args:
         symbols:
@@ -218,6 +225,11 @@ def build_fields_from_symbols(
         objects in the same order as *symbols*, skipping any that cannot be
         mapped.
     """
+    # Lazy import to preserve the backend/parser layering
+    # (mirrors app.backend.java.type_mapper.map_cobol_type's own lazy import
+    # of the same module).
+    from app.parser.semantic.types import AlphanumericType, NumericType
+
     if diagnostics is None:
         diagnostics = []
 
@@ -258,12 +270,27 @@ def build_fields_from_symbols(
 
         java_name = to_java_field_name(sym.name)
 
+        digits: int | None = None
+        decimal_places = 0
+        signed = False
+        length: int | None = None
+        if isinstance(cobol_type, NumericType):
+            digits = cobol_type.digits
+            decimal_places = cobol_type.decimal_places
+            signed = cobol_type.signed
+        elif isinstance(cobol_type, AlphanumericType):
+            length = cobol_type.length
+
         result.append(
             JavaField(
                 java_name=java_name,
                 java_type=java_type,
                 initial_value=translate_value_literal(sym.value, java_type),
                 cobol_name=sym.name,
+                digits=digits,
+                decimal_places=decimal_places,
+                signed=signed,
+                length=length,
             )
         )
 
@@ -847,7 +874,10 @@ def _collect_statements(
                     continue
 
                 # Regular (non-control-flow) statement — apply depth prefix.
-                stmts = emit_statement(instr, diagnostics)
+                # `context` also carries each field's declared PICTURE
+                # width/scale (task #stage31), letting emit_statement's
+                # IRDisplay branch reproduce COBOL DISPLAY formatting.
+                stmts = emit_statement(instr, diagnostics, context=context)
                 indent = "    " * depth
                 statements.extend(indent + s for s in stmts)
 
