@@ -491,6 +491,7 @@ def _render_topbar() -> None:
     with left:
         st.markdown(
             f'<div class="mf-topbar-left">'
+            f'<span class="mf-topbar-badge" style="background:transparent;border:none;color:#999;padding:0;">MAINFRAME → MODERN / WORKSPACE / </span>'
             f'<span class="mf-topbar-file">{filename}</span>'
             f'<span class="mf-topbar-badge">COBOL</span>'
             f"&nbsp;&nbsp;{status_pill(label, word)}"
@@ -806,8 +807,19 @@ def _render_workspace_stage(client: BackendClient) -> None:
     st.empty()
 
     with st.sidebar:
+        if st.button("← Back to landing", use_container_width=True):
+            st.session_state.stage = "landing"
+            st.rerun()
+        st.divider()
+
         _render_sidebar_nav()
         _render_workspace_selection(client)
+
+        st.divider()
+        if st.button("Logout", use_container_width=True, type="secondary"):
+            st.session_state.clear()
+            st.session_state.stage = "entry"
+            st.rerun()
 
     _render_topbar()
 
