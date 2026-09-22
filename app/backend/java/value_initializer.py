@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["translate_value_literal"]
+__all__ = ["SPACE_FIGURATIVES", "ZERO_FIGURATIVES", "translate_value_literal"]
 
 _JAVA_INT_MAX = 2**31 - 1
 _JAVA_INT_MIN = -(2**31)
@@ -43,8 +43,12 @@ _JAVA_INT_MIN = -(2**31)
 _INTEGER_RE = re.compile(r"^([+-]?)(\d+)$")
 _DECIMAL_RE = re.compile(r"^([+-]?)(\d*)\.(\d+)$")
 
-_SPACE_FIGURATIVES = frozenset({"SPACE", "SPACES"})
-_ZERO_FIGURATIVES = frozenset({"ZERO", "ZEROS", "ZEROES"})
+#: Public so other operand-translation call sites (condition operands in
+#: ``app.backend.java.condition_context``, task #stage31) can recognise the
+#: same two spelling families this module already translates for ``VALUE``
+#: clauses and level-88 values, instead of maintaining a second copy.
+SPACE_FIGURATIVES = frozenset({"SPACE", "SPACES"})
+ZERO_FIGURATIVES = frozenset({"ZERO", "ZEROS", "ZEROES"})
 
 
 def _quoted_content(literal: str) -> str | None:
@@ -56,7 +60,7 @@ def _quoted_content(literal: str) -> str | None:
 
 def _integer_initializer(literal: str) -> str | None:
     """A Java ``int`` initializer, or ``None`` if there is no safe one."""
-    if literal.upper() in _ZERO_FIGURATIVES:
+    if literal.upper() in ZERO_FIGURATIVES:
         return "0"
     match = _INTEGER_RE.match(literal)
     if match is None:
@@ -71,7 +75,7 @@ def _integer_initializer(literal: str) -> str | None:
 
 def _double_initializer(literal: str) -> str | None:
     """A Java ``double`` initializer, or ``None`` if there is no safe one."""
-    if literal.upper() in _ZERO_FIGURATIVES:
+    if literal.upper() in ZERO_FIGURATIVES:
         return "0.0"
     match = _INTEGER_RE.match(literal)
     if match is not None:
@@ -89,7 +93,7 @@ def _double_initializer(literal: str) -> str | None:
 
 def _string_initializer(literal: str) -> str | None:
     """A Java ``String`` initializer, or ``None`` if there is no safe one."""
-    if literal.upper() in _SPACE_FIGURATIVES:
+    if literal.upper() in SPACE_FIGURATIVES:
         return '""'
     content = _quoted_content(literal)
     if content is None:

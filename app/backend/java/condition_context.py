@@ -24,6 +24,10 @@ Purpose:
       are *known* to be text becomes a COBOL alphanumeric comparison.
     * :func:`translate_condition_name` -- ``IF condition-name`` becomes a
       comparison of the parent item with each declared value.
+    * :func:`translate_figurative_operand` -- a figurative-constant operand
+      (``ZERO``/``ZEROS``/``ZEROES``, ``SPACE``/``SPACES``) becomes a
+      type-compatible Java literal instead of an undeclared identifier
+      reference (task #stage31; see that function's docstring).
 
 COBOL alphanumeric comparison
 -----------------------------
@@ -36,12 +40,35 @@ collating sequence and is left exactly as before.
 Nothing is guessed
 ------------------
 A comparison is treated as text only when **both** operands are known text (a
-quoted literal or a ``String`` field).  A numeric operand, an operand of
-unknown type (a FILE SECTION field the backend never declares, a figurative
-constant) or an ordering operator leaves the comparison exactly as it was.  A
-condition-name that cannot be translated safely -- unknown parent, a value of
-the wrong kind for the parent, a figurative constant with no proven Java
-equivalent -- is reported (``BE007``) and its ``IF`` omitted, as before.
+quoted literal, a ``String`` field, or -- task #stage31 -- a
+``SPACE``/``SPACES`` figurative constant, which is text regardless of
+context).  A numeric operand, an operand of unknown type (a FILE SECTION
+field the backend never declares) or an ordering operator leaves the
+comparison exactly as it was.  A condition-name that cannot be translated
+safely -- unknown parent, a value of the wrong kind for the parent, a
+figurative constant with no proven Java equivalent -- is reported (``BE007``)
+and its ``IF`` omitted, as before.
+
+Figurative-constant operands (task #stage31)
+---------------------------------------------
+``IF WS-BALANCE < ZEROS`` used to translate ``ZEROS`` the same way as any
+COBOL identifier -- lowerCamelCase, ``zeros`` -- an undeclared Java field
+reference that could never compile.  :func:`translate_figurative_operand`
+translates a ``ZERO``/``ZEROS``/``ZEROES`` or ``SPACE``/``SPACES`` operand
+using the *other* operand's already-known Java type (a field's declared type,
+a quoted literal, or a numeric literal's own shape) via the exact same
+:func:`~app.backend.java.value_initializer.translate_value_literal` this
+module already uses for ``VALUE`` clauses and level-88 values -- so ``ZERO``
+against an ``int`` field is ``0``, against a ``double`` field is ``0.0``, and
+``SPACES`` against a ``String`` field is ``""``.  When the other operand's
+type cannot be proven, or is the wrong family (``ZERO`` against text,
+``SPACES`` against a number), nothing is translated -- the comparison keeps
+its old, already-uncompilable shape rather than guess.  ``HIGH-VALUE(S)`` and
+``LOW-VALUE(S)`` are deliberately not translated: :mod:`value_initializer`
+has no Java representation for them either (a field declared ``VALUE
+HIGH-VALUES`` is left uninitialized today), so there is no existing,
+provably-correct Java equivalent to reuse, and inventing one (a sentinel
+sized to the field's ``PICTURE``) is a separate, unscoped feature.
 
 Author:
     Edith Stark
@@ -52,13 +79,18 @@ Project:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from app.backend.java.field_model import JavaField
 from app.backend.java.naming import to_java_field_name
-from app.backend.java.value_initializer import translate_value_literal
+from app.backend.java.value_initializer import (
+    SPACE_FIGURATIVES,
+    ZERO_FIGURATIVES,
+    translate_value_literal,
+)
 
 __all__ = [
     "COBOL_EQUALS",
@@ -69,6 +101,7 @@ __all__ = [
     "build_condition_names",
     "translate_comparison",
     "translate_condition_name",
+    "translate_figurative_operand",
 ]
 
 #: Name of the generated alphanumeric-equality helper.  It contains an
@@ -192,15 +225,87 @@ def build_condition_names(ast: Any) -> dict[str, ConditionName]:
 # ---------------------------------------------------------------------------
 
 
+_NUMERIC_LITERAL_RE = re.compile(r"^[+-]?\d+(\.\d+)?$")
+
+
 def _is_quoted(operand: str) -> bool:
     return len(operand) >= 2 and operand[0] in "'\"" and operand[-1] == operand[0]
 
 
 def _is_text(operand: str, context: ConditionContext) -> bool:
-    """``True`` only for a quoted literal or a field known to be a ``String``."""
+    """``True`` for a quoted literal, a field known to be a ``String``, or
+    (task #stage31) a ``SPACE``/``SPACES`` figurative constant -- always
+    text, independent of *context*."""
     if _is_quoted(operand):
         return True
+    if operand.upper() in SPACE_FIGURATIVES:
+        return True
     return context.field_types.get(to_java_field_name(operand)) == "String"
+
+
+def _operand_java_type(operand: str, context: ConditionContext) -> str | None:
+    """
+    The Java type *operand* is already known to be, for deciding what a
+    figurative constant being compared against it should become.
+
+    Returns ``"String"`` for a quoted literal, ``"int"``/``"double"`` for a
+    bare numeric literal (matching its own shape, never guessed from a
+    ``PICTURE`` this function has no access to), the declared type of a known
+    field, or ``None`` when nothing here proves a type -- an undeclared
+    field, a paragraph name, or another figurative constant.
+    """
+    if _is_quoted(operand):
+        return "String"
+    match = _NUMERIC_LITERAL_RE.match(operand)
+    if match is not None:
+        return "double" if match.group(1) else "int"
+    return context.field_types.get(to_java_field_name(operand))
+
+
+def translate_figurative_operand(
+    operand: str,
+    other: str,
+    java_operator: str,
+    context: ConditionContext | None,
+) -> str | None:
+    """
+    Translate a figurative-constant *operand* into a Java literal, using
+    *other* -- the operand it is being compared with -- to pick a
+    type-compatible value.
+
+    See the "Figurative-constant operands" section of this module's
+    docstring for the full rationale.
+
+    Args:
+        operand: The IR operand string that may be a figurative constant.
+        other: The IR string of the *other* side of the comparison.
+        java_operator: The Java operator (``==``, ``!=``, ``<`` ...) --
+            ``SPACE``/``SPACES`` is only translated for an equality
+            operator, matching :func:`translate_comparison`'s own
+            equality-only restriction on text (ordering on text is COBOL
+            collating-sequence semantics this backend does not model).
+        context: What is known about the operands' types, or ``None`` --
+            with no context nothing is translated, exactly as every other
+            optional-context translation in this module.
+
+    Returns:
+        A Java literal (``"0"``, ``"0.0"``, ``'""'``), or ``None`` when
+        *operand* is not one of the two translated figurative-constant
+        families, or *other*'s type cannot be proven compatible with it.
+    """
+    if context is None:
+        return None
+    upper = operand.upper()
+    other_type = _operand_java_type(other, context)
+    if upper in ZERO_FIGURATIVES:
+        if other_type in ("int", "double"):
+            return translate_value_literal(operand, other_type)
+        return None
+    if upper in SPACE_FIGURATIVES:
+        if other_type == "String" and java_operator in _EQUALITY_OPERATORS:
+            return translate_value_literal(operand, "String")
+        return None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +341,17 @@ def translate_comparison(
     # Deferred: statement_emitter -> control_flow_emitter -> this module.
     from app.backend.java.statement_emitter import _translate_operand
 
-    call = f"{COBOL_EQUALS}({_translate_operand(left)}, {_translate_operand(right)})"
+    def _operand(operand: str) -> str:
+        # A SPACE/SPACES operand is why _is_text let this comparison through
+        # in the first place when it has no declared field of its own --
+        # the generic identifier translator has no idea it means "".
+        if operand.upper() in SPACE_FIGURATIVES:
+            literal = translate_value_literal(operand, "String")
+            if literal is not None:
+                return literal
+        return _translate_operand(operand)
+
+    call = f"{COBOL_EQUALS}({_operand(left)}, {_operand(right)})"
     return call if java_operator == "==" else f"!{call}"
 
 

@@ -98,6 +98,13 @@ def _ctx(**types: str) -> ConditionContext:
         ("WS-CODE", "==", '"AUTO"', '_cobolEquals(wsCode, "AUTO")'),
         ("WS-CODE", "==", "'SAY \"HI\"'", '_cobolEquals(wsCode, "SAY \\"HI\\"")'),
         ("WS-GROUP", "==", "'ABC'", '_cobolEquals(wsGroup, "ABC")'),  # group = String
+        # SPACES/SPACE figurative constants are text too (task #stage31):
+        # a String field compared with one is a known-text comparison, same
+        # as any quoted literal.
+        ("WS-CODE", "==", "SPACES", '_cobolEquals(wsCode, "")'),
+        ("WS-CODE", "!=", "SPACES", '!_cobolEquals(wsCode, "")'),
+        ("SPACES", "==", "WS-CODE", '_cobolEquals("", wsCode)'),
+        ("WS-CODE", "==", "SPACE", '_cobolEquals(wsCode, "")'),
     ],
 )
 def test_known_text_equality_is_a_cobol_comparison(left, op, right, expected) -> None:
@@ -117,11 +124,16 @@ def test_known_text_equality_is_a_cobol_comparison(left, op, right, expected) ->
         ("WS-CODE", "==", "5"),
         ("WS-N", "==", "'A'"),
         ("WS-CODE", "==", "WS-N"),
-        # one side of unknown type (a FILE SECTION field, a figurative constant)
+        # one side of unknown type (a FILE SECTION field)
         ("FD-FLAG", "==", "'Y'"),
         ("'Y'", "==", "FD-FLAG"),
-        ("WS-CODE", "==", "SPACES"),
         ("FD-A", "==", "FD-B"),
+        # ZERO-family figurative constants are numeric, not text (task
+        # #stage31: SPACES/SPACE moved to the "known text" list above;
+        # ZERO/ZEROS/ZEROES against a *text* field is a type mismatch this
+        # module still declines to guess at)
+        ("WS-CODE", "==", "ZEROS"),
+        ("ZERO", "==", "WS-CODE"),
         # ordering is not translated (collating-sequence semantics)
         ("WS-CODE", ">", "'A'"),
         ("WS-CODE", "<=", "WS-OTHER"),
