@@ -233,7 +233,7 @@ def _dataframe_with_column(at: AppTest, column: str):
 
 
 def _load_and_select(at: AppTest, filename: str = "MAIN.cbl") -> AppTest:
-    at.text_input(key="manual_ws_input").set_value("ws-1")
+    at.text_input(key="manual_ws_input").set_value("ws-1").run()
     at.button(key="load_workspace_button").click().run()
     at.selectbox(key="file_select").set_value(filename).run()
     return at
