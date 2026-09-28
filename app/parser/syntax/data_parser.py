@@ -39,9 +39,16 @@ Responsibilities:
 Non-responsibilities:
     - LINKAGE SECTION, LOCAL-STORAGE, SCREEN SECTION, REPORT SECTION
       parsing. (FILE SECTION is supported -- task #stage27.)
-    - OCCURS, REDEFINES, RENAMES (66), COMP, COMP-3, INDEXED BY,
-      JUSTIFIED, SYNCHRONIZED clauses.
-    - COPY book expansion.
+    - RENAMES (66), INDEXED BY, JUSTIFIED, SYNCHRONIZED, BLANK WHEN
+      ZERO, SIGN clauses. (OCCURS's cardinality is captured -- task
+      #stage32. REDEFINES's base-name is captured -- task #stage39;
+      deriving a redefining group's child values from it is a
+      semantic/backend concern, not this parser's. USAGE/COMP/COMP-3
+      and their aliases are captured -- task #stage41.)
+    - COPY book expansion -- happens upstream of this parser entirely
+      (task #stage45, :class:`~app.parser.resolver.copybook.CopybookExpander`,
+      run by ``AnalysisService.analyze_file`` before the lexer even sees
+      the source), so no ``COPY`` token ever reaches this class.
     - Semantic analysis.
     - Statement or expression parsing.
 
@@ -247,12 +254,17 @@ def _is_fraction(point: Token, digits: Token) -> bool:
     )
 
 
-# Data-item clauses this parser recognises but cannot represent, because
-# ElementaryItemNode carries only `picture` and `value`.  They are
-# consumed with an explicit diagnostic rather than being swallowed into
-# the picture string.  Representing them properly needs new AST fields —
-# see the module docstring's Non-responsibilities.
-#: Usage representations, which may follow USAGE [IS] as its operand.
+# Data-item clauses this parser recognises. Most (RENAMES, JUSTIFIED,
+# SYNCHRONIZED, BLANK WHEN ZERO, SIGN) still cannot be represented and
+# are consumed with an explicit diagnostic rather than being swallowed
+# into the picture string. OCCURS, REDEFINES, and USAGE are the
+# exceptions — each has a dedicated parse method
+# (`_parse_occurs_clause` / `_parse_redefines_clause` /
+# `_parse_usage_clause`) and a real AST field, so no diagnostic is
+# recorded for them; the word sets below still list them, because they
+# remain valid clause/picture-string boundary markers.
+#: Usage representations, which may follow USAGE [IS] as its operand,
+#: or appear bare with no leading USAGE keyword.
 _USAGE_WORDS: frozenset[str] = frozenset(
     {
         "COMP",
@@ -274,6 +286,15 @@ _USAGE_WORDS: frozenset[str] = frozenset(
         "POINTER",
     }
 )
+
+#: task #stage41: the token set that opens a USAGE clause, either the
+#: ``USAGE`` keyword itself or a bare usage-word (no leading ``USAGE`` --
+#: the form the real training corpus uses exclusively). Checked ahead of
+#: :data:`_UNMODELLED_CLAUSE_WORDS` in :meth:`DataDivisionParser
+#: ._parse_elementary_or_group`, exactly like ``OCCURS``/``REDEFINES``
+#: already are, so :meth:`DataDivisionParser._parse_usage_clause` is
+#: reached instead of the generic opaque skip.
+_USAGE_CLAUSE_WORDS: frozenset[str] = frozenset({"USAGE"}) | _USAGE_WORDS
 
 _UNMODELLED_CLAUSE_WORDS: frozenset[str] = frozenset(
     {
@@ -1229,49 +1250,89 @@ class DataDivisionParser:
             ParserError: If a required clause token is absent.
         """
         stream = state.stream
-        tok = stream.current()
 
         picture: str | None = None
         value: str | None = None
+        occurs: int | None = None
+        redefines: str | None = None
+        usage: str | None = None
 
-        # Check for PIC / PICTURE clause.  Only PIC is a reserved lexer
-        # word; the PICTURE long form and the optional IS both arrive as
-        # IDENTIFIER, so a TokenType.KEYWORD gate rejected PICTURE
-        # outright and let IS leak into the picture string
-        # (task #104, F-03 and F-04).
-        if matches_grammar_word(tok, _PICTURE_WORDS):
-            stream.advance()  # consume PIC/PICTURE
+        # Clauses that may precede VALUE, admitted in any order (task
+        # #stage32). PIC and OCCURS may legitimately appear in either
+        # order in real COBOL ("PIC 9(5) OCCURS 10 TIMES" and
+        # "OCCURS 10 TIMES PIC 9(5)" are both valid) -- this used to
+        # check for PIC only as the very first clause, so an OCCURS
+        # preceding it fell into the generic unmodelled-clause skip
+        # below, whose trailing-token consumption had no stop condition
+        # for PIC and swallowed the whole "OCCURS 10 TIMES PIC 9(5)" run
+        # as one unit, discarding the PIC clause along with it -- not
+        # merely losing OCCURS's own cardinality, but destroying the
+        # item's entire type (it became an untyped GroupItemNode
+        # instead of an ElementaryItemNode). This loop admits either
+        # order and calls :meth:`_parse_occurs_clause` instead of the
+        # generic skip specifically for OCCURS, so its cardinality is
+        # captured and its own trailing-token consumption stops at PIC.
+        while True:
+            tok = stream.current()
 
-            # IS is optional between PIC and the picture string
-            if matches_grammar_word(stream.current(), _IS_WORD):
-                stream.advance()  # consume IS
+            # Check for PIC / PICTURE clause.  Only PIC is a reserved
+            # lexer word; the PICTURE long form and the optional IS both
+            # arrive as IDENTIFIER, so a TokenType.KEYWORD gate rejected
+            # PICTURE outright and let IS leak into the picture string
+            # (task #104, F-03 and F-04).
+            if picture is None and matches_grammar_word(tok, _PICTURE_WORDS):
+                stream.advance()  # consume PIC/PICTURE
 
-            pic_tok = stream.current()
-            if pic_tok.type is TokenType.EOF:
-                raise ParserError(
-                    f"expected picture string after PIC for {name!r}",
-                    line=pic_tok.position.line,
-                    column=pic_tok.position.column,
-                    offset=pic_tok.position.offset,
-                )
-            if pic_tok.type not in (
-                TokenType.IDENTIFIER,
-                TokenType.KEYWORD,
-                TokenType.PIC,
-                TokenType.NUMBER,
-            ):
-                raise ParserError(
-                    f"expected picture string after PIC for {name!r}, "
-                    f"got {pic_tok.lexeme!r}",
-                    line=pic_tok.position.line,
-                    column=pic_tok.position.column,
-                    offset=pic_tok.position.offset,
-                )
-            picture = self._read_picture_string(state)
+                # IS is optional between PIC and the picture string
+                if matches_grammar_word(stream.current(), _IS_WORD):
+                    stream.advance()  # consume IS
 
-        # Clauses this parser recognises but cannot represent (USAGE,
-        # REDEFINES, OCCURS, ...) may appear either side of VALUE.
-        self._skip_unmodelled_clauses(state, name)
+                pic_tok = stream.current()
+                if pic_tok.type is TokenType.EOF:
+                    raise ParserError(
+                        f"expected picture string after PIC for {name!r}",
+                        line=pic_tok.position.line,
+                        column=pic_tok.position.column,
+                        offset=pic_tok.position.offset,
+                    )
+                if pic_tok.type not in (
+                    TokenType.IDENTIFIER,
+                    TokenType.KEYWORD,
+                    TokenType.PIC,
+                    TokenType.NUMBER,
+                ):
+                    raise ParserError(
+                        f"expected picture string after PIC for {name!r}, "
+                        f"got {pic_tok.lexeme!r}",
+                        line=pic_tok.position.line,
+                        column=pic_tok.position.column,
+                        offset=pic_tok.position.offset,
+                    )
+                picture = self._read_picture_string(state)
+                continue
+
+            if occurs is None and tok.lexeme.upper() == "OCCURS":
+                occurs = self._parse_occurs_clause(state, name)
+                continue
+
+            if redefines is None and tok.lexeme.upper() == "REDEFINES":
+                redefines = self._parse_redefines_clause(state, name)
+                continue
+
+            if usage is None and matches_grammar_word(tok, _USAGE_CLAUSE_WORDS):
+                usage = self._parse_usage_clause(state, name)
+                continue
+
+            # Every other clause this parser recognises but cannot
+            # represent (JUSTIFIED, SYNCHRONIZED, BLANK WHEN ZERO, SIGN,
+            # RENAMES) -- unchanged, still a single opaque skip with no
+            # PIC-stop awareness (out of this stage's scope; see
+            # :meth:`_skip_one_unmodelled_clause`).
+            if matches_grammar_word(tok, _UNMODELLED_CLAUSE_WORDS):
+                self._skip_one_unmodelled_clause(state, name)
+                continue
+
+            break
 
         # Check for VALUE clause (only meaningful for elementary items)
         if matches_grammar_word(stream.current(), _VALUE_WORD):
@@ -1328,8 +1389,27 @@ class DataDivisionParser:
                 value += stream.current().lexeme
                 stream.advance()  # the fraction digits
 
-        # ...and again after VALUE (e.g. "PIC 9(4) VALUE 0 COMP-3.").
-        self._skip_unmodelled_clauses(state, name)
+        # ...and again after VALUE (e.g. "PIC 9(4) VALUE 0 COMP-3.", or,
+        # less commonly, "... VALUE 0 OCCURS 5." -- the original code
+        # already defensively re-checked unmodelled clauses on either
+        # side of VALUE; OCCURS gets the same treatment here for
+        # symmetry, task #stage32). No PIC re-check here: PIC parsing
+        # happens once, before VALUE, exactly as it always has.
+        while True:
+            tok = stream.current()
+            if occurs is None and tok.lexeme.upper() == "OCCURS":
+                occurs = self._parse_occurs_clause(state, name)
+                continue
+            if redefines is None and tok.lexeme.upper() == "REDEFINES":
+                redefines = self._parse_redefines_clause(state, name)
+                continue
+            if usage is None and matches_grammar_word(tok, _USAGE_CLAUSE_WORDS):
+                usage = self._parse_usage_clause(state, name)
+                continue
+            if matches_grammar_word(tok, _UNMODELLED_CLAUSE_WORDS):
+                self._skip_one_unmodelled_clause(state, name)
+                continue
+            break
 
         # Consume terminating period
         end: Position = stream.current().position
@@ -1343,6 +1423,9 @@ class DataDivisionParser:
                 name=name,
                 picture=picture,
                 value=value,
+                occurs=occurs,
+                redefines=redefines,
+                usage=usage,
             )
 
         # No PIC → group item
@@ -1351,20 +1434,34 @@ class DataDivisionParser:
             end_position=end,
             level=level,
             name=name,
+            occurs=occurs,
+            redefines=redefines,
+            usage=usage,
         )
 
     # ------------------------------------------------------------------
     # Unmodelled data-item clauses
     # ------------------------------------------------------------------
 
-    def _skip_unmodelled_clauses(self, state: ParserState, name: str) -> None:
+    def _skip_one_unmodelled_clause(self, state: ParserState, name: str) -> None:
         """
-        Record and consume data-item clauses the AST cannot represent.
+        Record and consume exactly one data-item clause the AST cannot
+        represent: RENAMES, JUSTIFIED, SYNCHRONIZED, BLANK WHEN ZERO, or
+        SIGN. ``OCCURS``, ``REDEFINES``, and ``USAGE`` are deliberately
+        excluded — the caller (:meth:`_parse_elementary_or_group`) checks
+        for each of them first and routes to :meth:`_parse_occurs_clause`
+        / :meth:`_parse_redefines_clause` / :meth:`_parse_usage_clause`
+        instead, so their values can be captured (tasks #stage32,
+        #stage39, #stage41); this method is reached for ``USAGE`` only in
+        the doubled-clause edge case (a second ``USAGE``/``COMP*`` on the
+        same item, after :attr:`usage` is already set), where the
+        USAGE-operand-consuming branch below still applies.
 
         :class:`~app.parser.ast.data_items.ElementaryItemNode` carries
-        only ``picture`` and ``value``.  It has no field for USAGE,
-        REDEFINES, OCCURS, JUSTIFIED, SYNCHRONIZED, BLANK WHEN ZERO or
-        SIGN, so those clauses cannot be represented.
+        only ``picture``, ``value``, ``occurs`` (task #stage32``),
+        ``redefines`` (task #stage39), and ``usage`` (task #stage41). It
+        has no field for RENAMES, JUSTIFIED, SYNCHRONIZED, BLANK WHEN
+        ZERO, or SIGN, so those clauses cannot be represented.
 
         Before this method existed they were not skipped either — they
         were absorbed into the picture string, producing values such as
@@ -1373,8 +1470,13 @@ class DataDivisionParser:
         string correct, and recording a diagnostic keeps the information
         loss explicit rather than silent.
 
-        Each clause is consumed up to the next clause word, the
-        terminating period, or EOF.
+        The clause is consumed up to the next clause word, the
+        terminating period, or EOF. Unlike :meth:`_parse_occurs_clause`,
+        this does *not* additionally stop at a following PIC/PICTURE
+        word — that fix is scoped to OCCURS specifically (task #stage32
+        found only an OCCURS-before-PIC defect, not a general one for
+        every unmodelled clause; widening it was not investigated and
+        is deliberately left alone here rather than assumed safe).
 
         Args:
             state: Active parser state.
@@ -1382,45 +1484,264 @@ class DataDivisionParser:
         """
         stream = state.stream
 
-        while matches_grammar_word(stream.current(), _UNMODELLED_CLAUSE_WORDS):
-            clause_token = stream.advance()
-            clause = clause_token.lexeme.upper()
+        clause_token = stream.advance()
+        clause = clause_token.lexeme.upper()
 
+        logger.debug(
+            "DataDivisionParser: clause {!r} on {!r} is not represented "
+            "in the AST; skipping it.",
+            clause,
+            name,
+        )
+        state.recovery_manager.record_error(
+            message=(
+                f"{clause_token.lexeme!r} clause on {name!r} is not "
+                "represented in the AST and was skipped"
+            ),
+            error_token=clause_token,
+            context=RecoveryContext.WORKING_STORAGE_SECTION,
+            code="SYN200",
+        )
+
+        # "USAGE [IS] COMP-3" is a single clause whose operand is
+        # itself a usage word, so consume that operand here rather
+        # than letting the caller report it as a second clause.
+        if clause == "USAGE":
+            if matches_grammar_word(stream.current(), _IS_WORD):
+                stream.advance()
+            if matches_grammar_word(stream.current(), _USAGE_WORDS):
+                stream.advance()
+
+        # Consume this clause's remaining operands.
+        while not stream.eof():
+            tok = stream.current()
+            if tok.type in (TokenType.EOF, TokenType.PERIOD):
+                break
+            if matches_grammar_word(tok, _UNMODELLED_CLAUSE_WORDS):
+                break
+            if matches_grammar_word(tok, _VALUE_WORD):
+                break
+            stream.advance()
+
+    def _parse_occurs_clause(self, state: ParserState, name: str) -> int | None:
+        """
+        Parse an ``OCCURS n [TIMES]`` clause and return its declared
+        cardinality (task #stage32).
+
+        Both ``OCCURS n`` and ``OCCURS n TIMES`` are accepted — ``TIMES``
+        is optional real-COBOL syntax and is simply consumed when
+        present, never required. Everything else an OCCURS clause can
+        carry — ``INDEXED BY``, ``ASCENDING``/``DESCENDING KEY``,
+        ``DEPENDING ON`` (variable-length tables) — remains
+        unrepresented and is skipped exactly as the whole clause used to
+        be, via the same trailing-token consumption every other
+        :data:`_UNMODELLED_CLAUSE_WORDS` member already uses. All of
+        that is deliberately out of this stage's scope.
+
+        Unlike :meth:`_skip_one_unmodelled_clause`, this clause's
+        trailing-token consumption *also* stops at a PIC/PICTURE word,
+        in addition to the usual boundaries (period, VALUE, another
+        unmodelled clause). That is what fixes the OCCURS-before-PIC
+        defect: without it, ``OCCURS 10 TIMES PIC 9(5)`` swallowed the
+        ``PIC 9(5)`` clause as though it were more OCCURS operands,
+        destroying the element's entire type (it became an untyped
+        group item instead of a numeric one) rather than merely losing
+        OCCURS's own cardinality. This fix is intentionally scoped to
+        OCCURS alone — the generic unmodelled-clause skip (REDEFINES,
+        SIGN, COMP-3, ...) is left exactly as it was; a same-shaped
+        defect for one of those (if any) was not investigated and is
+        out of this stage's scope.
+
+        Args:
+            state: Active parser state; cursor on ``OCCURS``.
+            name:  The data-name being parsed, used in the diagnostic.
+
+        Returns:
+            The declared integer cardinality, or ``None`` if no valid
+            count token followed ``OCCURS`` (a malformed clause; the
+            AST records "OCCURS seen, cardinality unknown" rather than
+            guessing).
+        """
+        stream = state.stream
+        clause_token = stream.advance()  # consume OCCURS
+
+        count: int | None = None
+        count_tok = stream.current()
+        if count_tok.type is TokenType.NUMBER:
+            try:
+                count = int(count_tok.lexeme)
+            except ValueError:  # pragma: no cover — NUMBER tokens are always digits
+                count = None
+            else:
+                stream.advance()
+                if matches_grammar_word(stream.current(), {"TIMES"}):
+                    stream.advance()
+
+        logger.debug(
+            "DataDivisionParser: clause 'OCCURS' on {!r} is not represented "
+            "in the AST; skipping it (cardinality {!r} captured separately).",
+            name,
+            count,
+        )
+        state.recovery_manager.record_error(
+            message=(
+                f"{clause_token.lexeme!r} clause on {name!r} is not "
+                "represented in the AST and was skipped"
+            ),
+            error_token=clause_token,
+            context=RecoveryContext.WORKING_STORAGE_SECTION,
+            code="SYN200",
+        )
+
+        while not stream.eof():
+            tok = stream.current()
+            if tok.type in (TokenType.EOF, TokenType.PERIOD):
+                break
+            if matches_grammar_word(tok, _PICTURE_WORDS):
+                break
+            if matches_grammar_word(tok, _UNMODELLED_CLAUSE_WORDS):
+                break
+            if matches_grammar_word(tok, _VALUE_WORD):
+                break
+            stream.advance()
+
+        return count
+
+    def _parse_redefines_clause(self, state: ParserState, name: str) -> str | None:
+        """
+        Parse ``REDEFINES base-name`` (task #stage39), returning the
+        uppercased base item's data-name.
+
+        Unlike every other clause :data:`_UNMODELLED_CLAUSE_WORDS` still
+        opaquely skips, ``REDEFINES``'s entire grammar is exactly one
+        operand -- the base item's name -- so there is nothing left to
+        lose by parsing it structurally instead of discarding it: no
+        ``SYN200`` "not represented" diagnostic is recorded here, because
+        it now genuinely is represented (on
+        :attr:`~app.parser.ast.data_items.ElementaryItemNode.redefines` /
+        :attr:`~app.parser.ast.data_items.GroupItemNode.redefines`).
+
+        Args:
+            state: Active parser state; cursor on ``REDEFINES``.
+            name:  The data-name being parsed (the redefining item's own
+                name), used only if a future diagnostic needs it.
+
+        Returns:
+            The base item's uppercased data-name, or ``None`` if no
+            identifier followed ``REDEFINES`` (a malformed clause --
+            nothing is guessed).
+        """
+        stream = state.stream
+        stream.advance()  # consume REDEFINES
+
+        base_tok = stream.current()
+        if base_tok.type is not TokenType.IDENTIFIER:
             logger.debug(
-                "DataDivisionParser: clause {!r} on {!r} is not represented "
-                "in the AST; skipping it.",
-                clause,
+                "DataDivisionParser: 'REDEFINES' on {!r} has no base-name "
+                "identifier; leaving redefines unset.",
+                name,
+            )
+            return None
+
+        stream.advance()  # consume the base-name identifier
+        return base_tok.lexeme.upper()
+
+    def _parse_usage_clause(self, state: ParserState, name: str) -> str | None:
+        """
+        Parse ``USAGE [IS] usage-word`` or a bare ``usage-word`` (task
+        #stage41), returning the uppercased usage-word exactly as
+        written (e.g. ``"COMP-3"``, ``"BINARY"``).
+
+        Both forms are valid COBOL; the real training corpus
+        (``data/sources/phase6-v2/packed_decimal.cbl``) uses the bare
+        form exclusively (``PIC 9(8) COMP VALUE ...``, ``PIC S9(9)V99
+        COMP-3 VALUE ...``), never a leading ``USAGE`` keyword. Alias
+        normalisation (``BINARY`` -> ``COMP``, ``PACKED-DECIMAL`` ->
+        ``COMP-3``, ``COMPUTATIONAL-3`` -> ``COMP-3``, ...) is
+        deliberately *not* done here -- it happens once, downstream, in
+        :meth:`~app.parser.semantic.type_builder.TypeBuilder.usage_from_string`,
+        so this method stays a faithful transcription of the source.
+
+        Unlike every other clause :data:`_UNMODELLED_CLAUSE_WORDS` still
+        opaquely skips, ``USAGE``'s entire grammar is exactly one
+        operand -- the usage-word itself -- so there is nothing left to
+        lose by parsing it structurally instead of discarding it: no
+        ``SYN200`` "not represented" diagnostic is recorded here,
+        because it now genuinely is represented (on
+        :attr:`~app.parser.ast.data_items.ElementaryItemNode.usage` /
+        :attr:`~app.parser.ast.data_items.GroupItemNode.usage`). This
+        never changes generated Java (field types derive from ``picture``
+        alone) -- a purely representational fix.
+
+        Args:
+            state: Active parser state; cursor on ``USAGE`` or on a bare
+                usage-word.
+            name:  The data-name being parsed, used only if a future
+                diagnostic needs it.
+
+        Returns:
+            The uppercased usage-word, or ``None`` if ``USAGE``/``USAGE
+            IS`` was not followed by a recognised usage-word (a
+            malformed clause -- nothing is guessed).
+        """
+        stream = state.stream
+        tok = stream.current()
+
+        if tok.lexeme.upper() != "USAGE":
+            # A bare usage-word with no leading USAGE keyword.
+            stream.advance()
+            return tok.lexeme.upper()
+
+        usage_tok = tok
+        stream.advance()  # consume USAGE
+
+        if matches_grammar_word(stream.current(), _IS_WORD):
+            stream.advance()  # consume IS
+
+        word_tok = stream.current()
+        if not matches_grammar_word(word_tok, _USAGE_WORDS):
+            # Malformed -- ``USAGE``/``USAGE IS`` with no recognised
+            # operand following. Still diagnosed (SYN200, matching the
+            # pre-#stage41 behavior for every unmodelled clause): a
+            # malformed clause is not represented either, so silence
+            # here would be a real regression in diagnostic honesty, not
+            # an improvement.
+            logger.debug(
+                "DataDivisionParser: 'USAGE' on {!r} has no recognised "
+                "usage-word operand; leaving usage unset.",
                 name,
             )
             state.recovery_manager.record_error(
                 message=(
-                    f"{clause_token.lexeme!r} clause on {name!r} is not "
+                    f"{usage_tok.lexeme!r} clause on {name!r} is not "
                     "represented in the AST and was skipped"
                 ),
-                error_token=clause_token,
+                error_token=usage_tok,
                 context=RecoveryContext.WORKING_STORAGE_SECTION,
                 code="SYN200",
             )
-
-            # "USAGE [IS] COMP-3" is a single clause whose operand is
-            # itself a usage word, so consume that operand here rather
-            # than letting the loop report it as a second clause.
-            if clause == "USAGE":
-                if matches_grammar_word(stream.current(), _IS_WORD):
-                    stream.advance()
-                if matches_grammar_word(stream.current(), _USAGE_WORDS):
-                    stream.advance()
-
-            # Consume this clause's remaining operands.
+            # Consume whatever garbage follows up to the next real
+            # boundary (period / VALUE / another clause word), exactly
+            # like :meth:`_skip_one_unmodelled_clause` already does for
+            # every other unmodelled clause -- otherwise a malformed
+            # operand (e.g. ``USAGE IS FOOBAR``) leaks ``FOOBAR`` onto
+            # the stream, which the caller does not expect here and
+            # which then fails the terminating-period check, abandoning
+            # the whole data item instead of gracefully losing only this
+            # one clause.
             while not stream.eof():
-                tok = stream.current()
-                if tok.type in (TokenType.EOF, TokenType.PERIOD):
+                garbage = stream.current()
+                if garbage.type in (TokenType.EOF, TokenType.PERIOD):
                     break
-                if matches_grammar_word(tok, _UNMODELLED_CLAUSE_WORDS):
+                if matches_grammar_word(garbage, _UNMODELLED_CLAUSE_WORDS):
                     break
-                if matches_grammar_word(tok, _VALUE_WORD):
+                if matches_grammar_word(garbage, _VALUE_WORD):
                     break
                 stream.advance()
+            return None
+
+        stream.advance()  # consume the usage-word
+        return word_tok.lexeme.upper()
 
     # ------------------------------------------------------------------
     # Picture-string accumulator

@@ -66,6 +66,7 @@ from app.ai.orchestration.models import AICapability
 from app.ai.orchestration.service import AIAnalysisOrchestrator
 from app.ai.providers.errors import LLMProviderUnavailableError
 
+from app.analysis.dependencies.data_flow import build_data_flow_graph
 from app.analysis.dependencies.graph import DependencyGraph
 from app.analysis.dependencies.models import STRUCTURAL_DEPENDENCY_TYPES
 from app.analysis.dependencies.resolver import WorkspaceDependencyResolver
@@ -88,6 +89,7 @@ from app.api.schemas.analysis import (
     AnalysisResponse,
     AnalysisSourceMetadata,
     AnalysisStatus,
+    FlowResponse,
 )
 from app.ai.results.normalization import normalize_result
 from app.api.schemas.ai import AIResultResponse
@@ -315,6 +317,7 @@ async def analyze_source(
     # ------------------------------------------------------------------
     dependency_summary = None
     dependency_graph = None
+    data_flow_graph = None
     business_rules = None
     if result.ast is not None:
         program_name = source_path.stem.upper()
@@ -377,6 +380,11 @@ async def analyze_source(
                 for edge in graph.edges
             ],
         )
+
+        # ------------------------------------------------------------------
+        # Compute Data Flow Graph (task #stage49)
+        # ------------------------------------------------------------------
+        data_flow_graph = FlowResponse(**build_data_flow_graph(result).to_dict())
 
         # ------------------------------------------------------------------
         # Extract Business Rules
@@ -487,6 +495,7 @@ async def analyze_source(
         dependencies=serialized_dependencies,
         dependency_summary=dependency_summary,
         dependency_graph=dependency_graph,
+        data_flow_graph=data_flow_graph,
         business_rules=business_rules,
         error=str(result.error) if result.error is not None else None,
         ai_analysis=ai_analysis,

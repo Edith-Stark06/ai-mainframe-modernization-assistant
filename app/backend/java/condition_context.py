@@ -109,6 +109,7 @@ __all__ = [
     "ConditionName",
     "build_condition_context",
     "build_condition_names",
+    "operand_java_type",
     "translate_comparison",
     "translate_condition_name",
     "translate_figurative_operand",
@@ -259,10 +260,16 @@ def _is_text(operand: str, context: ConditionContext) -> bool:
     return context.field_types.get(to_java_field_name(operand)) == "String"
 
 
-def _operand_java_type(operand: str, context: ConditionContext) -> str | None:
+def operand_java_type(operand: str, context: ConditionContext) -> str | None:
     """
-    The Java type *operand* is already known to be, for deciding what a
-    figurative constant being compared against it should become.
+    The Java type *operand* is already known to be.
+
+    Originally scoped to deciding what a figurative constant being
+    compared against it should become; task #stage42 reuses it in
+    :func:`~app.backend.java.statement_emitter.emit_compute` to decide
+    whether a ``COMPUTE``'s result needs an explicit narrowing cast (a
+    ``double``-valued expression assigned to an ``int`` field, which
+    Java rejects without one, unlike COBOL's implicit truncate-on-store).
 
     Returns ``"String"`` for a quoted literal, ``"int"``/``"double"`` for a
     bare numeric literal (matching its own shape, never guessed from a
@@ -312,7 +319,7 @@ def translate_figurative_operand(
     if context is None:
         return None
     upper = operand.upper()
-    other_type = _operand_java_type(other, context)
+    other_type = operand_java_type(other, context)
     if upper in ZERO_FIGURATIVES:
         if other_type in ("int", "double"):
             return translate_value_literal(operand, other_type)
@@ -334,6 +341,8 @@ def translate_comparison(
     java_operator: str,
     right: str,
     context: ConditionContext | None,
+    left_subscript: Sequence[Any] = (),
+    right_subscript: Sequence[Any] = (),
 ) -> str | None:
     """
     Translate ``left <op> right`` as a COBOL text comparison, if it is one.
@@ -342,6 +351,10 @@ def translate_comparison(
         left / right: IR operand strings.
         java_operator: The Java operator (``==``, ``!=``, ``<`` ...).
         context: What is known about the operands' types, or ``None``.
+        left_subscript / right_subscript:
+            Zero or one structured ``IRSubscript`` (task #stage32/#stage33)
+            for *left*/*right*, when it is a table reference. Empty by
+            default so every pre-#stage33 caller is unaffected.
 
     Returns:
         ``_cobolEquals(l, r)`` / ``!_cobolEquals(l, r)`` when the operator is
@@ -357,7 +370,7 @@ def translate_comparison(
     # Deferred: statement_emitter -> control_flow_emitter -> this module.
     from app.backend.java.statement_emitter import _translate_operand
 
-    def _operand(operand: str) -> str:
+    def _operand(operand: str, subscripts: Sequence[Any]) -> str:
         # A SPACE/SPACES operand is why _is_text let this comparison through
         # in the first place when it has no declared field of its own --
         # the generic identifier translator has no idea it means "".
@@ -365,9 +378,12 @@ def translate_comparison(
             literal = translate_value_literal(operand, "String")
             if literal is not None:
                 return literal
-        return _translate_operand(operand)
+        return _translate_operand(operand, tuple(subscripts))
 
-    call = f"{COBOL_EQUALS}({_operand(left)}, {_operand(right)})"
+    call = (
+        f"{COBOL_EQUALS}("
+        f"{_operand(left, left_subscript)}, {_operand(right, right_subscript)})"
+    )
     return call if java_operator == "==" else f"!{call}"
 
 

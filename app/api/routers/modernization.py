@@ -125,7 +125,13 @@ def execute_modernization_intelligence(
         raise HTTPException(status_code=500, detail="Analysis failed")
 
     try:
-        result = analyze_modernization_intelligence(analysis_result)
+        source_text = source_path.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.error(f"Could not re-read source for cloud readiness: {e}")
+        source_text = None
+
+    try:
+        result = analyze_modernization_intelligence(analysis_result, source=source_text)
     except Exception as e:
         logger.error(f"Modernization intelligence failed for {source_path}: {e}")
         raise HTTPException(status_code=500, detail="Modernization intelligence failed")

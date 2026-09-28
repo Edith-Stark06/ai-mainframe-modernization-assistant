@@ -62,6 +62,7 @@ from app.api.schemas.dependencies import (
 )
 from app.api.schemas.rules import BusinessRuleResponse
 from app.api.schemas.ai import AIResultResponse, AICapabilityRequest
+from app.api.schemas.modernization import FlowResponse
 
 __all__ = [
     "AnalysisRequest",
@@ -72,6 +73,7 @@ __all__ = [
     "DependencyAnalysisSummaryResponse",
     "DependencyGraphResponse",
     "DependencyResponse",
+    "FlowResponse",
 ]
 
 
@@ -192,6 +194,10 @@ class AnalysisResponse(BaseModel):
         dependency_graph:
             Serialized dependency graph containing nodes and edges, or
             ``None`` if unavailable.
+        data_flow_graph:
+            Serialized data flow graph (paragraph <-> data item
+            read/write edges, task #stage49), or ``None`` if
+            unavailable.
         error:
             Human-readable error message, or ``None`` if the analysis
             succeeded.
@@ -308,6 +314,14 @@ class AnalysisResponse(BaseModel):
     dependency_graph: DependencyGraphResponse | None = Field(
         default=None,
         description="Serialized dependency graph containing nodes and edges, or null if unavailable.",
+    )
+    data_flow_graph: FlowResponse | None = Field(
+        default=None,
+        description=(
+            "Data flow graph (task #stage49): one node per paragraph and "
+            "per data item, one edge per VARIABLE_READ/VARIABLE_WRITE "
+            "dependency, or null if unavailable."
+        ),
     )
     business_rules: list[BusinessRuleResponse] | None = Field(
         default=None,

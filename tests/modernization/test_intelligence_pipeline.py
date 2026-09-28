@@ -35,6 +35,44 @@ def test_pipeline_reuses_supplied_flow(eligibility_analysis) -> None:
     assert r1.to_dict() == r2.to_dict()
 
 
+# ---------------------------------------------------------------------------
+# Cloud readiness wiring (task #stage48)
+# ---------------------------------------------------------------------------
+
+
+def test_cloud_readiness_omitted_without_source(eligibility_analysis) -> None:
+    """``AnalysisResult`` does not retain the raw source text, so without
+    an explicit *source* the assessment is omitted, not fabricated from
+    nothing."""
+    result = analyze_modernization_intelligence(eligibility_analysis)
+    assert result.cloud_readiness is None
+    assert result.to_dict()["cloud_readiness"] is None
+
+
+def test_cloud_readiness_present_when_source_supplied(eligibility_analysis) -> None:
+    from pathlib import Path
+
+    from app.modernization.cloud.models import CloudReadinessAssessment
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "phase4"
+        / "eligibility_rules.cbl"
+    ).read_text(encoding="utf-8")
+    result = analyze_modernization_intelligence(eligibility_analysis, source=source)
+    assert isinstance(result.cloud_readiness, CloudReadinessAssessment)
+    d = result.to_dict()["cloud_readiness"]
+    assert d is not None
+    assert d["tier"] in {
+        "CLOUD_READY",
+        "NEEDS_REFACTORING",
+        "REQUIRES_REARCHITECTURE",
+        "NOT_RECOMMENDED",
+    }
+    assert d["evidence"]
+
+
 def test_strategy_layer_consumes_rule_and_risk_layers(eligibility_analysis) -> None:
     result = analyze_modernization_intelligence(eligibility_analysis)
     # every referenced risk id resolves to a real risk
@@ -160,9 +198,33 @@ def test_complex_fixture_intelligence_shape(complex_analysis) -> None:
     # comparison grammar's operand check has never accepted (only
     # STRING/NUMBER/IDENTIFIER); `WA-STATUS(WS-IDX) NOT = 'C'`'s subject is
     # a subscripted operand, which the same check has also never accepted.
+    #
+    # Now 20 (task #stage32, structured OCCURS/subscript representation):
+    # line 323's `IF WA-STATUS(WS-IDX) = 'C' ... END-IF` used to fail to
+    # parse at all (`SYN005`, subscripted left operand -- confirmed
+    # directly by re-measuring the pre-stage32 fixture, not assumed) and
+    # was dropped by the parser's usual statement-level recovery. That
+    # recovery also silently swallowed the next, perfectly ordinary
+    # sibling statement in the same paragraph -- `IF TR-REVERSAL-FLAG =
+    # 'Y' ... END-IF` at line 327 -- exactly the same collateral-damage
+    # mechanism already documented above for the compound-condition and
+    # COMPUTE/EVALUATE-in-IF fixes. Both are now their own rules (new
+    # BR-008 "WA-STATUS = 'C'", new BR-009 "TR-REVERSAL-FLAG = 'Y'"),
+    # inserted before every prior rule from BR-008 onward (renumbering
+    # BR-008..018 -> BR-010..020, content unchanged). The old BR-016
+    # (`WA-BALANCE ( WS-IDX )`, flattened-string corruption in its own
+    # description -- confirmed directly on the pre-stage32 fixture) is
+    # the same rule as the new BR-018, now with the clean base name
+    # `WA-BALANCE` per this stage's AST/IR fix. Line 462's
+    # `IF WA-STATUS(WS-IDX) NOT = 'C'` is *not* newly parsed: it sits
+    # inside `5000-CALCULATE-EXPOSURE`'s `PERFORM VARYING` body, which
+    # remains unsupported and out of this stage's scope, so that whole
+    # loop body stays masked (confirmed directly: it contributes no new
+    # rule and the fixture's total syntax-diagnostic count is unaffected
+    # by it -- see tests/parser/test_unsupported_syntax_reporting.py).
     rules = result.business_rules
-    assert len(rules) == 18
-    assert [r.rule_id for r in rules] == [f"BR-{i:03d}" for i in range(1, 19)]
+    assert len(rules) == 20
+    assert [r.rule_id for r in rules] == [f"BR-{i:03d}" for i in range(1, 21)]
     assert all(r.source_locations for r in rules)
     assert all(0.0 <= r.confidence <= 1.0 for r in rules)
 

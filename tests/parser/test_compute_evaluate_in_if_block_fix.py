@@ -39,8 +39,16 @@ Non-responsibilities:
     - ``SEARCH`` (the other scope-opening verb) keeps its original,
       unbounded scan-to-next-period behavior — no test in this corpus or
       task exercises it inside an ``IF``/``ELSE`` block.
-    - Implementing COMPUTE/EVALUATE semantics — both remain entirely
-      unimplemented verbs; only *recovery* around them changed.
+    - Implementing COMPUTE/EVALUATE semantics — both remained entirely
+      unimplemented verbs at the time of this fix; only *recovery*
+      around them changed here. Task #stage35 later implemented COMPUTE
+      itself (for the grammar the 45-source corpus evidences); the
+      COMPUTE-specific assertions below were updated at that point to
+      match the new, correct ``ComputeStatementNode`` output instead of
+      the old ``SYN100`` skip, measured directly against the real
+      pipeline (not assumed) -- the EVALUATE-specific assertions are
+      untouched, since EVALUATE remains unimplemented and this recovery
+      mechanism is exactly what still protects it.
     - The identical defect pattern in ``PERFORM UNTIL`` bodies (a third,
       unfixed occurrence of the same statement-loop shape) — reported
       separately, not fixed here, per this task's explicit scope.
@@ -101,13 +109,20 @@ def test_if_compute_end_if_then_another_statement(tmp_path):
            DISPLAY WS-A.
 """
     result = _analyze(src, tmp_path)
+    # task #stage35: COMPUTE now parses (no diagnostic at all for this
+    # well-formed statement) instead of being skipped with SYN100 --
+    # measured directly: an unsubscripted `A = B + <literal>` form is
+    # squarely inside Stage 35's supported grammar.
     codes = [d.code for d in result.syntax_diagnostics]
-    assert codes == ["SYN100"]
-    assert "unsupported statement 'COMPUTE'" in result.syntax_diagnostics[0].message
+    assert codes == []
     assert _statement_types(result, "MAIN-PARA") == [
         "IfStatementNode",
         "DisplayStatementNode",
         "DisplayStatementNode",
+    ]
+    if_stmt = result.ast.procedure_division.paragraphs[0].statements[0]
+    assert [s.__class__.__name__ for s in if_stmt.then_statements] == [
+        "ComputeStatementNode"
     ]
 
 
@@ -129,15 +144,18 @@ def test_if_compute_else_compute_end_if_then_another_statement(tmp_path):
            DISPLAY WS-B.
 """
     result = _analyze(src, tmp_path)
+    # task #stage35: COMPUTE now parses; see the previous test's comment.
     codes = [d.code for d in result.syntax_diagnostics]
-    assert codes == ["SYN100"]
+    assert codes == []
     assert _statement_types(result, "MAIN-PARA") == [
         "IfStatementNode",
         "DisplayStatementNode",
     ]
     if_stmt = result.ast.procedure_division.paragraphs[0].statements[0]
     assert len(if_stmt.then_statements) == 1
-    assert len(if_stmt.else_statements) == 0  # COMPUTE itself is still unmodeled
+    assert [s.__class__.__name__ for s in if_stmt.else_statements] == [
+        "ComputeStatementNode"
+    ]  # task #stage35: COMPUTE in the ELSE branch is now modeled too
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +164,13 @@ def test_if_compute_else_compute_end_if_then_another_statement(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_compute_at_paragraph_level_unchanged(tmp_path):
+def test_compute_at_paragraph_level_now_parses(tmp_path):
+    """Renamed (task #stage35): this test originally asserted COMPUTE at
+    plain paragraph level stayed unmodeled ("unchanged" by the IF-block
+    recovery fix). COMPUTE itself is no longer unmodeled -- Stage 35
+    implemented it -- so the paragraph now keeps both statements instead
+    of only the DISPLAY that survived the old SYN100 skip. Measured
+    directly against the real pipeline, not assumed."""
     src = """       IDENTIFICATION DIVISION.
        PROGRAM-ID. T2.
        DATA DIVISION.
@@ -159,8 +183,11 @@ def test_compute_at_paragraph_level_unchanged(tmp_path):
 """
     result = _analyze(src, tmp_path)
     codes = [d.code for d in result.syntax_diagnostics]
-    assert codes == ["SYN100"]
-    assert _statement_types(result, "MAIN-PARA") == ["DisplayStatementNode"]
+    assert codes == []
+    assert _statement_types(result, "MAIN-PARA") == [
+        "ComputeStatementNode",
+        "DisplayStatementNode",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -267,10 +294,16 @@ def test_if_compute_integer_operands_then_statement(tmp_path):
            DISPLAY WS-B.
 """
     result = _analyze(src, tmp_path)
-    assert [d.code for d in result.syntax_diagnostics] == ["SYN100"]
+    # task #stage35: COMPUTE now parses -- `A + 2 * 3` is a plain
+    # +/* expression, squarely in the supported grammar.
+    assert [d.code for d in result.syntax_diagnostics] == []
     assert _statement_types(result, "MAIN-PARA") == [
         "IfStatementNode",
         "DisplayStatementNode",
+    ]
+    if_stmt = result.ast.procedure_division.paragraphs[0].statements[0]
+    assert [s.__class__.__name__ for s in if_stmt.then_statements] == [
+        "ComputeStatementNode"
     ]
 
 
@@ -291,10 +324,16 @@ def test_if_compute_decimal_literal_operands_then_statement(tmp_path):
            DISPLAY WS-B.
 """
     result = _analyze(src, tmp_path)
-    assert [d.code for d in result.syntax_diagnostics] == ["SYN100"]
+    # task #stage35: COMPUTE now parses -- a decimal literal operand is
+    # squarely in the supported grammar.
+    assert [d.code for d in result.syntax_diagnostics] == []
     assert _statement_types(result, "MAIN-PARA") == [
         "IfStatementNode",
         "DisplayStatementNode",
+    ]
+    if_stmt = result.ast.procedure_division.paragraphs[0].statements[0]
+    assert [s.__class__.__name__ for s in if_stmt.then_statements] == [
+        "ComputeStatementNode"
     ]
 
 
@@ -322,14 +361,18 @@ def test_nested_if_with_compute_in_inner_branch(tmp_path):
            DISPLAY WS-A.
 """
     result = _analyze(src, tmp_path)
-    assert [d.code for d in result.syntax_diagnostics] == ["SYN100"]
+    # task #stage35: COMPUTE now parses -- see the module docstring's
+    # non-responsibilities note.
+    assert [d.code for d in result.syntax_diagnostics] == []
     outer_if = result.ast.procedure_division.paragraphs[0].statements[0]
     assert [s.__class__.__name__ for s in outer_if.then_statements] == [
         "IfStatementNode",
         "DisplayStatementNode",
     ]
     inner_if = outer_if.then_statements[0]
-    assert inner_if.then_statements == ()  # COMPUTE itself stays unmodeled
+    assert [s.__class__.__name__ for s in inner_if.then_statements] == [
+        "ComputeStatementNode"
+    ]  # task #stage35: COMPUTE is now modeled at any nesting depth
     assert _statement_types(result, "MAIN-PARA") == [
         "IfStatementNode",
         "DisplayStatementNode",
@@ -392,8 +435,12 @@ def test_paragraph_boundary_after_if_compute_is_intact(tmp_path):
 """
     result = _analyze(src, tmp_path)
     counts = _paragraph_statement_counts(result)
+    # Top-level paragraph statement counts are unaffected either way --
+    # COMPUTE nests inside the IF's then_statements, never adds a
+    # top-level statement of its own. Only the diagnostic changes (task
+    # #stage35: COMPUTE now parses without a SYN100).
     assert counts == {"MAIN-PARA": 2, "NEXT-PARA": 2}
-    assert [d.code for d in result.syntax_diagnostics] == ["SYN100"]
+    assert [d.code for d in result.syntax_diagnostics] == []
 
 
 # ---------------------------------------------------------------------------
@@ -483,6 +530,11 @@ def test_critical_regression_statement_after_if_compute_survives(tmp_path):
         "DisplayStatementNode",
         "DisplayStatementNode",
     ]
+    # task #stage35: COMPUTE now parses -- no diagnostic at all, and the
+    # IF's then-branch now actually models the COMPUTE it lost before.
     codes = [d.code for d in result.syntax_diagnostics]
-    assert codes == ["SYN100"]
-    assert "COMPUTE" in result.syntax_diagnostics[0].message
+    assert codes == []
+    if_stmt = para.statements[0]
+    assert [s.__class__.__name__ for s in if_stmt.then_statements] == [
+        "ComputeStatementNode"
+    ]

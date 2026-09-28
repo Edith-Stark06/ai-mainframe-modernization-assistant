@@ -55,8 +55,16 @@ def test_data_record_is_generated_from_working_storage(elig_bundle):
     assert "wsAge" in p.files[rec_path]
 
 
-def test_unsupported_behavior_is_carried_forward(elig_bundle):
-    p = _project(elig_bundle)
+def test_unsupported_behavior_is_carried_forward(call_bundle):
+    # task #stage36: switched from elig_bundle to call_bundle -- see
+    # tests/java_modernization/test_architecture.py
+    # ::test_generator_stub_becomes_explicit_unsupported_behavior for why
+    # eligibility_rules.cbl no longer produces any BE009 diagnostic.
+    # `call_bundle`'s external `CALL "SUBPROG"` (no local paragraph, never
+    # outlined) still demonstrates a real, unresolved CALL/PERFORM target
+    # correctly carried forward as an unsupported behavior, unaffected by
+    # that stage.
+    p = _project(call_bundle)
     assert p.unsupported_behaviors
     assert any(u.diagnostic_code == "BE009" for u in p.unsupported_behaviors)
     assert p.generator_diagnostics

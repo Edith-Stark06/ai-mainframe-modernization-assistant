@@ -33,7 +33,6 @@ import pytest
 from app.analysis.serializers.ast import serialize_ast
 from app.analysis.service import AnalysisService
 from app.dataset.corpus import load_training_corpus
-from app.parser.lexer.lexer_exceptions import LexerError
 
 
 def card(text: str, seq: str = "", ind: str = " ", ident: str = "") -> str:
@@ -278,13 +277,18 @@ class TestWideMarginFilesAreNeverTruncated:
         assert "A" * 70 in result.java_source
 
 
-class TestContinuationRemainsAnExplicitLimitation:
-    def test_continued_literal_fails_loudly_instead_of_corrupting(
-        self, tmp_path: Path
-    ) -> None:
-        """Continuation lines are not supported; the failure must be visible."""
-        first = "000800" + " " + ("    DISPLAY '" + "A" * (65 - len("    DISPLAY '")))
-        cont = "000900" + "-" + "      'BBBB'."
+class TestContinuationSplicesTheLiteral:
+    """Task #stage43: a ``-`` in column 7 continuing a quoted literal used
+    to fail loudly (``LexerError``, the explicit, documented limitation
+    this class was originally named for) rather than corrupt anything.
+    It now splices the literal instead -- see
+    ``tests/parser/test_stage43_continuation_lines.py`` for the dedicated
+    lexer-level tests; this one confirms the same behavior through this
+    file's own fixed-format-card analysis path."""
+
+    def test_continued_literal_splices_instead_of_failing(self, tmp_path: Path) -> None:
+        first = card("    DISPLAY 'AAAA", seq="000800")
+        cont = card("    'BBBB'.", seq="000900", ind="-")
         lines = [
             card("IDENTIFICATION DIVISION.", seq="000100"),
             card("PROGRAM-ID. CONTP.", seq="000200"),
@@ -298,8 +302,9 @@ class TestContinuationRemainsAnExplicitLimitation:
             card("    STOP RUN.", seq="001000"),
         ]
         result = analyze(tmp_path, "\n".join(lines) + "\n")
-        assert not result.success
-        assert isinstance(result.error, LexerError)
+        assert result.success
+        assert result.error is None
+        assert 'System.out.println("AAAABBBB");' in result.java_source
 
 
 class TestCorpusIsNeverAltered:

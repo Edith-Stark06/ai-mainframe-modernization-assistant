@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, StringConstraints
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from typing_extensions import Annotated
 
 
@@ -169,7 +169,21 @@ class StrategyRecommendationResponse(BaseModel):
     confidence: float
 
 
+class CloudReadinessResponse(BaseModel):
+    """Serialisable form of
+    ``app.modernization.cloud.models.CloudReadinessAssessment`` (task
+    #stage48). Rule-based, evidence-driven -- there is no numeric score,
+    matching ``StrategyRecommendationResponse``'s own design."""
+
+    tier: str
+    rationale: str
+    evidence: List[str]
+    prerequisites: List[str]
+    confidence: float
+
+
 class ModernizationIntelligenceResponse(BaseModel):
     business_rules: List[Phase4BusinessRuleResponse]
     risks: List[ModernizationRiskResponse]
     strategies: List[StrategyRecommendationResponse]
+    cloud_readiness: Optional[CloudReadinessResponse] = None

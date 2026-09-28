@@ -95,10 +95,20 @@ def test_strategy_mapping_is_from_phase4_not_invented(elig_bundle):
     assert a.primary_strategy.strategy == elig_bundle.strategy["primary"]["strategy"]
 
 
-def test_generator_stub_becomes_explicit_unsupported_behavior(elig_bundle):
-    a = build_architecture(elig_bundle)
-    # eligibility's PERFORM'd paragraphs are emitted as TODO stubs by the
-    # existing generator -> must be surfaced, not hidden
+def test_generator_stub_becomes_explicit_unsupported_behavior(call_bundle):
+    # task #stage36: eligibility_rules.cbl's three PERFORM'd paragraphs
+    # used to all be emitted as TODO stubs (BE009) by the generator --
+    # this fixture's own switch, not this test's subject, is what
+    # changed: task #stage36 now outlines every PERFORM-to-local-paragraph
+    # target into a real method, so eligibility no longer produces any
+    # BE009 diagnostic at all. This test's real subject -- an unresolved
+    # CALL/PERFORM target still correctly surfacing as an explicit
+    # unsupported behavior, not silently hidden -- is unaffected by that
+    # stage (an external CALL is never outlined); `call_bundle`
+    # (`CALL "SUBPROG"`, no local paragraph, no PERFORM at all) still
+    # demonstrates it directly, matching
+    # test_external_call_becomes_an_interface_and_assumption below.
+    a = build_architecture(call_bundle)
     assert any(u.diagnostic_code == "BE009" for u in a.unsupported_behaviors)
     for u in a.unsupported_behaviors:
         assert "NOT" in u.impact.upper()

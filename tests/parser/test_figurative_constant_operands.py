@@ -296,16 +296,23 @@ def test_fixture_still_has_the_one_spaces_occurrence_line() -> None:
     not _FIXTURE.exists(), reason="shared workspace fixture not present"
 )
 def test_fixture_diagnostic_total_is_unchanged_by_this_fix() -> None:
-    """``4000-PROCESS-TRANSACTIONS`` fails at its own ``READ ... AT END`` /
+    """``4000-PROCESS-TRANSACTIONS`` failed at its own ``READ ... AT END`` /
     ``NOT AT END`` block (line 256) -- a separate, pre-existing, unrelated
-    parser gap -- well before parsing ever reaches line 263's ``IF
-    WS-CURRENT-ACCOUNT NOT = SPACES``. This *stage's* (Stage 26's) fix
-    therefore changes nothing observable about this fixture at lines
-    256/263, confirmed directly rather than assumed -- still exactly one
-    diagnostic at 256, nothing at 263 (line 263 sits inside the ``READ``'s
-    ``NOT AT END`` clause, which is skipped as one unsupported statement
-    whole -- task #stage28 below -- so it is never separately reached
-    either).
+    parser gap at the time this test was written -- well before parsing
+    ever reached line 263's ``IF WS-CURRENT-ACCOUNT NOT = SPACES``. This
+    *stage's* (Stage 26's) fix therefore changed nothing observable about
+    this fixture at lines 256/263 at the time -- back then, still exactly
+    one diagnostic at 256 (``READ``, whole statement skipped), nothing at
+    263 (inside the skipped ``NOT AT END`` clause, never separately
+    reached).
+
+    That premise no longer holds as of task #stage40 (below): ``READ`` now
+    has a real parser/AST node, so line 256 produces zero diagnostics, and
+    line 263's ``IF`` is reached and captured on the AST as one of the
+    ``READ``'s ``not_at_end_statements`` -- still never lowered to IR
+    (unreachable under this backend's always-end-of-file model), but no
+    longer hidden behind a skip either. Confirmed directly: neither line
+    appears in ``result.syntax_diagnostics`` any more.
 
     The total moved 47 -> 49 for a wholly unrelated reason: task #stage27
     (FILE SECTION support) reaches this fixture's own 3-``FD`` FILE SECTION
@@ -326,16 +333,86 @@ def test_fixture_diagnostic_total_is_unchanged_by_this_fix() -> None:
     gracefully instead of raising a hard parser error -- the vague "expected
     statement in PERFORM block" becomes the precise "unsupported statement
     'READ'", the same upgrade every other unsupported-statement location
-    already had. The *total* stays 49 (one `SYN005` for `SYN100`, net
+    already had. The *total* stayed 49 (one `SYN005` for `SYN100`, net
     zero) purely by coincidence with task #stage27's own +2 -- see
     ``tests/parser/test_perform_until_unsupported_statement_fix.py`` for the
-    full accounting of this stage's own fix."""
+    full accounting of this stage's own fix.
+
+    49 -> 48 (task #stage32) is a fourth, again unrelated, reason: this
+    fixture's ``4100-FIND-ACCOUNT``/``5000-CALCULATE-EXPOSURE`` paragraphs
+    (subscripted table lookups over ``WS-ACCOUNT-ENTRY OCCURS 50 TIMES``,
+    lines 126-140-ish) contain ``IF`` conditions on a subscripted operand
+    (``WA-ACCOUNT-ID(WS-IDX)``, ``WA-STATUS(WS-IDX)``) -- this grammar's
+    comparison-operand check had never accepted one, so each produced its
+    own latent ``SYN005 "expected comparison operator"``, and the whole
+    enclosing ``IF``/``END-IF`` (with its ``THEN``/``ELSE`` bodies) was
+    dropped. Task #stage32 (docs/...) teaches the condition parser to
+    recognise a single-dimension, literal- or identifier-subscripted
+    reference as one structured operand instead, so those ``IF``s now
+    parse -- one fewer ``SYN005``, net -1. Confirmed directly, not assumed:
+    ``statements_parsed`` (not asserted by this test, but checked directly
+    against the fixture while diagnosing this change) rose from 60 to 68 --
+    the same "walking past a fixed gate reveals previously-unreachable
+    code" pattern this fixture's own history above already shows for the
+    ``NOT =`` fix, not new instability. Lines 256/263 (this test's own
+    subject) are untouched by this change -- confirmed directly, not
+    assumed -- since they sit in an unrelated paragraph reached (and still
+    gated by the separate ``READ ... AT END`` gap) regardless of this fix.
+
+    48 -> 47 (task #stage34) is a fifth, again unrelated, reason:
+    ``PERFORM VARYING`` (this fixture has four occurrences, none at lines
+    256/263) previously misparsed entirely -- the token right after
+    ``PERFORM`` being ``VARYING`` (not ``UNTIL``) fell into the inline
+    single-target PERFORM branch, producing ``PerformStatementNode(
+    target="VARYING")`` and leaving the loop variable
+    (``WS-IDX``/``WS-IDX2``) stranded on the stream as an unexpected
+    token -- 4 latent ``SYN001 "unexpected token"`` diagnostics, one per
+    occurrence. Task #stage34 adds a real ``PerformVaryingStatementNode``/
+    parser, removing all 4 (net -4); it also newly reaches two
+    ``EXIT PERFORM`` statements nested inside those loops' bodies (task
+    #stage34's real corpus/fixture-shape discovery, previously
+    unreachable for the same reason) and correctly reports each as its
+    own ``SYN100 "unsupported statement 'EXIT PERFORM'"`` (net +2) instead
+    of letting the stray ``PERFORM`` token that used to follow a
+    mis-skipped bare ``EXIT`` corrupt the surrounding parse -- see
+    ``tests/parser/test_stage34_perform_varying.py`` for the parser-level
+    tests. Net -2 (48 -> 47). Confirmed directly, not assumed. Lines
+    256/263 remain untouched.
+
+    47 -> 44 (task #stage35) is a sixth, again unrelated, reason: COMPUTE
+    is now implemented (for the grammar the 45-source corpus evidences).
+    4 of this fixture's 6 real COMPUTE statements now parse into a
+    ``ComputeStatementNode`` instead of a ``SYN100`` skip (net -4); the
+    other 2 use syntax Stage 35 does not implement (an intrinsic
+    ``FUNCTION`` operand, the ``ROUNDED`` clause) and are unaffected --
+    see ``tests/parser/test_unsupported_syntax_reporting.py
+    ::test_complex_fixture_surfaces_49_syntax_diagnostics`` for the full
+    accounting. None of the 6 are at lines 256/263. Pinned here as 44,
+    not re-derived, for the same reason 49 was pinned above.
+
+    44 -> 41 (task #stage40) is the ``READ`` implementation, and this is
+    the one delta in this fixture's history that *does* touch line 256
+    directly: line 256's own ``SYN100 "unsupported statement 'READ'"``
+    (and the two sibling ``READ`` occurrences at lines 191/229) are gone
+    -- all three now parse into a real ``ReadStatementNode`` (net -3).
+    See ``tests/parser/test_perform_until_unsupported_statement_fix.py
+    ::test_fixture_diagnostic_total_and_statements_parsed_move_by_the_read_fix``
+    for the full accounting. Line 263 still produces no diagnostic of its
+    own (unchanged from before -- see the updated class docstring above).
+
+    41 -> 24 (task #stage41) is a seventh, again unrelated, reason: this
+    fixture's 17 real ``COMP-3`` occurrences (none at lines 256/263) each
+    previously produced their own ``SYN200 "'COMP-3' clause ... not
+    represented"``; all 17 now attach a real ``UsageType.COMP_3`` via
+    ``ElementaryItemNode.usage`` with zero diagnostics (net -17) -- see
+    ``tests/parser/test_unsupported_syntax_reporting.py
+    ::test_complex_fixture_surfaces_49_syntax_diagnostics`` for the full
+    accounting. Lines 256/263 remain untouched."""
     result = AnalysisService().analyze_file(_FIXTURE)
-    assert len(result.syntax_diagnostics) == 49
-    codes_at_256 = [str(d.code) for d in result.syntax_diagnostics if d.line == 256]
-    assert codes_at_256 == ["SYN100"]
-    codes_at_263 = [str(d.code) for d in result.syntax_diagnostics if d.line == 263]
-    assert codes_at_263 == []
+    assert len(result.syntax_diagnostics) == 24
+    codes_by_line = {d.line: str(d.code) for d in result.syntax_diagnostics}
+    assert 256 not in codes_by_line
+    assert 263 not in codes_by_line
 
 
 # ===========================================================================

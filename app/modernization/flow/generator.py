@@ -25,9 +25,9 @@ Purpose:
     recovers per-paragraph structure from
     :attr:`~app.ir.instructions.IRInstruction.paragraph` (task #109) and
     reconstructs real control flow by interpreting the existing
-    ``IRIf``/``IRElse``/``IREndIf``/``IRPerformUntil``/``IREndPerform``
-    marker sequence with a single forward pass and a small nesting
-    stack -- the same marker sequence
+    ``IRIf``/``IRElse``/``IREndIf``/``IRPerformUntil``/``IRPerformVarying``
+    (task #stage34)/``IREndPerform`` marker sequence with a single
+    forward pass and a small nesting stack -- the same marker sequence
     :mod:`app.backend.java.generator` already interprets to produce
     nested Java ``if``/``while`` blocks. No IR restructuring, no parser
     changes, no Java backend changes.
@@ -97,6 +97,7 @@ from app.ir.instructions import (
     IRAdd,
     IRAssignment,
     IRCall,
+    IRCompute,
     IRDisplay,
     IRDivide,
     IRElse,
@@ -108,6 +109,7 @@ from app.ir.instructions import (
     IRMove,
     IRMultiply,
     IRPerformUntil,
+    IRPerformVarying,
     IRReturn,
     IRSubtract,
 )
@@ -370,6 +372,12 @@ class FlowGenerationVisitor(IRVisitor):
     def visit_divide(self, node: IRDivide) -> None:
         self._sequential_node(node, f"DIVIDE {node.left} INTO {node.right}")
 
+    def visit_compute(self, node: IRCompute) -> None:
+        """COMPUTE is a plain straight-line statement (task #stage35):
+        no branch, so it gets the same sequential-node treatment as
+        MOVE/ADD/etc. -- link, create, advance."""
+        self._sequential_node(node, f"COMPUTE {node.result} = {node.expression_text()}")
+
     def visit_assignment(self, node: IRAssignment) -> None:
         self._sequential_node(node, f"{node.result} = {node.value}")
 
@@ -407,6 +415,28 @@ class FlowGenerationVisitor(IRVisitor):
         decision_id = self._new_node(
             NodeType.DECISION,
             f"PERFORM UNTIL {node.left} {node.operator} {node.right}",
+        )
+        self._link_pending_to(decision_id)
+        self._loop_stack.append(_LoopFrame(decision_id=decision_id))
+        self._pending = [(decision_id, EdgeType.LOOP_BODY)]
+
+    def visit_perform_varying(self, node: IRPerformVarying) -> None:
+        """
+        ``PERFORM VARYING var FROM f BY b UNTIL cond ... END-PERFORM``
+        (task #stage34).
+
+        Mirrors :meth:`visit_perform_until` exactly -- one ``DECISION``
+        node, the loop body reached via ``LOOP_BODY``, closed by the same
+        :meth:`visit_end_perform` (COBOL's own ``END-PERFORM`` closes
+        either form identically, and ``_LoopFrame``/``_loop_stack`` do not
+        care which opener pushed them). Only the label text differs, to
+        show the full loop header instead of just its exit condition.
+        """
+        self._maybe_enter_paragraph(node)
+        decision_id = self._new_node(
+            NodeType.DECISION,
+            f"PERFORM VARYING {node.varying_variable} FROM {node.from_value} "
+            f"BY {node.by_value} UNTIL {node.left} {node.operator} {node.right}",
         )
         self._link_pending_to(decision_id)
         self._loop_stack.append(_LoopFrame(decision_id=decision_id))

@@ -463,12 +463,30 @@ def test_5_low_confidence_requires_human_review_no_auto_apply(
 
 
 def test_6_unsupported_behavior_is_inconclusive_never_speculative(
-    elig_bundle, elig_architecture, elig_project, tmp_path
+    elig_bundle_all_stubs, elig_architecture_all_stubs, elig_project_all_stubs, tmp_path
 ):
+    # task #stage36: switched from elig_bundle/elig_architecture/
+    # elig_project to the *_all_stubs fixtures (see conftest.py). This
+    # test's subject is unsupported behavior forcing INCONCLUSIVE, never a
+    # speculative repair -- eligibility_rules.cbl's three PERFORM'd
+    # paragraphs used to all be BE009 stubs, satisfying it directly. Task
+    # #stage36 now outlines every PERFORM-to-local-paragraph target into a
+    # real method, so plain elig_bundle no longer has any unsupported
+    # behavior at all (measured directly: the loop now reaches
+    # HUMAN_REVIEW there, not INCONCLUSIVE, since there is real code to
+    # evaluate) -- and no other simple real fixture reproduces "every
+    # extractable rule is unsupported" either (a plain external-CALL-only
+    # fixture with no conditional logic reaches a vacuous PASS instead,
+    # and a real corpus source combining IF-rules with an external CALL,
+    # e.g. billing_engine.cbl, now has some genuinely executable rules
+    # alongside the unsupported one, reaching HUMAN_REVIEW too -- both
+    # measured directly, not assumed). ``elig_bundle_all_stubs`` freezes
+    # eligibility's own real pre-#stage36 Java output so this test keeps
+    # exercising its actual subject precisely.
     loop, board = run_quality_loop(
-        elig_bundle,
-        elig_architecture,
-        elig_project,
+        elig_bundle_all_stubs,
+        elig_architecture_all_stubs,
+        elig_project_all_stubs,
         workspace_root=tmp_path,
         compiler=JavaCompiler(tmp_path),
         provider=_NeverCalledProvider(),

@@ -33,7 +33,10 @@ Responsibilities:
       :meth:`SourceNormalizer.normalize_preserving_positions`).
 
 Non-responsibilities:
-    - Continuation line handling.
+    - Continuation line handling -- column 7's ``-`` indicator survives
+      normalization untouched, but splicing a continued literal onto the
+      one it continues is :class:`~app.parser.lexer.lexer.CobolLexer`'s
+      job (task #stage43), not this stage's.
     - COPY book expansion.
     - REPLACE processing.
     - EXEC SQL / EXEC CICS handling.
@@ -215,8 +218,12 @@ class SourceNormalizer:
           is blanked (compiled as a comment, the IBM default without
           ``WITH DEBUGGING MODE``).  A ``D`` directly followed by text is
           code that starts in column 7 and is kept.
-        * A ``-`` (continuation) indicator is left untouched;
-          continuation lines are not supported by this stage.
+        * A ``-`` (continuation) indicator is left untouched; this stage
+          has no continuation-line responsibility of its own (splicing a
+          continued literal across the line break is
+          :class:`~app.parser.lexer.lexer.CobolLexer`'s job, task
+          #stage43) -- it only needs column 7 to survive normalization
+          exactly where it is, which it already does.
         * Columns 73–80 (program-ID area) are blanked -- unless the file
           shows it is not an 80-column card image.  If any code line has
           text beyond column 80, or a word straddling the column 72/73

@@ -17,6 +17,14 @@ Responsibilities:
     - Recognize punctuation / operator symbols.
     - Skip whitespace (spaces, tabs).
     - Skip fixed-format and free-format comments.
+    - Skip a ``>>SOURCE FREE|FIXED`` compiler directive line whole (task
+      #stage44) -- see :meth:`CobolLexer._is_source_directive`. The
+      directive has already done its job upstream, in
+      :class:`~app.parser.lexer.format_detector.FormatDetector`; this
+      lexer's only remaining concern is not letting the literal ``>>``
+      characters corrupt the token stream.
+    - Splice a nonnumeric literal across a fixed-format continuation line
+      (task #stage43) -- see :meth:`CobolLexer._try_resume_continued_string`.
     - Preserve the exact source position of every token.
     - Append a terminal EOF token to the stream.
     - Raise :class:`~app.parser.lexer.lexer_exceptions.LexerError` for
@@ -24,7 +32,16 @@ Responsibilities:
 
 Non-responsibilities:
     - Parsing, AST construction, semantic analysis.
-    - Continuation-line handling.
+    - Continuation of anything other than a nonnumeric (quoted) literal --
+      a PICTURE character-string continuation is unevidenced and out of
+      scope; ordinary statement text never needed continuation-line
+      support to begin with, since this lexer already reads tokens
+      straight across an unmarked line break.
+    - Any ``>>`` compiler directive other than ``>>SOURCE`` (``>>IF``,
+      ``>>DEFINE``, ``>>CALL``, ...) -- conditional compilation is a
+      separate, unevidenced, unscoped feature; such a directive line is
+      not specially recognised and will corrupt the token stream exactly
+      as ``>>SOURCE`` used to before task #stage44.
     - COPY expansion or REPLACE processing.
     - EXEC SQL / EXEC CICS handling.
 
@@ -114,6 +131,10 @@ _WORD_START: frozenset[str] = frozenset(
 # when another word character follows it.
 _WORD_CONTINUE_NO_HYPHEN: frozenset[str] = _WORD_CONTINUE - {"-"}
 
+#: Width of the fixed-format sequence-number area (columns 1-6), i.e. the
+#: number of characters preceding the column-7 indicator (task #stage43).
+_SEQUENCE_AREA_WIDTH: int = 6
+
 
 class CobolLexer:
     """
@@ -165,6 +186,32 @@ class CobolLexer:
             # ------------------------------------------------------------------
             if ch in (" ", "\t", "\r", "\n"):
                 scanner.advance()
+                continue
+
+            # ------------------------------------------------------------------
+            # Skip a '>>SOURCE FREE|FIXED' compiler directive line (task
+            # #stage44): it has already done its job upstream, in
+            # FormatDetector._detect_by_directive, which reads the raw
+            # source directly and is unaffected by whatever the lexer
+            # does with the line afterward. Neither normalizer variant
+            # strips it (FREE format is passed through unchanged; FIXED
+            # format has no special case for it, since a directive line
+            # is ordinary code as far as column stripping is concerned),
+            # so without this the '>' character reached the operator
+            # branch below as two stray OPERATOR_GT tokens followed by
+            # 'SOURCE'/'FREE' as IDENTIFIER tokens sitting where
+            # IDENTIFICATION DIVISION was expected -- confirmed directly:
+            # the parser consumed zero tokens and produced no AST, no
+            # diagnostic, and no raised error, only a silently empty
+            # analysis result. ``>>`` has no other meaning anywhere in
+            # COBOL's grammar, so intercepting it here is unambiguous.
+            # ------------------------------------------------------------------
+            if (
+                ch == ">"
+                and scanner.peek() == ">"
+                and self._is_source_directive(scanner)
+            ):
+                self._skip_to_eol(scanner)
                 continue
 
             # ------------------------------------------------------------------
@@ -329,6 +376,48 @@ class CobolLexer:
                 break
             scanner.advance()
 
+    @staticmethod
+    def _is_source_directive(scanner: CharacterScanner) -> bool:
+        """
+        Pure lookahead: ``True`` if the scanner, positioned at the first
+        ``>`` of a ``>>`` pair, is looking at a ``>>SOURCE ...`` compiler
+        directive line (task #stage44).
+
+        Matches whatever follows ``>>`` up to end-of-line, case-
+        insensitively, once leading/trailing whitespace is stripped, and
+        accepts anything starting with ``SOURCE`` -- not only the exact
+        ``FREE``/``FIXED`` remainder
+        :func:`~app.parser.lexer.format_detector._detect_by_directive`
+        itself requires upstream. This method's only job is to keep a
+        recognised directive line from corrupting the token stream by
+        skipping it whole; it does not re-derive or act on the format
+        the directive names -- :class:`~app.parser.lexer.format_detector.FormatDetector`
+        already did that from the raw source, before normalization, so
+        by the time the lexer runs the format decision is already made
+        and this directive line's only remaining job is to be harmless.
+
+        No characters are consumed by this check.
+
+        Args:
+            scanner: Positioned at the first ``>`` of a ``>>`` pair
+                (caller has already confirmed ``peek(1) == ">"``).
+
+        Returns:
+            ``True`` if the rest of the line, after ``>>``, starts with
+            ``SOURCE`` (case-insensitively); ``False`` otherwise (in
+            which case the caller falls through to ordinary ``>``/``>>``
+            token handling).
+        """
+        chars: list[str] = []
+        i = 2
+        while True:
+            c = scanner.peek(i)
+            if c is None or c in ("\n", "\r"):
+                break
+            chars.append(c)
+            i += 1
+        return "".join(chars).strip().upper().startswith("SOURCE")
+
     def _read_string(self, scanner: CharacterScanner, filename: str) -> Token:
         """
         Read a quoted string literal from the scanner.
@@ -336,8 +425,18 @@ class CobolLexer:
         Supports single-quoted (``'...'``) and double-quoted (``"..."``)
         literals.  The opening and closing quotes are included in the lexeme.
 
+        Task #stage43: a literal that reaches end-of-line unclosed is no
+        longer unconditionally an error. :meth:`_try_resume_continued_string`
+        is given the chance to find a fixed-format continuation line
+        (``-`` in column 7) and splice its content directly onto the
+        literal, exactly as COBOL requires -- no space or newline is ever
+        inserted between the two fragments. See that method's docstring
+        for the full continuation grammar and this project's column-7
+        assumption.
+
         Raises:
-            LexerError: If the string is not closed before a newline or EOF.
+            LexerError: If the string is not closed before a newline with
+                no valid continuation line following it, or before EOF.
         """
         start_pos = self._position(scanner, filename)
         quote_char = scanner.current()
@@ -357,6 +456,8 @@ class CobolLexer:
                     position=start_pos,
                 )
             if ch in ("\n", "\r"):
+                if self._try_resume_continued_string(scanner, quote_char):
+                    continue
                 raise LexerError(
                     "unterminated string literal",
                     line=start_pos.line,
@@ -372,6 +473,100 @@ class CobolLexer:
             column=start_pos.column,
             offset=start_pos.offset,
         )
+
+    def _try_resume_continued_string(
+        self, scanner: CharacterScanner, quote_char: str
+    ) -> bool:
+        """
+        Try to resume an unterminated string literal on a fixed-format
+        continuation line (task #stage43).
+
+        Called with the scanner positioned exactly at the ``\\n``/``\\r``
+        that ended the literal's line unclosed. Per the ANSI/IBM fixed-
+        format continuation rule: a ``-`` in column 7 of the *next* line
+        marks it as continuing the previous one, and when what is being
+        continued is a nonnumeric literal, the first non-blank character
+        in Area A/B of that continuation line must be a quotation mark
+        matching the literal's own delimiter. That quotation mark is a
+        resumption marker only -- it is never itself part of the
+        literal's value -- and everything from the character after it
+        onward is appended *directly* to the literal with no space or
+        newline in between, exactly as if the line break had never
+        happened.
+
+        This assumes the source reached the lexer through
+        :meth:`~app.parser.lexer.normalizer.SourceNormalizer.normalize_preserving_positions`
+        (the analysis pipeline's own normalizer -- see
+        :meth:`app.analysis.service.AnalysisService.prepare_source`), which
+        keeps column 7 at column 7 rather than shifting it to column 1.
+        No source-format flag is threaded into :meth:`CobolLexer.tokenize`
+        to gate this: it is only ever consulted here, at a line break
+        inside an *already-unterminated* literal, a case that raised
+        :class:`~app.parser.lexer.lexer_exceptions.LexerError`
+        unconditionally before this method existed, so there is no
+        previously-working input this method could newly misinterpret --
+        it can only turn a guaranteed failure into either a correctly
+        spliced literal or a more specific failure.
+
+        Unevidenced by the 45-source training corpus (grep-confirmed: zero
+        occurrences of a ``-`` in column 7 across the full corpus) --
+        implemented directly from the standard grammar rather than a
+        corpus example, and covered by synthetic tests
+        (``tests/parser/test_stage43_continuation_lines.py``) rather than a
+        real-source regression test.
+
+        Args:
+            scanner: Positioned at the line-ending character.
+            quote_char: The literal's own delimiter (``'`` or ``"``), which
+                the continuation line's resumption quote must match.
+
+        Returns:
+            ``True`` if a valid continuation line was found and consumed,
+            leaving the scanner positioned at the first character of the
+            continued literal content (ready for the caller's own read
+            loop to resume). ``False`` if no valid continuation exists --
+            the scanner's position in that case does not matter, since the
+            caller always raises immediately.
+        """
+        # Consume exactly one line terminator (CR, LF, or CRLF), landing
+        # on column 1 of the next line.
+        if scanner.current() == "\r":
+            scanner.advance()
+        if scanner.current() == "\n":
+            scanner.advance()
+
+        # Columns 1-6 (the sequence-number area) must exist -- i.e. the
+        # line must be long enough to have a column 7 at all. Their
+        # content is never inspected; only their presence is, exactly
+        # like every other column-7 indicator check in this pipeline
+        # (see app.parser.lexer.normalizer._is_ignored_line).
+        for i in range(_SEQUENCE_AREA_WIDTH):
+            c = scanner.peek(i)
+            if c is None or c in ("\n", "\r"):
+                return False
+
+        if scanner.peek(_SEQUENCE_AREA_WIDTH) != "-":
+            return False
+
+        # Consume columns 1-7 (6 sequence-area characters + the '-'
+        # indicator itself).
+        for _ in range(_SEQUENCE_AREA_WIDTH + 1):
+            scanner.advance()
+
+        # Skip leading blanks in Area A/B up to the resumption quote.
+        while scanner.current() == " ":
+            scanner.advance()
+
+        if scanner.current() != quote_char:
+            # Malformed continuation: COBOL requires the first non-blank
+            # character after the '-' to be the matching quote. Nothing
+            # is guessed -- the caller raises its own "unterminated
+            # string literal" error at the literal's start, exactly as
+            # if this continuation line had never been found.
+            return False
+
+        scanner.advance()  # consume the resumption quote itself
+        return True
 
     def _read_number(self, scanner: CharacterScanner, filename: str) -> Token:
         """

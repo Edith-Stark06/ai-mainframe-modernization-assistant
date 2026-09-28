@@ -210,6 +210,33 @@ class VariableSymbol(Symbol):
             it (e.g. ``"'INITIAL'"``, ``"01"``, ``"00065000.00"``,
             ``"SPACES"``), or ``None`` when the item has no ``VALUE`` clause
             (group items and condition-names never carry one).
+        occurs:
+            The declared cardinality of an ``OCCURS n [TIMES]`` clause
+            (task #stage32), copied straight from
+            :attr:`~app.parser.ast.data_items.ElementaryItemNode.occurs`/
+            :attr:`~app.parser.ast.data_items.GroupItemNode.occurs` — never
+            recomputed. ``None`` for a symbol with no ``OCCURS`` clause.
+        redefines:
+            The base item's uppercased data-name from a ``REDEFINES
+            base-name`` clause (task #stage39), copied straight from
+            :attr:`~app.parser.ast.data_items.ElementaryItemNode.redefines`/
+            :attr:`~app.parser.ast.data_items.GroupItemNode.redefines`.
+            ``None`` for a symbol with no ``REDEFINES`` clause. See
+            :func:`~app.backend.java.generator._resolve_redefines_values`
+            for how a redefining group's elementary children derive an
+            initial ``value`` from the base symbol's own.
+        usage:
+            The uppercased ``USAGE`` clause operand (task #stage41),
+            copied straight from
+            :attr:`~app.parser.ast.data_items.ElementaryItemNode.usage`/
+            :attr:`~app.parser.ast.data_items.GroupItemNode.usage`.
+            ``None`` for a symbol with no ``USAGE`` clause (equivalent to
+            ``DISPLAY``). Read by
+            :meth:`~app.parser.semantic.type_builder.TypeBuilder._build_type`
+            via
+            :meth:`~app.parser.semantic.type_builder.TypeBuilder.usage_from_string`
+            to resolve the symbol's
+            :attr:`~app.parser.semantic.types.NumericType.usage`.
 
     Examples:
         >>> from app.parser.lexer.position import Position
@@ -231,6 +258,9 @@ class VariableSymbol(Symbol):
     picture: str | None = None
     cobol_type: CobolType | None = None
     value: str | None = None
+    occurs: int | None = None
+    redefines: str | None = None
+    usage: str | None = None
 
     @property
     def kind(self) -> SymbolKind:

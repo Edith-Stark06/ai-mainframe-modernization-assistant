@@ -175,6 +175,270 @@ class GenerationResult:
 _CONDITION_NAME_LEVEL = 88
 
 
+_CONDITION_NAME_LEVEL_FOR_STACK = 88
+
+
+def _resolve_array_occurs(symbols: list[VariableSymbol]) -> dict[str, int]:
+    """
+    Compute the ``OCCURS`` count that governs each symbol as a Java array
+    (task #stage33), keyed by uppercased COBOL name.
+
+    A symbol is governed by its *own* ``OCCURS`` clause when it has one
+    (the task's worked example: ``01 WS-ITEM PIC 9(3) OCCURS 5``). Failing
+    that, it is governed by the nearest **enclosing group's** ``OCCURS``
+    (the shape every real corpus source actually uses:
+    ``05 LINE-ITEM OCCURS 5 TIMES.`` with plain elementary children —
+    ``SKU-ID``, ``QUANTITY-ORDERED``, etc. — that carry no ``OCCURS`` of
+    their own). Without this second case, a subscripted reference to one of
+    those children (``SKU-ID(1)``) would index into a field the first case
+    alone still declares as a scalar -- an uncompilable Java array-index
+    into a non-array type.
+
+    *symbols* must be in COBOL declaration order (``SymbolTable.all_symbols``
+    guarantees this) so a plain level-number stack -- the same nesting
+    COBOL's own grammar defines, not a heuristic -- identifies each item's
+    enclosing groups. A level-88 condition-name governs nothing and does
+    not participate in the stack (it is not a data item in its own right).
+
+    Returns:
+        ``{COBOL_NAME: occurs_count}`` for every symbol that is itself, or
+        is nested inside, an ``OCCURS n`` item. A group symbol appears here
+        too (its own ``OCCURS``, if any) even though
+        :func:`build_fields_from_symbols` deliberately does not array-ify
+        it -- see that function's docstring.
+    """
+    result: dict[str, int] = {}
+    # Each entry is (level, occurs-or-None) for one currently-open ancestor.
+    stack: list[tuple[int, int | None]] = []
+
+    for sym in symbols:
+        if sym.level == _CONDITION_NAME_LEVEL_FOR_STACK:
+            continue
+
+        while stack and stack[-1][0] >= sym.level:
+            stack.pop()
+
+        governing = sym.occurs
+        if governing is None:
+            for _, ancestor_occurs in reversed(stack):
+                if ancestor_occurs is not None:
+                    governing = ancestor_occurs
+                    break
+
+        if governing is not None:
+            result[sym.name.upper()] = governing
+
+        stack.append((sym.level, sym.occurs))
+
+    return result
+
+
+def _quoted_string_content(literal: str | None) -> str | None:
+    """
+    Return the text between the delimiters of a quoted COBOL string
+    literal, or ``None`` if *literal* is ``None`` or not one (task
+    #stage39).
+
+    A small, deliberately duplicated rule rather than a reach into
+    :mod:`app.backend.java.value_initializer`'s own private, identical
+    check -- the same "duplicate a well-defined, stable, two-line rule
+    rather than couple to another module's underscore-prefixed helper"
+    choice :func:`~app.analysis.dependencies.analyzer.is_literal_operand`
+    already documents making for the same reason.
+    """
+    if (
+        literal is not None
+        and len(literal) >= 2
+        and literal[0] == literal[-1]
+        and literal[0] in "'\""
+    ):
+        return literal[1:-1]
+    return None
+
+
+def _resolve_redefines_values(
+    symbols: list[VariableSymbol],
+    diagnostics: list[BackendDiagnostic],
+) -> dict[str, str]:
+    """
+    Derive an initial ``VALUE`` literal for every elementary child of a
+    ``REDEFINES`` group, by slicing the redefined base item's own literal
+    ``VALUE`` at each child's byte offset within the group (task #stage39)
+    -- COBOL's own REDEFINES semantics: the redefining view shares the
+    base item's storage bytes, reinterpreted under a different layout.
+
+    Scope -- matches the one real corpus shape (``t_policy_redefines.cbl``:
+    ``05 AUTO-PAYLOAD REDEFINES POLICY-RAW-PAYLOAD.`` with plain
+    elementary children): only a *group* item tagged ``REDEFINES``, whose
+    base is a plain elementary item with a quoted-string ``VALUE``
+    literal, and whose own children are plain elementary items (no nested
+    group child -- not evidenced anywhere in the corpus). An elementary
+    item redefining another elementary item is captured on the AST/symbol
+    (:attr:`~app.parser.semantic.symbols.VariableSymbol.redefines`) but
+    has no children to derive here -- also unevidenced.
+
+    Each REDEFINES group's *direct* elementary children are identified
+    from the flat, declaration-ordered *symbols* list via the same
+    level-number stack :func:`_resolve_array_occurs` already established
+    -- COBOL's own nesting rule, not a heuristic, and not a second
+    AST-walking mechanism (:class:`~app.parser.ast.data_items.GroupItemNode`
+    never actually populates its own ``children`` tuple in this parser;
+    every existing ancestor/descendant query in this backend already goes
+    through the flat symbol list instead, and this one does too).
+
+    Graceful degrade (documented, never fabricated) -- each case appends
+    one ``BE013`` WARNING and contributes no entry for the affected
+    child/children, leaving that Java field with no initializer, exactly
+    the same fallback every other "no provably correct initializer" case
+    in this backend already uses:
+
+    * the base name does not resolve to a known symbol;
+    * the base has no ``VALUE`` clause, or its value is not a
+      quoted-string literal (a numeric base is not evidenced anywhere);
+    * a child's own PICTURE width cannot be resolved (no ``cobol_type``,
+      or it is itself a group) -- derivation stops for every remaining
+      child of that group, since their offsets are no longer trustworthy;
+    * a child's byte range would run past the end of the base's literal
+      -- a genuine, flagged, corpus-level width inconsistency between the
+      redefining group's own declared total size and the base item's,
+      not invented by this function. Derivation stops there too, but
+      every child fully *within* range keeps its correctly derived value.
+
+    Args:
+        symbols:
+            Every :class:`~app.parser.semantic.symbols.VariableSymbol`,
+            in COBOL declaration order (as
+            :meth:`~app.parser.semantic.context.SymbolTable.all_symbols`
+            already guarantees).
+        diagnostics:
+            Mutable list; ``BE013`` diagnostics appended on each degrade
+            case.
+
+    Returns:
+        ``{CHILD_NAME: raw_value_literal}`` -- the same raw-literal-text
+        shape :attr:`~app.parser.semantic.symbols.VariableSymbol.value`
+        already uses (a numeric child's entry is a plain digit string,
+        e.g. ``"02"``; an alphanumeric child's is single-quoted, e.g.
+        ``"'SEDAN     '"``), fed through the exact same
+        :func:`~app.backend.java.value_initializer.translate_value_literal`
+        every other ``VALUE`` clause already goes through in
+        :func:`build_fields_from_symbols` -- never a second initializer
+        pipeline. A slice that is not actually valid for the child's own
+        type (e.g. non-digit bytes sliced into a numeric child -- this
+        corpus's own ``t_policy_redefines.cbl`` data is not always
+        packed to align meaningfully with its own redefining views) is
+        still returned here; ``translate_value_literal`` itself is the
+        single place that already declines an unsafe literal, exactly as
+        it would for a hand-written ``VALUE`` clause with the same text.
+    """
+    from app.parser.semantic.types import AlphanumericType, NumericType
+
+    by_name: dict[str, VariableSymbol] = {s.name.upper(): s for s in symbols}
+
+    # Immediate (one-level-up) parent of every non-condition-name symbol,
+    # and that parent's direct children, via the identical level-number
+    # stack technique _resolve_array_occurs uses above.
+    children_of: dict[str, list[VariableSymbol]] = {}
+    stack: list[tuple[int, str]] = []  # (level, upper-cased name)
+    for sym in symbols:
+        if sym.level == _CONDITION_NAME_LEVEL_FOR_STACK:
+            continue
+        while stack and stack[-1][0] >= sym.level:
+            stack.pop()
+        parent_name = stack[-1][1] if stack else None
+        if parent_name is not None:
+            children_of.setdefault(parent_name, []).append(sym)
+        stack.append((sym.level, sym.name.upper()))
+
+    result: dict[str, str] = {}
+
+    for sym in symbols:
+        if not sym.redefines:
+            continue
+        group_name = sym.name.upper()
+        children = children_of.get(group_name, [])
+        if not children:
+            continue
+
+        base = by_name.get(sym.redefines)
+        if base is None:
+            diagnostics.append(
+                BackendDiagnostic(
+                    severity=BackendSeverity.WARNING,
+                    message=(
+                        f"REDEFINES base '{sym.redefines}' for '{sym.name}' "
+                        "was not found; no derived values for its children."
+                    ),
+                    code="BE013",
+                )
+            )
+            continue
+
+        base_content = _quoted_string_content(base.value)
+        if base_content is None:
+            diagnostics.append(
+                BackendDiagnostic(
+                    severity=BackendSeverity.WARNING,
+                    message=(
+                        f"REDEFINES base '{base.name}' has no quoted-string "
+                        f"VALUE literal; no derived values for '{sym.name}'"
+                        "'s children."
+                    ),
+                    code="BE013",
+                )
+            )
+            continue
+
+        offset = 0
+        for child in children:
+            cobol_type = child.cobol_type
+            width: int | None = None
+            if isinstance(cobol_type, NumericType):
+                width = cobol_type.digits
+            elif isinstance(cobol_type, AlphanumericType):
+                width = cobol_type.length
+
+            if width is None:
+                diagnostics.append(
+                    BackendDiagnostic(
+                        severity=BackendSeverity.WARNING,
+                        message=(
+                            f"REDEFINES child '{child.name}' of '{sym.name}' "
+                            "has no resolvable PICTURE width; stopping "
+                            "derivation for the remaining children."
+                        ),
+                        code="BE013",
+                    )
+                )
+                break
+
+            if offset + width > len(base_content):
+                diagnostics.append(
+                    BackendDiagnostic(
+                        severity=BackendSeverity.WARNING,
+                        message=(
+                            f"REDEFINES group '{sym.name}' declared width "
+                            f"exceeds base '{base.name}' size at "
+                            f"'{child.name}' (needs bytes {offset}-"
+                            f"{offset + width}, base has "
+                            f"{len(base_content)}); stopping derivation "
+                            "for the remaining children."
+                        ),
+                        code="BE013",
+                    )
+                )
+                break
+
+            slice_content = base_content[offset : offset + width]
+            if isinstance(cobol_type, NumericType):
+                result[child.name.upper()] = slice_content
+            else:
+                result[child.name.upper()] = f"'{slice_content}'"
+            offset += width
+
+    return result
+
+
 def build_fields_from_symbols(
     symbols: list[VariableSymbol],
     diagnostics: list[BackendDiagnostic] | None = None,
@@ -212,6 +476,28 @@ def build_fields_from_symbols(
        formatting.  A :class:`~app.parser.semantic.types.GroupType` symbol
        (also mapped to Java ``String``) gets none of these: it is not an
        elementary item and has no PICTURE of its own.
+    5. An **elementary** symbol (``NumericType``/``AlphanumericType``) that
+       is itself, or is nested inside, a fixed ``OCCURS n`` item (task
+       #stage33; see :func:`_resolve_array_occurs`) becomes a Java array:
+       ``java_type`` gets a trailing ``"[]"`` and, when it would otherwise
+       have no initializer, ``initial_value`` becomes ``"new <type>[n]"``.
+       A COBOL ``VALUE`` clause on the item itself is deliberately **not**
+       applied to the array (no per-element or fill-value semantics are
+       invented — see :attr:`~app.backend.java.field_model.JavaField.occurs`);
+       an item with both ``OCCURS`` and ``VALUE`` simply gets the plain
+       ``new <type>[n]`` allocation, exactly as an ``OCCURS`` item with no
+       ``VALUE`` does. A :class:`~app.parser.semantic.types.GroupType`
+       symbol is **never** array-ified even when it has its own ``OCCURS``
+       (e.g. ``05 LINE-ITEM OCCURS 5 TIMES.``) — only its elementary
+       descendants are, since the group itself has no single Java type an
+       array element could hold without a dedicated per-record class,
+       which is out of this stage's scope.
+    6. An elementary symbol that is a direct child of a ``REDEFINES``
+       group (task #stage39) has no ``VALUE`` clause of its own in the
+       evidenced corpus shape, but derives one from the redefined base
+       item's own literal ``VALUE`` via :func:`_resolve_redefines_values`
+       -- fed through step 3's identical ``translate_value_literal`` call,
+       never a second initializer pipeline.
 
     Args:
         symbols:
@@ -234,6 +520,8 @@ def build_fields_from_symbols(
         diagnostics = []
 
     result: list[JavaField] = []
+    array_occurs = _resolve_array_occurs(symbols)
+    redefines_values = _resolve_redefines_values(symbols, diagnostics)
 
     for sym in symbols:
         if sym.level == _CONDITION_NAME_LEVEL:
@@ -281,16 +569,35 @@ def build_fields_from_symbols(
         elif isinstance(cobol_type, AlphanumericType):
             length = cobol_type.length
 
+        # task #stage33: a fixed OCCURS elementary item (its own, or an
+        # enclosing group's) becomes a Java array. Groups are deliberately
+        # excluded -- see this function's own docstring, point 5.
+        occurs = array_occurs.get(sym.name.upper())
+        # task #stage39, point 6: a REDEFINES group's own child prefers
+        # its derived literal over its own (always-absent, in the
+        # evidenced shape) VALUE clause.
+        literal = redefines_values.get(sym.name.upper(), sym.value)
+        initial_value = translate_value_literal(literal, java_type)
+        if occurs is not None and isinstance(
+            cobol_type, (NumericType, AlphanumericType)
+        ):
+            element_type = java_type
+            java_type = f"{element_type}[]"
+            initial_value = f"new {element_type}[{occurs}]"
+        else:
+            occurs = None
+
         result.append(
             JavaField(
                 java_name=java_name,
                 java_type=java_type,
-                initial_value=translate_value_literal(sym.value, java_type),
+                initial_value=initial_value,
                 cobol_name=sym.name,
                 digits=digits,
                 decimal_places=decimal_places,
                 signed=signed,
                 length=length,
+                occurs=occurs,
             )
         )
 
@@ -390,26 +697,38 @@ def generate_with_diagnostics(
     # 2. Translate entry-block instructions into Java statements
     # ------------------------------------------------------------------
     context = build_condition_context(effective_fields, condition_names)
-    statements = _collect_statements(program, diagnostics, paragraph_order, context)
+    statements, paragraph_methods = _collect_statements(
+        program, diagnostics, paragraph_order, context
+    )
+    outlined_java_names = {name for name, _ in paragraph_methods}
 
     # ------------------------------------------------------------------
     # 2b. Discover CALL/PERFORM targets that have no generated method body.
     #     Each becomes an empty ``private void`` stub so the class compiles,
     #     and each raises a BE009 WARNING so the missing body is not silently
-    #     swallowed.  (The bodies of internal paragraphs are dropped upstream
-    #     of the backend; external sub-programs are separately compiled.)
+    #     swallowed. (task #stage36: a PERFORM target whose real instructions
+    #     were found in the IR is outlined into a genuine method instead --
+    #     see `paragraph_methods` above -- and is excluded here so it is
+    #     never *also* stubbed. Only a target that is still genuinely absent
+    #     -- an external sub-program, or a name that resolves to no
+    #     paragraph at all -- reaches this stub path.)
     # ------------------------------------------------------------------
-    stub_targets = _collect_call_targets(program)
-    for java_name, original in stub_targets:
+    stub_targets = [
+        (java_name, original, arg_count)
+        for java_name, original, arg_count in _collect_call_targets(program)
+        if java_name not in outlined_java_names
+    ]
+    for java_name, original, arg_count in stub_targets:
+        params = ", ".join(f"Object arg{i}" for i in range(arg_count))
         diagnostics.append(
             BackendDiagnostic(
                 severity=BackendSeverity.WARNING,
                 message=(
                     f"CALL/PERFORM target '{original}' has no generated method "
-                    f"body; emitting an empty stub 'private void {java_name}()'. "
-                    "The target is either an external sub-program or a paragraph "
-                    "whose body is not present in the IR; implement it in a "
-                    "follow-up task."
+                    f"body; emitting an empty stub 'private void "
+                    f"{java_name}({params})'. The target is either an external "
+                    "sub-program or a paragraph whose body is not present in "
+                    "the IR; implement it in a follow-up task."
                 ),
                 code="BE009",
             )
@@ -419,13 +738,21 @@ def generate_with_diagnostics(
     # 3. Render Java source
     # ------------------------------------------------------------------
     # The alphanumeric-equality helper is emitted only by a class that uses it.
+    all_statement_lines = statements + [
+        line for _, body in paragraph_methods for line in body
+    ]
     helpers = (
         list(COBOL_EQUALS_HELPER)
-        if any(f"{COBOL_EQUALS}(" in statement for statement in statements)
+        if any(f"{COBOL_EQUALS}(" in statement for statement in all_statement_lines)
         else []
     )
     source = _render_class(
-        class_name, effective_fields, statements, stub_targets, helpers
+        class_name,
+        effective_fields,
+        statements,
+        stub_targets,
+        helpers,
+        paragraph_methods,
     )
     logger.debug(
         "JavaGenerator: generated {} line(s) for class '{}'.",
@@ -537,9 +864,13 @@ def _matching_close(instructions: list[Any], start: int) -> int | None:
     """Index of the ``IREndIf``/``IREndPerform`` that closes the structured
     construct opened at ``instructions[start]``, or ``None`` if the IR is
     malformed (no matching close). Nested constructs are matched by type."""
-    from app.ir.instructions import IRIf, IRPerformUntil
+    from app.ir.instructions import IRIf, IRPerformUntil, IRPerformVarying
 
-    closers = {IRIf: "IREndIf", IRPerformUntil: "IREndPerform"}
+    closers = {
+        IRIf: "IREndIf",
+        IRPerformUntil: "IREndPerform",
+        IRPerformVarying: "IREndPerform",
+    }
     open_stack: list[str] = []
     for j in range(start, len(instructions)):
         instr = instructions[j]
@@ -563,7 +894,7 @@ def _collect_statements(
     diagnostics: list[BackendDiagnostic],
     paragraph_order: Sequence[str] | None = None,
     context: ConditionContext | None = None,
-) -> list[str]:
+) -> tuple[list[str], list[tuple[str, list[str]]]]:
     """
     Translate all instructions in the first entry basic block of the first
     function of the first module into Java statement strings.
@@ -585,8 +916,14 @@ def _collect_statements(
 
     Depth rules:
 
-    * :class:`~app.ir.instructions.IRIf` or :class:`~app.ir.instructions.IRPerformUntil` — emit header at current depth,
-      then increment depth (body is one level deeper).
+    * :class:`~app.ir.instructions.IRIf`,
+      :class:`~app.ir.instructions.IRPerformUntil`, or (task #stage34)
+      :class:`~app.ir.instructions.IRPerformVarying` — emit header at
+      current depth, then increment depth (body is one level deeper).
+      ``IRPerformVarying`` -> Java ``for``, closed by the same
+      ``IREndPerform`` an ``IRPerformUntil`` -> Java ``while`` is
+      (COBOL's own ``END-PERFORM`` closes either form identically); see
+      :func:`~app.backend.java.control_flow_emitter.emit_perform_varying`.
     * :class:`~app.ir.instructions.IRElse`  — decrement depth, emit the
       ``} else {`` transition at that depth, then increment depth again
       (else body is one level deeper than the header).
@@ -671,11 +1008,108 @@ def _collect_statements(
 
     Diagnostics produced during translation are appended to *diagnostics*.
 
+    task #stage36 -- ``PERFORM paragraph-name`` (and ``PERFORM ... THRU``):
+    when the program contains no ``GO TO`` (the dispatcher above is inert)
+    and at least one local ``PERFORM`` target's own instructions are present
+    in the IR, the entry block is *not* lowered flat. Instead every
+    paragraph is outlined into its own real Java method (see
+    :func:`_collect_outlined_statements`), reusing this exact per-
+    instruction lowering (:func:`_emit_instruction_list`) on each
+    paragraph's own contiguous instruction slice instead of the whole flat
+    list -- a real Java method call already gives ``PERFORM``'s call/return
+    semantics for free, which the GO TO dispatcher's switch/``continue``
+    model does not. This path and the GO TO dispatcher are mutually
+    exclusive by construction (no corpus source uses both), so the
+    dispatcher above is completely unaffected.
+
     Returns:
-        An ordered list of Java statement strings.  Control-flow headers and
-        footers carry embedded depth prefixes; body statements also carry
-        embedded depth prefixes.  Base 8-space ``main()`` indentation is
-        applied later by :func:`_render_class`.
+        ``(run_body_statements, paragraph_methods)``. ``run_body_statements``
+        is the ordered list of Java statement strings for the ``run()``
+        method body (control-flow headers/footers and body statements carry
+        embedded depth prefixes; base 8-space ``main()`` indentation is
+        applied later by :func:`_render_class`). ``paragraph_methods`` is a
+        list of ``(java_method_name, body_statements)`` pairs for any
+        ``PERFORM``-to-local-paragraph target outlined into a real method
+        (task #stage36); empty when no outlining was needed, in which case
+        ``run_body_statements`` is exactly what this function always
+        produced before.
+    """
+    statements: list[str] = []
+    if not program.modules:
+        return statements, []
+    module = program.modules[0]
+    if not module.functions:
+        return statements, []
+    function = module.functions[0]
+    if not function.blocks:
+        return statements, []
+    block = function.blocks[0]
+
+    instructions = list(block.instructions)
+
+    # GO TO dispatcher state (task #stage19); inert when `plan` is None.
+    plan = _plan_dispatch(instructions, paragraph_order)
+
+    if plan is None:
+        ranges, order = _paragraph_ranges(instructions)
+        perform_targets = _local_perform_targets(instructions, ranges)
+        if perform_targets:
+            return _collect_outlined_statements(
+                instructions, diagnostics, context, ranges, order, perform_targets
+            )
+
+    statements, labels_at, labelled_upto = _emit_instruction_list(
+        instructions, diagnostics, context, plan
+    )
+
+    if plan is None:
+        return statements, []
+    # Paragraphs after the last one with code (empty/unsupported) still need
+    # their case label so a GO TO to them resolves.
+    for case in range(labelled_upto + 1, len(plan[0])):
+        labels_at.setdefault(len(statements), []).append(case)
+    return _wrap_dispatch(statements, labels_at, plan[0]), []
+
+
+def _emit_instruction_list(
+    instructions: list[Any],
+    diagnostics: list[BackendDiagnostic],
+    context: ConditionContext | None,
+    plan: tuple[list[str], dict[str, int]] | None,
+) -> tuple[list[str], dict[int, list[int]], int]:
+    """
+    Lower one contiguous, self-contained (depth-balanced) list of IR
+    instructions into Java statement strings.
+
+    This is :func:`_collect_statements`'s own per-instruction dispatch loop,
+    extracted (task #stage36) so it can be reused verbatim on a single
+    paragraph's (or ``PERFORM ... THRU`` range's) own instruction slice —
+    see :func:`_collect_outlined_statements` — with exactly the same
+    ``IRIf``/``IRElse``/``IREndIf``/``IRPerformUntil``/``IRPerformVarying``/
+    ``IREndPerform``/``BE007``/``BE011`` handling as the flat/GO TO-dispatch
+    path, never duplicated.
+
+    ``depth``/``dead`` always start fresh (``0``/``[False]``): every
+    *caller*-provided instruction slice is depth-balanced on its own (a
+    COBOL paragraph's own ``IF``/``END-IF`` and ``PERFORM``/``END-PERFORM``
+    never span a paragraph boundary), so no cross-slice state needs to be
+    threaded through.
+
+    Args:
+        instructions: The instruction slice to lower (the whole flat block,
+            or one paragraph's/THRU range's own contiguous sub-slice).
+        diagnostics: Mutable list; diagnostics appended here.
+        context: Optional condition context, as :func:`_collect_statements`.
+        plan: The GO TO dispatch plan, or ``None`` — see
+            :func:`_plan_dispatch`. Always ``None`` when *instructions* is a
+            per-paragraph slice (task #stage36 and GO TO are mutually
+            exclusive by corpus evidence).
+
+    Returns:
+        ``(statements, labels_at, labelled_upto)`` — ``labels_at``/
+        ``labelled_upto`` are only meaningful when *plan* is not ``None``
+        (empty/``-1`` otherwise) and are consumed by
+        :func:`_collect_statements`'s ``_wrap_dispatch`` call.
     """
     # Local imports to avoid circular dependencies.
     from app.backend.java.control_flow_emitter import (
@@ -684,6 +1118,7 @@ def _collect_statements(
         emit_end_perform as _emit_end_perform,
         emit_if as _emit_if,
         emit_perform_until as _emit_perform_until,
+        emit_perform_varying as _emit_perform_varying,
     )
     from app.backend.java.statement_emitter import emit_statement
     from app.ir.instructions import (
@@ -693,20 +1128,11 @@ def _collect_statements(
         IRIf,
         IRJump,
         IRPerformUntil,
+        IRPerformVarying,
         IRReturn,
     )
 
     statements: list[str] = []
-    if not program.modules:
-        return statements
-    module = program.modules[0]
-    if not module.functions:
-        return statements
-    function = module.functions[0]
-    if not function.blocks:
-        return statements
-    block = function.blocks[0]
-
     depth: int = 0  # current nesting level (0 = flat inside main)
     # dead[d] -- True once an unconditional `return;` has been emitted at
     # the straight-line position currently at depth d; everything further
@@ -719,19 +1145,15 @@ def _collect_statements(
                 severity=BackendSeverity.WARNING,
                 message=(
                     f"'{type_name}' is unreachable after an unconditional "
-                    "STOP RUN/GOBACK earlier in the same generated method "
-                    "(paragraphs are concatenated flat); skipping to avoid "
-                    "generating invalid Java."
+                    "STOP RUN/GOBACK earlier in the same generated method; "
+                    "skipping to avoid generating invalid Java."
                 ),
                 code="BE011",
             )
         )
 
-    instructions = list(block.instructions)
     skip_through = -1  # last index of an omitted (untranslatable) construct
 
-    # GO TO dispatcher state (task #stage19); inert when `plan` is None.
-    plan = _plan_dispatch(instructions, paragraph_order)
     labels_at: dict[int, list[int]] = {}  # statement position -> case labels
     labelled_upto = -1  # highest case label emitted so far
     current_paragraph = ""
@@ -842,13 +1264,28 @@ def _collect_statements(
                 depth += 1
                 dead.append(False)
 
+            elif isinstance(instr, IRPerformVarying):
+                if dead[depth]:
+                    _skip_unreachable(type(instr).__name__)
+                    depth += 1
+                    dead.append(True)
+                    continue
+                stmts = _emit_perform_varying(instr, depth, diagnostics, context)
+                if not stmts:
+                    _omit_construct(index, "PERFORM VARYING", "loop body")
+                    continue
+                statements.extend(stmts)
+                depth += 1
+                dead.append(False)
+
             elif isinstance(instr, IREndPerform):
                 if depth <= 0:
                     diagnostics.append(
                         BackendDiagnostic(
                             severity=BackendSeverity.WARNING,
                             message=(
-                                "IREndPerform encountered without a matching IRPerformUntil "
+                                "IREndPerform encountered without a matching "
+                                "IRPerformUntil/IRPerformVarying "
                                 "(depth already 0); skipping."
                             ),
                             code="BE007",
@@ -895,13 +1332,156 @@ def _collect_statements(
             )
             statements.append(f"// ERROR: {type_name}")
 
-    if plan is None:
-        return statements
-    # Paragraphs after the last one with code (empty/unsupported) still need
-    # their case label so a GO TO to them resolves.
-    for case in range(labelled_upto + 1, len(plan[0])):
-        labels_at.setdefault(len(statements), []).append(case)
-    return _wrap_dispatch(statements, labels_at, plan[0])
+    return statements, labels_at, labelled_upto
+
+
+def _paragraph_ranges(
+    instructions: list[Any],
+) -> tuple[dict[str, tuple[int, int]], list[str]]:
+    """
+    Partition *instructions* into contiguous per-paragraph index ranges
+    (task #stage36).
+
+    Every instruction :meth:`~app.ir.builder.IRBuilder._emit` stamps with
+    the enclosing paragraph's name (task #109); this groups the flat list
+    back into ``UPPERCASED name -> (start, end)`` ranges (``instructions
+    [start:end]`` is that paragraph's own contiguous slice) purely by
+    watching that tag change, in source order — no new IR, no AST access.
+    An instruction with no paragraph tag (only possible in a hand-built
+    ``IRProgram``, e.g. in unit tests) is skipped: it belongs to no
+    paragraph and is not part of any range.
+
+    Returns:
+        ``(ranges, order)`` — ``order`` is every distinct paragraph name,
+        first-seen, in source order (matching :func:`_plan_dispatch`'s own
+        collection); ``ranges`` maps each to its ``(start, end)`` pair.
+    """
+    ranges: dict[str, tuple[int, int]] = {}
+    order: list[str] = []
+    current: str | None = None
+    start = 0
+    for idx, instr in enumerate(instructions):
+        name = (instr.paragraph or "").upper()
+        if name != current:
+            if current:
+                ranges[current] = (start, idx)
+            current = name
+            start = idx
+            if name and name not in order:
+                order.append(name)
+    if current:
+        ranges[current] = (start, len(instructions))
+    return ranges, order
+
+
+def _local_perform_targets(
+    instructions: list[Any], ranges: dict[str, tuple[int, int]]
+) -> dict[tuple[str, str], tuple[str, str]]:
+    """
+    Collect every distinct local ``PERFORM`` target (task #stage36).
+
+    Scans for every :class:`~app.ir.instructions.IRCall` tagged
+    ``comment="PERFORM"`` (:meth:`~app.ir.builder.IRBuilder.build_perform_statement`)
+    whose ``target`` resolves to a paragraph actually present in *ranges* —
+    a real ``CALL`` (no ``"PERFORM"`` comment) or a ``PERFORM`` to a name
+    that is not a local paragraph is deliberately excluded, so it keeps
+    getting the ordinary ``BE009`` empty-stub treatment, unchanged.
+
+    A ``PERFORM target THRU thru_target`` whose ``thru_target`` does *not*
+    resolve to a local paragraph falls back to just ``target`` alone (its
+    own range) — a defensive fallback for a shape no corpus source
+    exercises (the one evidenced ``THRU`` occurrence resolves cleanly).
+
+    Args:
+        instructions: The whole flat instruction list (never a sub-slice —
+            this must see every ``IRCall`` in the program).
+        ranges: This program's paragraph ranges, from
+            :func:`_paragraph_ranges`.
+
+    Returns:
+        ``{(target_upper, thru_upper_or_empty): (java_method_name,
+        original_target_text)}``, one entry per distinct target/THRU pair
+        actually invoked, in first-seen order.
+    """
+    from app.ir.instructions import IRCall
+
+    targets: dict[tuple[str, str], tuple[str, str]] = {}
+    for instr in instructions:
+        if not isinstance(instr, IRCall) or instr.comment != "PERFORM":
+            continue
+        target = instr.target
+        if not target:
+            continue
+        target_upper = target.upper()
+        if target_upper not in ranges:
+            continue
+        thru_upper = ""
+        if instr.thru_target and instr.thru_target.upper() in ranges:
+            thru_upper = instr.thru_target.upper()
+        key = (target_upper, thru_upper)
+        if key not in targets:
+            targets[key] = (to_java_field_name(target), target)
+    return targets
+
+
+def _collect_outlined_statements(
+    instructions: list[Any],
+    diagnostics: list[BackendDiagnostic],
+    context: ConditionContext | None,
+    ranges: dict[str, tuple[int, int]],
+    order: list[str],
+    perform_targets: dict[tuple[str, str], tuple[str, str]],
+) -> tuple[list[str], list[tuple[str, list[str]]]]:
+    """
+    Lower a program that needs paragraph outlining (task #stage36).
+
+    ``run()``'s body becomes the *first* paragraph's own instructions —
+    COBOL execution starts at the first paragraph of PROCEDURE DIVISION,
+    the same way the pre-#stage36 flat path already always began there.
+    Every distinct local ``PERFORM`` target (:func:`_local_perform_targets`)
+    becomes a real ``private void`` method: its body is that paragraph's own
+    instruction slice, or — for ``PERFORM ... THRU`` — the single contiguous
+    slice spanning from the target paragraph's first instruction to the
+    THRU paragraph's last, lowered as one instruction list (COBOL's own
+    THRU semantics: keep executing through the intervening paragraphs'
+    instructions with no explicit fallthrough machinery needed, since they
+    are already physically contiguous in the flat block).
+
+    Each slice is lowered independently via :func:`_emit_instruction_list`
+    (fresh ``depth``/``dead`` state, ``plan=None``) — the identical logic
+    the flat path uses, just scoped to one paragraph/range instead of the
+    whole block, so ``IF``/``PERFORM UNTIL``/``PERFORM VARYING``/``BE007``/
+    ``BE011`` all behave exactly as documented for :func:`_collect_statements`.
+
+    Returns:
+        ``(run_body_statements, paragraph_methods)`` — see
+        :func:`_collect_statements`.
+    """
+    if not order:
+        statements, _, _ = _emit_instruction_list(
+            instructions, diagnostics, context, None
+        )
+        return statements, []
+
+    entry_start, entry_end = ranges[order[0]]
+    run_body, _, _ = _emit_instruction_list(
+        instructions[entry_start:entry_end], diagnostics, context, None
+    )
+
+    methods: list[tuple[str, list[str]]] = []
+    seen_java_names: set[str] = set()
+    for (target_upper, thru_upper), (java_name, _original) in perform_targets.items():
+        if java_name in seen_java_names:
+            continue
+        seen_java_names.add(java_name)
+        start = ranges[target_upper][0]
+        end = ranges[thru_upper][1] if thru_upper else ranges[target_upper][1]
+        body, _, _ = _emit_instruction_list(
+            instructions[start:end], diagnostics, context, None
+        )
+        methods.append((java_name, body))
+
+    return run_body, methods
 
 
 def _plan_dispatch(
@@ -1006,38 +1586,54 @@ def _wrap_dispatch(
     return out
 
 
-def _collect_call_targets(program: IRProgram) -> list[tuple[str, str]]:
+def _collect_call_targets(program: IRProgram) -> list[tuple[str, str, int]]:
     """
     Collect CALL/PERFORM targets in the entry block that need a stub method.
 
     Scans the same entry basic block that :func:`_collect_statements` lowers
-    and returns, for every :class:`~app.ir.instructions.IRCall`, the pair
-    ``(java_method_name, original_target)``.  The Java name is derived with
-    exactly the same quote-stripping and :func:`to_java_field_name` conversion
-    used by :func:`~app.backend.java.statement_emitter.emit_call`, so the stub
+    and returns, for every :class:`~app.ir.instructions.IRCall`, the triple
+    ``(java_method_name, original_target, arg_count)``.  The Java name is
+    derived with exactly the same quote-stripping and
+    :func:`to_java_field_name` conversion used by
+    :func:`~app.backend.java.statement_emitter.emit_call`, so the stub
     method name is guaranteed to match the invocation the emitter produced.
 
     A CALL target in COBOL is either an external sub-program (``CALL "NAME"``)
-    or, via PERFORM lowering, an internal paragraph.  In both cases the current
-    pipeline provides no method body: external sub-programs are separately
-    compiled units, and paragraph bodies are not carried into the entry block.
+    or, via PERFORM lowering, an internal paragraph. In both cases the current
+    pipeline may provide no method body: external sub-programs are separately
+    compiled units, and a paragraph whose own instructions are not present in
+    the IR (task #stage36 -- e.g. its whole body is an unsupported statement
+    like ``READ``) has nothing to outline into a real method either way.
     Emitting an empty ``private void`` stub keeps the generated class
     self-compiling without inventing behaviour or discarding the invocation.
 
-    Results preserve first-encountered order and are de-duplicated, so a target
-    invoked twice yields a single stub.
+    ``arg_count`` (task #stage36's own fix, found investigating this stage's
+    corpus regressions) is ``len(instr.args)`` for the first occurrence of
+    each target — needed because :func:`_render_class` was giving every stub
+    a fixed zero-parameter signature regardless of how many arguments
+    :func:`~app.backend.java.statement_emitter.emit_call` actually passes at
+    the call site, a pre-existing, independent bug from CALL support itself,
+    latent because no real external CALL with 1+ arguments had ever
+    previously reached a compiled Java program: the paragraph carrying it
+    was always itself either a top-level BE011 casualty or -- before that
+    fix -- covered by this exact same always-empty-stub gap.
+
+    Results preserve first-encountered order and are de-duplicated, so a
+    target invoked twice yields a single stub (using the first occurrence's
+    argument count -- COBOL does not vary a CALL/PERFORM target's own arity
+    between call sites).
 
     Args:
         program:
             The :class:`~app.ir.program.IRProgram` being lowered.
 
     Returns:
-        An ordered, de-duplicated list of ``(java_name, original_target)``
-        tuples — one per distinct CALL/PERFORM target.
+        An ordered, de-duplicated list of ``(java_name, original_target,
+        arg_count)`` triples — one per distinct CALL/PERFORM target.
     """
     from app.ir.instructions import IRCall
 
-    targets: list[tuple[str, str]] = []
+    targets: list[tuple[str, str, int]] = []
     seen: set[str] = set()
 
     if not program.modules:
@@ -1066,7 +1662,7 @@ def _collect_call_targets(program: IRProgram) -> list[tuple[str, str]]:
         if java_name in seen:
             continue
         seen.add(java_name)
-        targets.append((java_name, target))
+        targets.append((java_name, target, len(instr.args)))
 
     return targets
 
@@ -1075,8 +1671,9 @@ def _render_class(
     class_name: str,
     fields: list[JavaField],
     statements: list[str],
-    stub_targets: list[tuple[str, str]] | None = None,
+    stub_targets: list[tuple[str, str, int]] | None = None,
     helpers: list[str] | None = None,
+    paragraph_methods: list[tuple[str, list[str]]] | None = None,
 ) -> str:
     """
     Render the complete Java class source string.
@@ -1091,17 +1688,31 @@ def _render_class(
             Ordered list of Java statement strings to emit inside the instance
             ``run`` method.  Each string is indented with 8 spaces.
         stub_targets:
-            Optional list of ``(java_name, original_target)`` pairs for
-            CALL/PERFORM targets that need an empty ``private void`` stub method
-            so the generated class compiles.
+            Optional list of ``(java_name, original_target, arg_count)``
+            triples for CALL/PERFORM targets that need an empty ``private
+            void`` stub method so the generated class compiles. ``arg_count``
+            (task #stage36) gives the stub the same number of formal
+            parameters the call site passes -- each typed ``Object`` so a
+            ``String``/``int``/``double`` (autoboxed) argument compiles
+            regardless of the target's real (unknowable, since it is never
+            generated) parameter types -- so an arity mismatch never breaks
+            compilation.
         helpers:
             Optional pre-indented lines of helper methods (such as the COBOL
             alphanumeric-equality helper) rendered after the stubs.
+        paragraph_methods:
+            Optional list of ``(java_name, body_statements)`` pairs (task
+            #stage36) for a ``PERFORM``-to-local-paragraph target whose real
+            instructions were found in the IR — each becomes a genuine
+            ``private void`` method containing the paragraph's (or, for
+            ``PERFORM ... THRU``, paragraph range's) own lowered statements,
+            rendered *before* the empty stubs so a target is never both.
 
     Returns:
         A non-empty Java source string.
     """
     stubs = stub_targets or []
+    methods = paragraph_methods or []
     lines: list[str] = []
 
     # Class header
@@ -1136,11 +1747,28 @@ def _render_class(
     lines.append("    }")
     lines.append("")
 
+    # Real methods for PERFORM-to-local-paragraph targets whose own
+    # instructions were found in the IR (task #stage36) — the paragraph's
+    # (or PERFORM-THRU range's) actual lowered statements, not a stub.
+    for java_name, body in methods:
+        lines.append(f"    private void {java_name}() {{")
+        lines.append("")
+        for stmt in body:
+            lines.append(f"        {stmt}")
+        if body:
+            lines.append("")
+        lines.append("    }")
+        lines.append("")
+
     # Empty stub methods for CALL/PERFORM targets that have no generated body,
     # so the class compiles.  Each carries a TODO naming the original target
-    # and the BE009 diagnostic emitted alongside it.
-    for java_name, original in stubs:
-        lines.append(f"    private void {java_name}() {{")
+    # and the BE009 diagnostic emitted alongside it. Declared with the same
+    # number of (Object-typed) formal parameters the call site passes (task
+    # #stage36), so a target invoked with arguments never fails to compile
+    # with an arity mismatch merely because its own body is unavailable.
+    for java_name, original, arg_count in stubs:
+        params = ", ".join(f"Object arg{i}" for i in range(arg_count))
+        lines.append(f"    private void {java_name}({params}) {{")
         lines.append(
             f"        // TODO: implement CALL/PERFORM target '{original}' (BE009)."
         )

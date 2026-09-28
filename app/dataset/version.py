@@ -638,6 +638,54 @@ MMIM_GENERATOR_VERSION_V25: str = "mmim-gen-v25"
 #: ``dataset_version`` stays ``"mmim-v2"``.
 MMIM_GENERATOR_VERSION_V26: str = "mmim-gen-v26"
 
+#: ``mmim-gen-v27`` -- a twenty-sixth regeneration of the same ``mmim-v2``
+#: dataset_version/corpus, produced after fixed OCCURS cardinality and
+#: literal/identifier table-subscript references (``WS-ITEM(2)``,
+#: ``WS-ITEM(WS-I)``) gained a structured AST/IR representation instead of
+#: being either dropped (``OCCURS``, via ``SYN200``) or flattened into a
+#: corrupted operand string (``"WS-ITEM ( WS-I )"``) that masqueraded as an
+#: undeclared variable downstream (task #stage32, ``docs/`` -- no standalone
+#: fix doc; documented inline in the Stage 32 implementation report).
+#: ``ElementaryItemNode``/``GroupItemNode``/``VariableSymbol`` gained an
+#: ``occurs: int | None`` field; a new ``Subscript``/``IRSubscript``
+#: structured sub-object (mirroring the existing ``ConditionTerm``/
+#: ``IRConditionTerm`` pattern) carries a subscript's ``kind``
+#: (``"literal"``/``"identifier"``) and raw value through
+#: MOVE/ADD/SUBTRACT/MULTIPLY/DIVIDE/DISPLAY/IF, with COBOL's 1-based
+#: indexing preserved verbatim (no ``-1`` adjustment at this stage -- that is
+#: Java-array lowering, deliberately deferred). The dependency analyzer now
+#: registers a separate ``VARIABLE_READ`` for an identifier subscript's own
+#: index variable (none for a literal subscript) instead of folding it into
+#: one corrupted read/write target. The Java backend is untouched; a
+#: subscripted reference now emits its clean base name as a plain scalar
+#: (compilable, though not yet array-indexed -- that is Stage 33).
+#: Verified directly against the corpus, not assumed: exactly **2 of the 45
+#: sources** actually declare ``OCCURS``/use a subscript --
+#: ``t_order_hierarchy`` and ``t_table_indexed`` -- and only their AST, IR,
+#: dependency graph, coverage, CFG (decision-node label text only; node/edge
+#: counts unchanged), confidence and ``success`` change; ``success`` flips
+#: ``False`` -> ``True`` for both, because the spurious semantic diagnostics
+#: the old flattened operand string produced (an "undefined variable" error
+#: against a name like ``"WS-ITEM ( WS-I )"``) disappear once the base name
+#: resolves correctly, which is also why ``confidence`` rises (the
+#: semantic-error penalty factor drops out; the coverage factor is
+#: unchanged). The other 43 sources are fingerprint-identical on every
+#: dimension, generated Java is byte-identical for all 45 sources, and
+#: ``javac`` stays **45/45**. Every example -- regardless of task type --
+#: embeds the same per-source ``analysis`` bundle (AST/IR/dependencies/etc.)
+#: alongside its own task-specific ``expected_output``, so
+#: **all 7 task types for these 2 sources** change ground truth, including
+#: ``COBOL_TO_JAVA``: its ``expected_output.java`` text is verified
+#: byte-identical (the Java backend is untouched), but its embedded
+#: ``analysis.ast``/``analysis.ir``/``analysis.dependencies`` blobs change
+#: exactly like every sibling task's. Exactly **14 of 351** examples change
+#: substantively (2 sources x 7 task types each; ``VALIDATION_REASONING`` is
+#: unaffected for both -- neither source has a derivable behavioral-test
+#: suite, before or after, so neither contributes a
+#: ``VALIDATION_REASONING`` example in either version). The corpus and task
+#: taxonomy are unchanged; ``dataset_version`` stays ``"mmim-v2"``.
+MMIM_GENERATOR_VERSION_V27: str = "mmim-gen-v27"
+
 __all__ = [
     "ANALYSIS_VERSION",
     "BENCHMARK_VERSION",
@@ -672,6 +720,7 @@ __all__ = [
     "MMIM_GENERATOR_VERSION_V24",
     "MMIM_GENERATOR_VERSION_V25",
     "MMIM_GENERATOR_VERSION_V26",
+    "MMIM_GENERATOR_VERSION_V27",
     "MMIM_PROMPT_VERSION",
     "MMIM_PROMPT_VERSION_V2",
     "PROMPT_VERSION",

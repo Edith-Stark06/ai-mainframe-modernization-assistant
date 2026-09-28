@@ -125,6 +125,17 @@ class BackendClient:
         """Fetch the file inventory for an existing workspace."""
         return self._request("GET", f"/workspaces/{workspace_id}/inventory")
 
+    def search_workspace(self, workspace_id: str, query: str) -> Dict[str, Any]:
+        """
+        Search every file in the workspace for *query* (task #stage47).
+
+        Plain substring/line matching, not semantic search -- see
+        ``app/workspace/search.py``'s own module docstring for why.
+        """
+        return self._request(
+            "GET", f"/workspaces/{workspace_id}/search", params={"q": query}
+        )
+
     def analyze_modernization(self, workspace_id: str, filename: str) -> Dict[str, Any]:
         """Trigger the modernization pipeline (flow, score, recommendations)."""
         return self._request(

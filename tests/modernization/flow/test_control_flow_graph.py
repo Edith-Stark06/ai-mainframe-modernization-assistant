@@ -256,6 +256,66 @@ class TestLoop:
         assert count_cycles(flow) == 1
 
 
+class TestPerformVaryingLoop:
+    """PERFORM VARYING (task #stage34): the same DECISION/LOOP_BODY/
+    LOOP_BACK/LOOP_EXIT shape TestLoop already locks in for PERFORM
+    UNTIL -- not a flat IRCall("VARYING") with no loop structure at all,
+    and no duplicated body statements."""
+
+    def test_loop_body_and_exit_and_back_edge(self) -> None:
+        source = (
+            _ID + "PROCEDURE DIVISION.\nMAIN.\n"
+            "    PERFORM VARYING WS-IDX FROM 1 BY 1\n"
+            "        UNTIL WS-IDX > 4\n"
+            "        ADD 1 TO WS-COUNT\n"
+            "    END-PERFORM.\n"
+            "    STOP RUN.\n"
+        )
+        flow = _flow_for(source)
+
+        condition = _node_by_name(
+            flow, "PERFORM VARYING WS-IDX FROM 1 BY 1 UNTIL WS-IDX > 4"
+        )
+        body = _node_by_name(flow, "ADD 1 TO WS-COUNT")
+        stop = _node_by_name(flow, "STOP RUN")
+
+        cond_edges = {e.edge_type: e.target_id for e in _edges_from(flow, condition.id)}
+        assert cond_edges[EdgeType.LOOP_BODY] == body.id
+        assert cond_edges[EdgeType.LOOP_EXIT] == stop.id
+
+        body_edges = _edges_from(flow, body.id)
+        assert len(body_edges) == 1
+        assert body_edges[0].edge_type is EdgeType.LOOP_BACK
+        assert body_edges[0].target_id == condition.id
+
+    def test_loop_produces_exactly_one_counted_cycle(self) -> None:
+        source = (
+            _ID + "PROCEDURE DIVISION.\nMAIN.\n"
+            "    PERFORM VARYING WS-IDX FROM 1 BY 1\n"
+            "        UNTIL WS-IDX > 4\n"
+            "        ADD 1 TO WS-COUNT\n"
+            "    END-PERFORM.\n"
+            "    STOP RUN.\n"
+        )
+        flow = _flow_for(source)
+        assert count_cycles(flow) == 1
+
+    def test_body_is_not_duplicated(self) -> None:
+        """Exactly one node for the loop body statement -- no accidental
+        duplication from the new opener type sharing IREndPerform."""
+        source = (
+            _ID + "PROCEDURE DIVISION.\nMAIN.\n"
+            "    PERFORM VARYING WS-IDX FROM 1 BY 1\n"
+            "        UNTIL WS-IDX > 4\n"
+            "        ADD 1 TO WS-COUNT\n"
+            "    END-PERFORM.\n"
+            "    STOP RUN.\n"
+        )
+        flow = _flow_for(source)
+        matches = [n for n in _stmt_nodes(flow) if n.name == "ADD 1 TO WS-COUNT"]
+        assert len(matches) == 1
+
+
 class TestPerformParagraph:
     """PERFORM <paragraph>: distinct from sequential flow and from CALL."""
 

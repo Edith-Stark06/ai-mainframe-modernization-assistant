@@ -23,8 +23,9 @@ Responsibilities:
       :meth:`_parse_pic` to determine the type category, digit count,
       character length, and sign.
     - Determine the :class:`~app.parser.semantic.types.UsageType` from the
-      symbol's ``picture`` string heuristic (future: from an explicit USAGE
-      node attribute).
+      symbol's explicit ``usage`` attribute (task #stage41), copied from
+      an ``ElementaryItemNode``'s ``USAGE`` clause; ``None`` resolves to
+      :attr:`~app.parser.semantic.types.UsageType.DISPLAY`.
     - Construct the appropriate :class:`~app.parser.semantic.types.CobolType`
       (:class:`~app.parser.semantic.types.NumericType`,
       :class:`~app.parser.semantic.types.AlphanumericType`, or
@@ -66,9 +67,8 @@ PIC clause syntax handled::
     PIC 9            → NumericType(digits=1)
     (no PIC)         → GroupType()
 
-Recognised USAGE suffixes (future-facing; currently derived heuristically
-from symbol name conventions — extend :meth:`_infer_usage` for explicit
-USAGE node support)::
+Recognised USAGE suffixes (task #stage41: resolved from the symbol's
+explicit ``usage`` attribute via :meth:`usage_from_string`)::
 
     COMP   → UsageType.COMP
     COMP-3 → UsageType.COMP_3
@@ -153,16 +153,27 @@ _RE_ALPHA = re.compile(
 )
 
 # Normalised USAGE keyword → UsageType mapping (used by _infer_usage).
+# task #stage41: includes the long-form COMPUTATIONAL* spellings, which
+# app.parser.syntax.data_parser._USAGE_WORDS has always accepted as a
+# USAGE clause operand alongside COMP*/BINARY/PACKED-DECIMAL -- without
+# these aliases, a real "USAGE IS COMPUTATIONAL-3" would silently fall
+# through .get()'s default to UsageType.DISPLAY instead of COMP_3.
 _USAGE_MAP: dict[str, UsageType] = {
     "DISPLAY": UsageType.DISPLAY,
     "COMP": UsageType.COMP,
     "COMP-4": UsageType.COMP,  # alias
+    "COMPUTATIONAL": UsageType.COMP,  # alias
+    "COMPUTATIONAL-4": UsageType.COMP,  # alias
     "BINARY": UsageType.COMP,  # alias
     "COMP-1": UsageType.COMP_1,
+    "COMPUTATIONAL-1": UsageType.COMP_1,  # alias
     "COMP-2": UsageType.COMP_2,
+    "COMPUTATIONAL-2": UsageType.COMP_2,  # alias
     "COMP-3": UsageType.COMP_3,
+    "COMPUTATIONAL-3": UsageType.COMP_3,  # alias
     "PACKED-DECIMAL": UsageType.COMP_3,  # alias
     "COMP-5": UsageType.COMP_5,
+    "COMPUTATIONAL-5": UsageType.COMP_5,  # alias
     "INDEX": UsageType.INDEX,
     "POINTER": UsageType.POINTER,
 }
@@ -291,7 +302,7 @@ class TypeBuilder:
         # --- Attempt numeric match -----------------------------------------
         numeric = self._parse_numeric_pic(pic_normalised)
         if numeric is not None:
-            usage = self._infer_usage(pic_normalised)
+            usage = self._infer_usage(sym.usage)
             return dataclasses.replace(numeric, usage=usage)
 
         # --- Attempt alphanumeric match ------------------------------------
@@ -399,30 +410,35 @@ class TypeBuilder:
     # USAGE inference
     # ------------------------------------------------------------------
 
-    def _infer_usage(self, pic: str) -> UsageType:
+    def _infer_usage(self, usage: str | None) -> UsageType:
         """
-        Infer the :class:`~app.parser.semantic.types.UsageType` from context.
+        Resolve the :class:`~app.parser.semantic.types.UsageType` from the
+        symbol's explicit USAGE clause operand (task #stage41).
 
-        In the current AST, the USAGE clause is not surfaced as a separate
-        node attribute on the symbol; this method returns
-        :attr:`~app.parser.semantic.types.UsageType.DISPLAY` as the default.
-        It is the extension point for when explicit USAGE information becomes
-        available (e.g. from an enriched ``ElementaryItemNode``).
-
-        Extend this method or replace it with one that accepts a USAGE string
-        from the AST node when the parser is updated to capture USAGE clauses.
+        Before task #stage41, the USAGE clause was not surfaced as a
+        separate node attribute on the symbol, and this method always
+        returned :attr:`~app.parser.semantic.types.UsageType.DISPLAY` --
+        the extension point named in its own prior docstring is this one:
+        :class:`~app.parser.ast.data_items.ElementaryItemNode` now carries
+        a real ``usage`` field (via
+        :class:`~app.parser.semantic.symbols.VariableSymbol.usage`),
+        populated by :meth:`~app.parser.syntax.data_parser.DataDivisionParser
+        ._parse_usage_clause`.
 
         Args:
-            pic:
-                The normalised PIC string (currently unused; provided for
-                future heuristics such as detecting ``COMP`` embedded in
-                extended PIC-like strings).
+            usage:
+                The symbol's raw, uppercased USAGE clause operand (e.g.
+                ``"COMP-3"``, ``"BINARY"``), or ``None`` if the item has
+                no USAGE clause -- equivalent to ``DISPLAY``.
 
         Returns:
-            The inferred :class:`~app.parser.semantic.types.UsageType`.
+            :attr:`~app.parser.semantic.types.UsageType.DISPLAY` if
+            *usage* is ``None``; otherwise the result of
+            :meth:`usage_from_string`.
         """
-        _ = pic  # reserved for future heuristic use
-        return UsageType.DISPLAY
+        if usage is None:
+            return UsageType.DISPLAY
+        return self.usage_from_string(usage)
 
     @staticmethod
     def usage_from_string(usage_str: str) -> UsageType:

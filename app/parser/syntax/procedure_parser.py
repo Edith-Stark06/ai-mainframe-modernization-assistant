@@ -45,7 +45,10 @@ Non-responsibilities:
     - SECTION header parsing.
     - DECLARATIVES parsing.
     - Nested program parsing.
-    - COPY book expansion.
+    - COPY book expansion -- happens upstream of this parser entirely
+      (task #stage45, :class:`~app.parser.resolver.copybook.CopybookExpander`,
+      run by ``AnalysisService.analyze_file`` before the lexer even sees
+      the source), so no ``COPY`` token ever reaches this class.
     - Semantic analysis.
 
 Dependencies:
@@ -79,16 +82,22 @@ Project:
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from loguru import logger
 
 from app.parser.ast.paragraphs import ParagraphNode
 from app.parser.ast.procedure import ProcedureDivisionNode
 from app.parser.ast.statements import (
+    ArithmeticExpression,
+    BinaryExpression,
     ConditionTerm,
+    ComputeStatementNode,
     DisplayStatementNode,
     GobackStatementNode,
     GoToStatementNode,
     MoveStatementNode,
+    OperandExpression,
     StatementNode,
     StopRunStatementNode,
     AddStatementNode,
@@ -98,6 +107,8 @@ from app.parser.ast.statements import (
     CallStatementNode,
     IfStatementNode,
     PerformStatementNode,
+    ReadStatementNode,
+    Subscript,
 )
 from app.parser.diagnostics.recovery import RecoveryContext
 from app.parser.grammar_words import matches_grammar_word
@@ -135,12 +146,14 @@ _STATEMENT_LEXEMES: frozenset[str] = frozenset(
         "GOBACK",
         "ADD",
         "SUBTRACT",
+        "COMPUTE",
         "MULTIPLY",
         "DIVIDE",
         "CALL",
         "IF",
         "PERFORM",
         "GO",
+        "READ",
     }
 )
 
@@ -149,8 +162,18 @@ _STATEMENT_LEXEMES: frozenset[str] = frozenset(
 # yet.  They are recognised only so that encountering one produces an
 # explicit diagnostic and skips that single statement, instead of
 # silently abandoning the rest of the paragraph.  Most reach the parser
-# as IDENTIFIER (only COMPUTE is a reserved lexer word), so they are
-# matched by lexeme.
+# as IDENTIFIER; a few (EVALUATE, ...) are reserved lexer words, so they
+# are matched by lexeme either way.
+#
+# COMPUTE moved out of this set (task #stage35): it now has a parser and
+# an AST node (ComputeStatementNode) and is dispatched via
+# _STATEMENT_LEXEMES/_parse_compute like ADD/SUBTRACT/MULTIPLY/DIVIDE.
+# A COMPUTE using syntax this parser does not implement -- ROUNDED or an
+# intrinsic FUNCTION operand, neither present in the 45-source training
+# corpus -- is still routed here via the dedicated pre-check
+# _compute_has_supported_syntax, so it still gets the same graceful
+# SYN100 skip every other unsupported verb gets, never a hard ParserError
+# that could unwind an enclosing IF/PERFORM block.
 #
 # This list is deliberately explicit: an identifier that is not named
 # here is still treated as it was before (a paragraph label, or the end
@@ -161,13 +184,17 @@ _UNSUPPORTED_STATEMENT_LEXEMES: frozenset[str] = frozenset(
     {
         "OPEN",
         "CLOSE",
-        "READ",
+        # READ moved to _STATEMENT_LEXEMES (task #stage40): it now has a
+        # parser and an AST node (ReadStatementNode) and is dispatched via
+        # _parse_read_statement, mirroring exactly how COMPUTE moved out
+        # of this set at task #stage35. OPEN/CLOSE/WRITE remain here --
+        # not evidenced as needed for the Stage 40 vertical slice (see
+        # the Stage 40 discovery report).
         "WRITE",
         "REWRITE",
         "DELETE",
         "START",
         "EVALUATE",
-        "COMPUTE",
         "STRING",
         "UNSTRING",
         "INSPECT",
@@ -216,6 +243,22 @@ _SCOPE_TERMINATOR_LEXEMES: frozenset[str] = frozenset(
         "END-PERFORM",
         "WHEN",
         "END-EVALUATE",
+        # task #stage40: READ's own closing word, and the bare word that
+        # introduces its "NOT AT END" clause. Without these, a nested
+        # statement's own operand reader (e.g. MOVE's target-accumulation
+        # loop, called for real now that READ's AT END/NOT AT END clauses
+        # are actually parsed instead of discarded) does not know either
+        # word ends *its* operand -- reproducing, inside real parsing,
+        # exactly the corruption class docs/MMIM_READ_AT_END_PARSING_FIX.md
+        # already fixed once for the discard-only skip path (a
+        # MoveStatementNode with target "WS-EOF-FLAG NOT AT END" or
+        # "WS-EOF END-READ"). "NOT" is safe to add globally: it is never
+        # legitimate mid-operand text (COBOL's own condition-level "NOT"
+        # is always consumed explicitly, before reaching the generic
+        # operand reader -- see _parse_condition_term/_parse_simple_condition,
+        # neither of which goes through this boundary set at all).
+        "END-READ",
+        "NOT",
     }
 )
 
@@ -292,6 +335,27 @@ def _is_comparison_operator_token(token: Token) -> bool:
     return (
         token.type.name in _COMPARISON_OPERATOR_TYPE_NAMES
         or token.lexeme in _COMPARISON_OPERATOR_LEXEMES
+    )
+
+
+# ---------------------------------------------------------------------------
+# Arithmetic-operator token recognition, for COMPUTE expressions (task
+# #stage35). The lexer deliberately emits '+'/'-'/'*'/'/' as their own
+# UNKNOWN tokens everywhere (see data_parser._NUMERIC_SIGNS and
+# _read_perform_from_by_operand's identical '+'/'-' handling) rather than
+# promoting them to dedicated token types, precisely so that a COMPUTE
+# expression's operators are recognised here by lexeme, the same
+# established way every other '+'/'-' consumer in this codebase already
+# does, instead of the lexer needing to know in advance which meaning a
+# given '+'/'-' will turn out to have.
+# ---------------------------------------------------------------------------
+_ARITHMETIC_OPERATOR_LEXEMES: frozenset[str] = frozenset({"+", "-", "*", "/"})
+
+
+def _is_arithmetic_operator_token(token: Token) -> bool:
+    """``True`` if *token* is a COMPUTE expression arithmetic operator."""
+    return (
+        token.type is TokenType.UNKNOWN and token.lexeme in _ARITHMETIC_OPERATOR_LEXEMES
     )
 
 
@@ -748,6 +812,18 @@ class ProcedureDivisionParser:
                     # Next paragraph starts — stop collecting statements
                     break
 
+                # COMPUTE ROUNDED / COMPUTE ... FUNCTION ... (task #stage35):
+                # recognised but not implemented -- neither is present in the
+                # 45-source training corpus.  Checked here, before the
+                # _STATEMENT_LEXEMES branch below, via pure lookahead (no
+                # tokens consumed), so such a COMPUTE gets the same graceful
+                # SYN100 skip every other unsupported verb gets, uniformly
+                # regardless of nesting -- never a ParserError, even though
+                # this particular loop could otherwise recover from one.
+                if upper == "COMPUTE" and not self._compute_has_supported_syntax(state):
+                    self._skip_unsupported_statement_auto(state)
+                    continue
+
                 if upper in _STATEMENT_LEXEMES:
                     try:
                         stmt = self._parse_statement(state)
@@ -778,7 +854,7 @@ class ProcedureDivisionParser:
                 # and skip just that statement so the ones after it are
                 # still parsed.
                 if upper in _UNSUPPORTED_STATEMENT_LEXEMES:
-                    self._skip_unsupported_statement(state)
+                    self._skip_unsupported_statement_auto(state)
                     continue
 
             # A lone PERIOD here is a stray sentence terminator -- the
@@ -819,6 +895,45 @@ class ProcedureDivisionParser:
     # ------------------------------------------------------------------
     # Unsupported statement handling
     # ------------------------------------------------------------------
+
+    def _skip_unsupported_statement_auto(self, state: ParserState) -> None:
+        """
+        Skip one unsupported statement, detecting the one multi-word
+        exception :data:`_UNSUPPORTED_STATEMENT_LEXEMES` itself needs
+        (task #stage34): ``EXIT PERFORM``.
+
+        ``EXIT`` alone (a bare ``EXIT.`` statement) is exactly the
+        single-token shape :meth:`_skip_unsupported_statement`'s default
+        ``word_count=1`` already handles correctly. ``EXIT PERFORM`` is a
+        distinct, two-word COBOL statement (found directly in the real
+        corpus, nested inside an ``IF`` inside a ``PERFORM VARYING`` loop
+        -- ``complex_acctbatch.cbl``'s ``4100-FIND-ACCOUNT``/
+        ``4200-FIND-CUSTOMER``); without this, skipping only ``EXIT``
+        left ``PERFORM`` on the stream, which every statement-list loop's
+        own dispatch (``_STATEMENT_LEXEMES`` includes ``"PERFORM"``) then
+        misread as the *start of a new PERFORM statement* -- reading
+        whatever followed (here, ``END-IF``) as a supposed paragraph
+        target and raising ``ParserError("expected paragraph name for
+        PERFORM")``, which unwound the parse of the *entire* enclosing
+        construct (not merely the ``EXIT`` statement) up to the nearest
+        recovery point. This is a plain token-boundary correction --
+        consuming ``EXIT PERFORM`` as the one statement it actually is --
+        not an implementation of its true "leave the loop early"
+        semantics, which remain unsupported exactly as before (no
+        ``AST``/``IR`` node is produced for it either way).
+
+        Used everywhere :meth:`_skip_unsupported_statement` was called
+        with its implicit single-word default, so ``EXIT PERFORM``
+        parses correctly regardless of which statement-list loop
+        (paragraph-level, ``IF`` then/else, ``PERFORM`` body) it appears
+        in -- one shared check, not duplicated at each call site.
+        """
+        stream = state.stream
+        tok = stream.current()
+        if tok.lexeme.upper() == "EXIT" and stream.peek(1).lexeme.upper() == "PERFORM":
+            self._skip_unsupported_statement(state, word_count=2)
+        else:
+            self._skip_unsupported_statement(state)
 
     def _skip_unsupported_statement(
         self, state: ParserState, word_count: int = 1
@@ -894,10 +1009,6 @@ class ProcedureDivisionParser:
             code="SYN100",
         )
 
-        if open_word == "READ":
-            self._skip_read_statement(stream)
-            return
-
         if opens_scope and close_word is not None:
             self._skip_to_matching_close_word(stream, open_word, close_word)
             return
@@ -962,88 +1073,13 @@ class ProcedureDivisionParser:
                     return
             stream.advance()
 
-    @staticmethod
-    def _skip_read_statement(stream: TokenStream) -> None:
-        """
-        Skip an unsupported ``READ`` statement (the cursor is positioned
-        just past the already-consumed ``READ`` verb token).
-
-        ``READ`` has no AST node or parser of its own (:data:`SYN100`,
-        same as every other verb in :data:`_UNSUPPORTED_STATEMENT_LEXEMES`).
-        Its ``AT END`` / ``NOT AT END`` clauses legitimately contain full
-        imperative statements (``MOVE``, ``ADD``, ...) — real COBOL grammar,
-        confirmed against the corpus (e.g. ``READ F INTO R AT END MOVE 'Y'
-        TO EOF-FLAG NOT AT END ADD 1 TO COUNT END-READ.``). Before this
-        method existed, the generic "scan to next period, but stop at the
-        first statement-verb token" skip (below, still used for every other
-        unsupported verb without a known closing word) treated that nested
-        ``MOVE``/``ADD`` as the *next real statement* — ending the READ's
-        skip early and leaving the clause's tail (e.g. ``TO WS-EOF-FLAG NOT
-        AT END``) to be absorbed as part of that nested statement's own
-        operand text by the ordinary statement parser, corrupting it (a
-        ``MoveStatementNode`` with target ``"WS-EOF-FLAG NOT AT END"``,
-        traced directly to this mechanism; see
-        ``docs/MMIM_READ_AT_END_PARSING_FIX.md``).
-
-        This method instead tracks whether an ``AT`` token (the only word
-        that introduces ``AT END``/``NOT AT END`` in this grammar) has been
-        seen yet:
-
-        * **Before** the first ``AT``: behaves exactly like the generic
-          skip — a statement-boundary token (:func:`_at_operand_boundary`)
-          still ends the skip early, so a bare ``READ F1`` with no clause at
-          all, immediately followed by another period-less unsupported or
-          supported statement, is completely unaffected (this is the shape
-          ``tests/parser/test_statement_boundaries.py`` and
-          ``tests/parser/test_token_type_regressions.py`` already pin).
-        * **From** the first ``AT`` onward: statement-boundary tokens no
-          longer end the skip (they are legitimately part of a clause's
-          nested statement) — only ``END-READ`` or a bare period does.
-
-        A bare period always ends the READ, at any point (real COBOL: a
-        ``READ`` with no ``END-READ`` is closed by the sentence's own
-        terminating period — verified against
-        ``tests/fixtures/phase5/file_processing.cbl``,
-        ``READ CUST-FILE AT END MOVE 'Y' TO WS-EOF.``, which has no
-        ``END-READ`` at all). ``END-READ`` is still recognised even before
-        any ``AT`` is seen, for a (COBOL-legal but corpus-unseen) ``READ F1
-        END-READ.`` with no clause. Stops early at EOF or a division header,
-        matching every other skip path in this class.
-
-        Scope note: only ``AT END``/``NOT AT END`` are recognised. A READ
-        using ``INVALID KEY``/``NOT INVALID KEY`` instead (random access)
-        has no ``AT`` token, so it is not protected by this method and keeps
-        the pre-existing generic-skip behavior — not present anywhere in the
-        current corpus or test fixtures, and deliberately out of this
-        task's scope (see the fix doc's "remaining gaps").
-        """
-        seen_at = False
-        while not stream.eof():
-            tok = stream.current()
-            if tok.type is TokenType.EOF:
-                return
-            if tok.type is TokenType.PERIOD:
-                stream.advance()
-                return
-            if tok.type in (TokenType.KEYWORD, TokenType.IDENTIFIER):
-                upper = tok.lexeme.upper()
-                if upper == "END-READ":
-                    stream.advance()
-                    if stream.current().type is TokenType.PERIOD:
-                        stream.advance()
-                    return
-                if upper == "AT":
-                    seen_at = True
-                elif not seen_at and _at_operand_boundary(tok):
-                    return
-                elif (
-                    tok.type is TokenType.KEYWORD
-                    and upper in _DIVISION_KEYWORDS
-                    and stream.peek().type is TokenType.KEYWORD
-                    and stream.peek().lexeme.upper() == "DIVISION"
-                ):
-                    return
-            stream.advance()
+    # `_skip_read_statement` (the dedicated AT/END-READ-aware boundary
+    # skip from task's docs/MMIM_READ_AT_END_PARSING_FIX.md) was removed
+    # at task #stage40: READ moved out of _UNSUPPORTED_STATEMENT_LEXEMES
+    # entirely, so `_skip_unsupported_statement` -- and this method with
+    # it -- is never reached for READ any more. Its AT-token-tracking
+    # boundary technique lives on, generalised into real parsing, in
+    # `_parse_read_clause_body` below.
 
     # ------------------------------------------------------------------
     # Statement dispatcher
@@ -1084,6 +1120,8 @@ class ProcedureDivisionParser:
             return self._parse_add(state)
         if upper == "SUBTRACT":
             return self._parse_subtract(state)
+        if upper == "COMPUTE":
+            return self._parse_compute(state)
         if upper == "MULTIPLY":
             return self._parse_multiply(state)
         if upper == "DIVIDE":
@@ -1096,6 +1134,8 @@ class ProcedureDivisionParser:
             return self._parse_perform_statement(state)
         if upper == "GO":
             return self._parse_go_to_statement(state)
+        if upper == "READ":
+            return self._parse_read_statement(state)
 
         raise ParserError(
             f"unsupported statement keyword {upper!r}",
@@ -1103,6 +1143,138 @@ class ProcedureDivisionParser:
             column=tok.position.column,
             offset=tok.position.offset,
         )
+
+    # ------------------------------------------------------------------
+    # Subscripted operand recognition (task #stage32)
+    # ------------------------------------------------------------------
+
+    def _try_read_subscripted_reference(
+        self,
+        state: ParserState,
+        is_valid_after: Callable[[Token], bool],
+    ) -> tuple[str, tuple[Subscript, ...]] | None:
+        """
+        Recognise the single-dimension subscripted-reference shape
+        ``IDENTIFIER ( NUMBER|IDENTIFIER )`` at the current cursor
+        position, consuming it only if it is immediately followed by a
+        token *is_valid_after* accepts.
+
+        This is the one place the structure of ``WS-ITEM(2)`` /
+        ``WS-ITEM(WS-I)`` is recognised. Every caller below (the shared
+        operand reader and the IF-condition parsers) goes through this
+        method rather than each re-deriving the same four-token shape,
+        so there is exactly one definition of "what counts as a
+        subscripted reference" in this parser.
+
+        Returns ``None`` (consuming nothing, leaving the cursor
+        untouched) for every other shape — including a comma-separated
+        multi-dimensional subscript (``WS-TABLE(I, J)``) and an
+        arithmetic subscript expression (``WS-ITEM(WS-I + 1)``), both
+        deliberately out of this stage's scope — so the caller falls
+        back to the pre-existing flat-token-accumulation behaviour,
+        completely unchanged from before this stage.
+
+        Args:
+            state: Active parser state.
+            is_valid_after: Predicate the token immediately following the
+                closing ``)`` must satisfy for this to count as a
+                subscripted reference. For an operand read by MOVE/ADD/
+                SUBTRACT/MULTIPLY/DIVIDE/DISPLAY this is "is it a
+                statement-boundary token (or this statement's own
+                keyword, e.g. ``TO``)"; for an IF condition's left
+                operand it is "is it a comparison operator"; for the
+                right operand of a condition (which is always exactly
+                one token/reference, nothing ever follows it within the
+                condition grammar) it is unconditionally ``True``,
+                matching that the pre-existing code never looked ahead
+                after the right operand either.
+
+        Returns:
+            ``(base_name, (Subscript,))`` and the four tokens consumed,
+            or ``None`` with nothing consumed.
+        """
+        stream = state.stream
+        base_tok = stream.current()
+        if base_tok.type is not TokenType.IDENTIFIER:
+            return None
+        if stream.peek(1).type is not TokenType.LPAREN:
+            return None
+        sub_tok = stream.peek(2)
+        if sub_tok.type is TokenType.NUMBER:
+            kind = "literal"
+        elif sub_tok.type is TokenType.IDENTIFIER:
+            kind = "identifier"
+        else:
+            return None
+        if stream.peek(3).type is not TokenType.RPAREN:
+            return None
+        if not is_valid_after(stream.peek(4)):
+            return None
+
+        stream.advance()  # base identifier
+        stream.advance()  # (
+        stream.advance()  # subscript
+        stream.advance()  # )
+        return base_tok.lexeme, (Subscript(kind=kind, value=sub_tok.lexeme),)
+
+    def _read_operand(
+        self,
+        state: ParserState,
+        extra_stop_words: frozenset[str] = frozenset(),
+    ) -> tuple[str, tuple[Subscript, ...]]:
+        """
+        Read one COBOL operand starting at the current token, for MOVE/
+        ADD/SUBTRACT/MULTIPLY/DIVIDE/DISPLAY (task #stage32).
+
+        Two shapes are recognised:
+
+        1. A single subscripted reference — ``NAME ( literal-or-identifier )``
+           immediately followed by a genuine operand-list boundary —
+           returns ``(base_name, (Subscript,))``, consuming exactly
+           those four tokens. This is a *structural* result: the base
+           name and the subscript are kept apart rather than joined into
+           one flattened string (``"WS-ITEM ( WS-I )"``), so nothing
+           downstream has to re-parse text to recover them.
+        2. Anything else — the pre-existing behaviour, completely
+           unchanged: every token up to the first boundary (an
+           operand-list boundary, per :func:`_at_operand_boundary`, or
+           any lexeme in *extra_stop_words*) is joined with a single
+           space and returned as one flat string, with an empty
+           subscript tuple. This is also the fallback for a subscript
+           shape this stage does not represent structurally (a
+           multi-dimensional or arithmetic subscript) — it keeps
+           producing exactly today's (already-imperfect, pre-existing)
+           flattened text rather than a new, different kind of result.
+
+        Args:
+            state: Active parser state.
+            extra_stop_words: Extra uppercased lexemes that end the
+                operand list beyond what :func:`_at_operand_boundary`
+                already recognises (e.g. ``{"TO"}`` for MOVE's source,
+                ``{"FROM"}`` for SUBTRACT, ``{"BY"}`` for MULTIPLY,
+                ``{"INTO"}`` for DIVIDE).
+
+        Returns:
+            ``(text, subscripts)`` — ``subscripts`` is empty for every
+            operand shape this stage does not specifically model.
+        """
+        stream = state.stream
+
+        def _is_boundary(tok: Token) -> bool:
+            return _at_operand_boundary(tok) or tok.lexeme.upper() in extra_stop_words
+
+        subscripted = self._try_read_subscripted_reference(state, _is_boundary)
+        if subscripted is not None:
+            return subscripted
+
+        parts: list[str] = []
+        while not stream.eof():
+            tok = stream.current()
+            if _is_boundary(tok):
+                break
+            parts.append(tok.lexeme)
+            stream.advance()
+        return " ".join(parts), ()
 
     # ------------------------------------------------------------------
     # Individual statement parsers
@@ -1133,15 +1305,9 @@ class ProcedureDivisionParser:
 
         stream.advance()  # consume DISPLAY
 
-        operand_parts: list[str] = []
-        while not stream.eof():
-            tok = stream.current()
-            if _at_operand_boundary(tok):
-                break
-            operand_parts.append(tok.lexeme)
-            stream.advance()
+        operand, operand_subscript = self._read_operand(state)
 
-        if not operand_parts:
+        if not operand:
             tok = stream.current()
             raise ParserError(
                 "expected operand after DISPLAY",
@@ -1150,7 +1316,6 @@ class ProcedureDivisionParser:
                 offset=tok.position.offset,
             )
 
-        operand = " ".join(operand_parts)
         end: Position = stream.current().position
         self._consume_optional_period(state)
 
@@ -1158,6 +1323,7 @@ class ProcedureDivisionParser:
             start_position=start,
             end_position=end,
             operand=operand,
+            operand_subscript=operand_subscript,
         )
 
     def _parse_move(self, state: ParserState) -> MoveStatementNode:
@@ -1190,17 +1356,9 @@ class ProcedureDivisionParser:
         # Collect source tokens up to TO — TO is emitted as an IDENTIFIER
         # by the lexer (it is not in the keyword set) so we compare by
         # uppercased lexeme regardless of token type.
-        source_parts: list[str] = []
-        while not stream.eof():
-            tok = stream.current()
-            if _at_operand_boundary(tok):
-                break
-            if tok.lexeme.upper() == "TO":
-                break
-            source_parts.append(tok.lexeme)
-            stream.advance()
+        source, source_subscript = self._read_operand(state, frozenset({"TO"}))
 
-        if not source_parts:
+        if not source:
             tok = stream.current()
             raise ParserError(
                 "expected source operand after MOVE",
@@ -1222,15 +1380,9 @@ class ProcedureDivisionParser:
         stream.advance()  # consume TO
 
         # Collect target tokens up to period
-        target_parts: list[str] = []
-        while not stream.eof():
-            tok = stream.current()
-            if _at_operand_boundary(tok):
-                break
-            target_parts.append(tok.lexeme)
-            stream.advance()
+        target, target_subscript = self._read_operand(state)
 
-        if not target_parts:
+        if not target:
             tok = stream.current()
             raise ParserError(
                 "expected target operand after TO in MOVE statement",
@@ -1239,8 +1391,6 @@ class ProcedureDivisionParser:
                 offset=tok.position.offset,
             )
 
-        source = " ".join(source_parts)
-        target = " ".join(target_parts)
         end: Position = stream.current().position
         self._consume_optional_period(state)
 
@@ -1249,6 +1399,8 @@ class ProcedureDivisionParser:
             end_position=end,
             source=source,
             target=target,
+            source_subscript=source_subscript,
+            target_subscript=target_subscript,
         )
 
     def _parse_stop_run(self, state: ParserState) -> StopRunStatementNode:
@@ -1331,15 +1483,9 @@ class ProcedureDivisionParser:
         start: Position = stream.current().position
         stream.advance()  # consume ADD
 
-        left_parts: list[str] = []
-        while not stream.eof():
-            tok = stream.current()
-            if _at_operand_boundary(tok) or tok.lexeme.upper() == "TO":
-                break
-            left_parts.append(tok.lexeme)
-            stream.advance()
+        left, left_subscript = self._read_operand(state, frozenset({"TO"}))
 
-        if not left_parts:
+        if not left:
             tok = stream.current()
             raise ParserError(
                 "expected operand after ADD",
@@ -1358,15 +1504,9 @@ class ProcedureDivisionParser:
             )
         stream.advance()
 
-        right_parts: list[str] = []
-        while not stream.eof():
-            tok = stream.current()
-            if _at_operand_boundary(tok):
-                break
-            right_parts.append(tok.lexeme)
-            stream.advance()
+        right, right_subscript = self._read_operand(state)
 
-        if not right_parts:
+        if not right:
             tok = stream.current()
             raise ParserError(
                 "expected target operand after TO",
@@ -1375,13 +1515,16 @@ class ProcedureDivisionParser:
                 offset=tok.position.offset,
             )
 
-        left = " ".join(left_parts)
-        right = " ".join(right_parts)
         end: Position = stream.current().position
         self._consume_optional_period(state)
 
         return AddStatementNode(
-            start_position=start, end_position=end, left=left, right=right
+            start_position=start,
+            end_position=end,
+            left=left,
+            right=right,
+            left_subscript=left_subscript,
+            right_subscript=right_subscript,
         )
 
     def _parse_subtract(self, state: ParserState) -> SubtractStatementNode:
@@ -1389,15 +1532,9 @@ class ProcedureDivisionParser:
         start: Position = stream.current().position
         stream.advance()  # consume SUBTRACT
 
-        left_parts: list[str] = []
-        while not stream.eof():
-            tok = stream.current()
-            if _at_operand_boundary(tok) or tok.lexeme.upper() == "FROM":
-                break
-            left_parts.append(tok.lexeme)
-            stream.advance()
+        left, left_subscript = self._read_operand(state, frozenset({"FROM"}))
 
-        if not left_parts:
+        if not left:
             tok = stream.current()
             raise ParserError(
                 "expected operand after SUBTRACT",
@@ -1416,15 +1553,9 @@ class ProcedureDivisionParser:
             )
         stream.advance()
 
-        right_parts: list[str] = []
-        while not stream.eof():
-            tok = stream.current()
-            if _at_operand_boundary(tok):
-                break
-            right_parts.append(tok.lexeme)
-            stream.advance()
+        right, right_subscript = self._read_operand(state)
 
-        if not right_parts:
+        if not right:
             tok = stream.current()
             raise ParserError(
                 "expected target operand after FROM",
@@ -1433,13 +1564,16 @@ class ProcedureDivisionParser:
                 offset=tok.position.offset,
             )
 
-        left = " ".join(left_parts)
-        right = " ".join(right_parts)
         end: Position = stream.current().position
         self._consume_optional_period(state)
 
         return SubtractStatementNode(
-            start_position=start, end_position=end, left=left, right=right
+            start_position=start,
+            end_position=end,
+            left=left,
+            right=right,
+            left_subscript=left_subscript,
+            right_subscript=right_subscript,
         )
 
     def _parse_multiply(self, state: ParserState) -> MultiplyStatementNode:
@@ -1447,15 +1581,9 @@ class ProcedureDivisionParser:
         start: Position = stream.current().position
         stream.advance()  # consume MULTIPLY
 
-        left_parts: list[str] = []
-        while not stream.eof():
-            tok = stream.current()
-            if _at_operand_boundary(tok) or tok.lexeme.upper() == "BY":
-                break
-            left_parts.append(tok.lexeme)
-            stream.advance()
+        left, left_subscript = self._read_operand(state, frozenset({"BY"}))
 
-        if not left_parts:
+        if not left:
             tok = stream.current()
             raise ParserError(
                 "expected operand after MULTIPLY",
@@ -1474,15 +1602,9 @@ class ProcedureDivisionParser:
             )
         stream.advance()
 
-        right_parts: list[str] = []
-        while not stream.eof():
-            tok = stream.current()
-            if _at_operand_boundary(tok):
-                break
-            right_parts.append(tok.lexeme)
-            stream.advance()
+        right, right_subscript = self._read_operand(state)
 
-        if not right_parts:
+        if not right:
             tok = stream.current()
             raise ParserError(
                 "expected target operand after BY",
@@ -1491,13 +1613,16 @@ class ProcedureDivisionParser:
                 offset=tok.position.offset,
             )
 
-        left = " ".join(left_parts)
-        right = " ".join(right_parts)
         end: Position = stream.current().position
         self._consume_optional_period(state)
 
         return MultiplyStatementNode(
-            start_position=start, end_position=end, left=left, right=right
+            start_position=start,
+            end_position=end,
+            left=left,
+            right=right,
+            left_subscript=left_subscript,
+            right_subscript=right_subscript,
         )
 
     def _parse_divide(self, state: ParserState) -> DivideStatementNode:
@@ -1505,15 +1630,9 @@ class ProcedureDivisionParser:
         start: Position = stream.current().position
         stream.advance()  # consume DIVIDE
 
-        left_parts: list[str] = []
-        while not stream.eof():
-            tok = stream.current()
-            if _at_operand_boundary(tok) or tok.lexeme.upper() == "INTO":
-                break
-            left_parts.append(tok.lexeme)
-            stream.advance()
+        left, left_subscript = self._read_operand(state, frozenset({"INTO"}))
 
-        if not left_parts:
+        if not left:
             tok = stream.current()
             raise ParserError(
                 "expected operand after DIVIDE",
@@ -1532,15 +1651,9 @@ class ProcedureDivisionParser:
             )
         stream.advance()
 
-        right_parts: list[str] = []
-        while not stream.eof():
-            tok = stream.current()
-            if _at_operand_boundary(tok):
-                break
-            right_parts.append(tok.lexeme)
-            stream.advance()
+        right, right_subscript = self._read_operand(state)
 
-        if not right_parts:
+        if not right:
             tok = stream.current()
             raise ParserError(
                 "expected target operand after INTO",
@@ -1549,13 +1662,211 @@ class ProcedureDivisionParser:
                 offset=tok.position.offset,
             )
 
-        left = " ".join(left_parts)
-        right = " ".join(right_parts)
         end: Position = stream.current().position
         self._consume_optional_period(state)
 
         return DivideStatementNode(
-            start_position=start, end_position=end, left=left, right=right
+            start_position=start,
+            end_position=end,
+            left=left,
+            right=right,
+            left_subscript=left_subscript,
+            right_subscript=right_subscript,
+        )
+
+    # ------------------------------------------------------------------
+    # COMPUTE (task #stage35)
+    # ------------------------------------------------------------------
+
+    def _compute_has_supported_syntax(self, state: ParserState) -> bool:
+        """
+        ``True`` if the ``COMPUTE`` statement at the cursor uses only the
+        grammar :meth:`_parse_compute` implements (task #stage35): a
+        target, ``=``, and an expression built from ``+ - * /``,
+        parentheses, numeric literals, and (optionally subscripted)
+        identifiers.
+
+        ``ROUNDED`` and an intrinsic ``FUNCTION`` operand are real COBOL
+        ``COMPUTE`` syntax -- found in ``tests/fixtures/complex_acctbatch.cbl``
+        (task #stage35's investigation) -- but not anywhere in the
+        45-source training corpus, so neither is implemented. A COMPUTE
+        using either must still be recognised and rejected *before*
+        :meth:`_parse_compute` commits to parsing it, so it falls back to
+        the ordinary :meth:`_skip_unsupported_statement_auto` path (a
+        ``SYN100`` diagnostic) instead of :meth:`_parse_compute` raising a
+        hard ``ParserError`` partway through -- which, raised from inside
+        an ``IF``/``ELSE``/``PERFORM`` body, could unwind the entire
+        enclosing construct (the exact defect class
+        docs/MMIM_COMPUTE_EVALUATE_IF_FIX.md fixed for the
+        unsupported-statement path; this COMPUTE-specific pre-check keeps
+        that same safety for the two sub-forms this stage does not
+        implement).
+
+        This is pure lookahead: the cursor must be on the ``COMPUTE``
+        token itself, and nothing is consumed regardless of the result.
+
+        Args:
+            state: Active parser state, positioned on ``COMPUTE``.
+
+        Returns:
+            ``False`` if ``ROUNDED`` or ``FUNCTION`` appears anywhere
+            before the statement ends; ``True`` otherwise.
+        """
+        stream = state.stream
+        offset = 1
+        while True:
+            tok = stream.peek(offset)
+            if tok.type is TokenType.EOF:
+                return True
+            if _at_operand_boundary(tok):
+                return True
+            if tok.lexeme.upper() in ("ROUNDED", "FUNCTION"):
+                return False
+            offset += 1
+
+    def _is_valid_after_compute_operand(self, token: Token) -> bool:
+        """
+        ``True`` if *token* may legally follow a COMPUTE expression
+        operand -- used as the ``is_valid_after`` predicate for
+        :meth:`_try_read_subscripted_reference` when reading an operand
+        inside a COMPUTE expression (task #stage35).
+
+        Beyond the operand-list boundary shape :func:`_at_operand_boundary`
+        already recognises, an expression operand may also be followed by
+        an arithmetic operator (``B(I) * C``) or a closing parenthesis
+        that ends an enclosing group (``(A(I) + B)``).
+        """
+        return (
+            token.type is TokenType.RPAREN
+            or _is_arithmetic_operator_token(token)
+            or _at_operand_boundary(token)
+        )
+
+    def _parse_compute_factor(self, state: ParserState) -> ArithmeticExpression:
+        """
+        Parse one COMPUTE expression factor: a parenthesized
+        sub-expression, a subscripted reference, or a bare literal/
+        identifier (task #stage35's expression grammar, innermost level).
+        """
+        stream = state.stream
+        tok = stream.current()
+
+        if tok.type is TokenType.LPAREN:
+            stream.advance()  # consume (
+            expression = self._parse_compute_expression(state)
+            close_tok = stream.current()
+            if close_tok.type is not TokenType.RPAREN:
+                raise ParserError(
+                    "expected ')' in COMPUTE expression",
+                    line=close_tok.position.line,
+                    column=close_tok.position.column,
+                    offset=close_tok.position.offset,
+                )
+            stream.advance()  # consume )
+            return expression
+
+        subscripted = self._try_read_subscripted_reference(
+            state, self._is_valid_after_compute_operand
+        )
+        if subscripted is not None:
+            name, subscript = subscripted
+            return OperandExpression(value=name, subscript=subscript)
+
+        if tok.type in (TokenType.NUMBER, TokenType.IDENTIFIER):
+            stream.advance()
+            return OperandExpression(value=tok.lexeme)
+
+        raise ParserError(
+            f"expected operand in COMPUTE expression, got {tok.lexeme!r}",
+            line=tok.position.line,
+            column=tok.position.column,
+            offset=tok.position.offset,
+        )
+
+    def _parse_compute_term(self, state: ParserState) -> ArithmeticExpression:
+        """Parse a COMPUTE expression term: factors joined by ``*``/``/``,
+        which bind tighter than ``+``/``-`` (task #stage35)."""
+        stream = state.stream
+        left = self._parse_compute_factor(state)
+        while True:
+            tok = stream.current()
+            if not (_is_arithmetic_operator_token(tok) and tok.lexeme in ("*", "/")):
+                break
+            stream.advance()
+            right = self._parse_compute_factor(state)
+            left = BinaryExpression(operator=tok.lexeme, left=left, right=right)
+        return left
+
+    def _parse_compute_expression(self, state: ParserState) -> ArithmeticExpression:
+        """Parse a full COMPUTE expression: terms joined by ``+``/``-``
+        (task #stage35, outermost precedence level)."""
+        stream = state.stream
+        left = self._parse_compute_term(state)
+        while True:
+            tok = stream.current()
+            if not (_is_arithmetic_operator_token(tok) and tok.lexeme in ("+", "-")):
+                break
+            stream.advance()
+            right = self._parse_compute_term(state)
+            left = BinaryExpression(operator=tok.lexeme, left=left, right=right)
+        return left
+
+    def _parse_compute(self, state: ParserState) -> ComputeStatementNode:
+        """
+        Parse ``COMPUTE target = expression`` (task #stage35).
+
+        The cursor must be on ``COMPUTE``, and
+        :meth:`_compute_has_supported_syntax` must already have confirmed
+        this statement uses only the supported grammar -- this method
+        does not itself guard against ``ROUNDED``/``FUNCTION``, since
+        every caller checks that first.
+        """
+        stream = state.stream
+        start: Position = stream.current().position
+        stream.advance()  # consume COMPUTE
+
+        def _is_valid_target_boundary(tok: Token) -> bool:
+            return tok.type is TokenType.OPERATOR_EQ
+
+        subscripted_target = self._try_read_subscripted_reference(
+            state, _is_valid_target_boundary
+        )
+        if subscripted_target is not None:
+            target, target_subscript = subscripted_target
+        else:
+            target_tok = stream.current()
+            if target_tok.type is not TokenType.IDENTIFIER:
+                raise ParserError(
+                    "expected target identifier after COMPUTE",
+                    line=target_tok.position.line,
+                    column=target_tok.position.column,
+                    offset=target_tok.position.offset,
+                )
+            target = target_tok.lexeme
+            target_subscript = ()
+            stream.advance()
+
+        eq_tok = stream.current()
+        if eq_tok.type is not TokenType.OPERATOR_EQ:
+            raise ParserError(
+                f"expected '=' in COMPUTE statement, got {eq_tok.lexeme!r}",
+                line=eq_tok.position.line,
+                column=eq_tok.position.column,
+                offset=eq_tok.position.offset,
+            )
+        stream.advance()  # consume =
+
+        expression = self._parse_compute_expression(state)
+
+        end: Position = stream.current().position
+        self._consume_optional_period(state)
+
+        return ComputeStatementNode(
+            start_position=start,
+            end_position=end,
+            target=target,
+            expression=expression,
+            target_subscript=target_subscript,
         )
 
     def _parse_call(self, state: ParserState) -> CallStatementNode:
@@ -1590,6 +1901,25 @@ class ProcedureDivisionParser:
                 tok = stream.current()
                 if _at_operand_boundary(tok):
                     break
+                if tok.type is TokenType.COMMA:
+                    # A COBOL argument-list separator, never an argument
+                    # itself (task #stage36's PERFORM/paragraph-outlining
+                    # investigation: this was a pre-existing, independent
+                    # bug -- every comma between two real USING operands
+                    # was appended to `arguments` as if it were its own
+                    # operand, so `CALL 'X' USING A, B` produced a bogus
+                    # 3rd/5th/... argument whose lexeme is the literal text
+                    # ",", silently latent because no corpus source's
+                    # multi-argument CALL previously reached the Java
+                    # backend at all -- every one lived in a paragraph that
+                    # was always a PERFORM-target BE009 stub until that
+                    # stage taught the backend to emit a paragraph's real
+                    # body. Skipping the separator here is the same fix
+                    # `_read_operand`'s siblings never needed, since COBOL's
+                    # other operand lists (ADD/SUBTRACT/MULTIPLY/DIVIDE/
+                    # MOVE) are never comma-separated.
+                    stream.advance()
+                    continue
                 arguments.append(tok.lexeme)
                 stream.advance()
 
@@ -1701,7 +2031,15 @@ class ProcedureDivisionParser:
     # Control flow statement parsers
     # ------------------------------------------------------------------
 
-    def _parse_simple_condition(self, state: ParserState) -> tuple[str, str, str]:
+    def _parse_simple_condition(self, state: ParserState) -> tuple[
+        str,
+        str,
+        str,
+        tuple[Subscript, ...],
+        tuple[Subscript, ...],
+        ArithmeticExpression | None,
+        ArithmeticExpression | None,
+    ]:
         """
         Parse one ``<operand> [NOT] <comparison-operator> <operand>`` triple —
         the shape both a plain ``IF`` condition and each ``AND``/``OR``-
@@ -1709,6 +2047,25 @@ class ProcedureDivisionParser:
         ``AND``/``OR``/``NOT`` or ``(``/``)`` — a compound or parenthesised
         condition is assembled by the caller from repeated calls to this
         method (see :meth:`_parse_if_statement`).
+
+        Either operand may also be a parenthesized arithmetic expression
+        (task #stage38, e.g. ``IF (CURRENT-STOCK-QTY + SUGGESTED-ORDER-QTY)
+        > WAREHOUSE-CAPACITY``) — recognised by a leading ``(`` that is
+        *not* the narrow subscripted-reference shape
+        :meth:`_try_read_subscripted_reference` already claims (that method
+        requires an identifier immediately before the ``(``, so a bare
+        leading ``(`` always falls through to here untouched). Parsed via
+        :meth:`_parse_compute_expression` — the exact Stage 35 ``COMPUTE``
+        expression grammar, reused verbatim, never duplicated — which
+        itself consumes the matching closing ``)`` (see
+        :meth:`_parse_compute_factor`'s own parenthesized-factor branch),
+        leaving the cursor positioned exactly where a single-token operand
+        read would have left it. When an expression is parsed this way,
+        the returned flat ``left``/``right`` string for that side is
+        ``""`` — the expression tree is the operand's only representation,
+        mirroring :class:`~app.parser.ast.statements.ComputeStatementNode`,
+        which likewise has no parallel flattened-string field alongside its
+        own ``expression``.
 
         A ``NOT`` sitting *between* the two operands (COBOL's own
         ``relational-operator ::= [NOT] { = | > | < | >= | <= | <> }``
@@ -1734,19 +2091,49 @@ class ProcedureDivisionParser:
         e.g. ``IF WS-CODE = SPACES``) — see
         :func:`_is_comparison_operand_token` and :data:`_FIGURATIVE_CONSTANT_KEYWORDS`
         for exactly which spellings that widens acceptance for and why.
+
+        Either operand may also be a single-dimension subscripted table
+        reference (``IF WS-ITEM(WS-I) > 100``, task #stage32) — see
+        :meth:`_try_read_subscripted_reference`. Before this stage, the
+        left operand's own single-token read never looked past that
+        token, so a following ``(`` immediately failed the "expected
+        comparison operator" check below, dropping the *entire*
+        enclosing ``IF``/``END-IF`` from the AST (recovery had no
+        interior period to resynchronise on). The right operand is
+        accepted unconditionally when the four-token shape matches —
+        nothing has ever looked ahead past it either, matching the
+        pre-existing single-token read it replaces.
         """
         stream = state.stream
 
-        tok = stream.current()
-        if not _is_comparison_operand_token(tok):
-            raise ParserError(
-                "expected operand for IF condition",
-                line=tok.position.line,
-                column=tok.position.column,
-                offset=tok.position.offset,
-            )
-        left = tok.lexeme
-        stream.advance()
+        left_expression: ArithmeticExpression | None = None
+        subscripted_left = self._try_read_subscripted_reference(
+            state, _is_comparison_operator_token
+        )
+        if subscripted_left is not None:
+            left, left_subscript = subscripted_left
+        elif stream.current().type is TokenType.LPAREN:
+            # Parenthesized arithmetic-expression operand (task #stage38).
+            # _try_read_subscripted_reference above already ruled out the
+            # narrow "IDENTIFIER(subscript)" shape (it requires an
+            # identifier immediately before the '(', which a bare leading
+            # '(' never is), so reaching here means a genuine grouped
+            # expression, not a subscript.
+            left_expression = self._parse_compute_expression(state)
+            left = ""
+            left_subscript = ()
+        else:
+            tok = stream.current()
+            if not _is_comparison_operand_token(tok):
+                raise ParserError(
+                    "expected operand for IF condition",
+                    line=tok.position.line,
+                    column=tok.position.column,
+                    offset=tok.position.offset,
+                )
+            left = tok.lexeme
+            stream.advance()
+            left_subscript = ()
 
         negated = False
         if matches_grammar_word(stream.current(), {"NOT"}):
@@ -1775,20 +2162,49 @@ class ProcedureDivisionParser:
             operator = tok.lexeme
         stream.advance()
 
-        tok = stream.current()
-        if not _is_comparison_operand_token(tok):
-            raise ParserError(
-                "expected operand for IF condition",
-                line=tok.position.line,
-                column=tok.position.column,
-                offset=tok.position.offset,
-            )
-        right = tok.lexeme
-        stream.advance()
+        right_expression: ArithmeticExpression | None = None
+        subscripted_right = self._try_read_subscripted_reference(
+            state, lambda _tok: True
+        )
+        if subscripted_right is not None:
+            right, right_subscript = subscripted_right
+        elif stream.current().type is TokenType.LPAREN:
+            # See the matching left-operand branch above (task #stage38).
+            right_expression = self._parse_compute_expression(state)
+            right = ""
+            right_subscript = ()
+        else:
+            tok = stream.current()
+            if not _is_comparison_operand_token(tok):
+                raise ParserError(
+                    "expected operand for IF condition",
+                    line=tok.position.line,
+                    column=tok.position.column,
+                    offset=tok.position.offset,
+                )
+            right = tok.lexeme
+            stream.advance()
+            right_subscript = ()
 
-        return left, operator, right
+        return (
+            left,
+            operator,
+            right,
+            left_subscript,
+            right_subscript,
+            left_expression,
+            right_expression,
+        )
 
-    def _parse_condition_term(self, state: ParserState) -> tuple[str, str, str]:
+    def _parse_condition_term(self, state: ParserState) -> tuple[
+        str,
+        str,
+        str,
+        tuple[Subscript, ...],
+        tuple[Subscript, ...],
+        ArithmeticExpression | None,
+        ArithmeticExpression | None,
+    ]:
         """
         Parse one ``IF``-condition term, admitting a bare level-88
         condition-name reference (optionally ``NOT``-prefixed) in addition
@@ -1814,11 +2230,16 @@ class ProcedureDivisionParser:
         only immediately before a *known* condition-name).
 
         Returns:
-            A ``(left, operator, right)`` triple. For a condition-name
-            term, ``operator`` is :data:`_CONDITION_NAME_TRUE_OPERATOR` or
-            :data:`_CONDITION_NAME_FALSE_OPERATOR` and ``left``/``right``
+            A ``(left, operator, right, left_subscript, right_subscript,
+            left_expression, right_expression)`` 7-tuple (task #stage38
+            added the last two). For a condition-name term, ``operator``
+            is :data:`_CONDITION_NAME_TRUE_OPERATOR` or
+            :data:`_CONDITION_NAME_FALSE_OPERATOR`, ``left``/``right``
             both hold the condition-name itself (see the module-level
-            comment above those constants for why).
+            comment above those constants for why), both subscript
+            tuples are empty — a condition-name is never subscripted —
+            and both expression fields are ``None`` — a condition-name is
+            never a parenthesized expression either.
         """
         stream = state.stream
         known = state.known_condition_names
@@ -1842,7 +2263,7 @@ class ProcedureDivisionParser:
                     if negated
                     else _CONDITION_NAME_TRUE_OPERATOR
                 )
-                return name, operator, name
+                return name, operator, name, (), (), None, None
 
         # Not a recognised condition-name reference (negated or not) --
         # fall through to the ordinary comparison grammar, unchanged. A
@@ -1862,25 +2283,53 @@ class ProcedureDivisionParser:
         # Parse the first (and, for a plain IF, only) condition term --
         # either an ordinary comparison or a level-88 condition-name
         # reference (see _parse_condition_term).
-        left, operator, right = self._parse_condition_term(state)
+        (
+            left,
+            operator,
+            right,
+            left_subscript,
+            right_subscript,
+            left_expression,
+            right_expression,
+        ) = self._parse_condition_term(state)
 
         # Compound condition: zero or more further AND/OR-joined terms.
         # AND binds tighter than OR (COBOL's own precedence rule); see
-        # ConditionTerm's docstring. Parenthesised sub-conditions are
-        # deliberately not handled here — the operand check inside
-        # _parse_simple_condition rejects a leading '(' with a clear
-        # ParserError rather than silently misparsing it.
+        # ConditionTerm's docstring. Parenthesised *sub-conditions*
+        # (grouping, e.g. "(A = B) OR (C = D)") are still deliberately
+        # not handled here — a leading '(' at a *term* boundary (where
+        # AND/OR/a whole new condition would start) is never reached by
+        # this loop at all, since the loop only fires on a literal AND/OR
+        # lexeme. Two narrower exceptions to a leading '(' *inside* one
+        # term's own operand position are recognised: a single-dimension
+        # subscripted table reference (task #stage32) — see
+        # _try_read_subscripted_reference — and, task #stage38, a
+        # parenthesized arithmetic expression — see
+        # _parse_simple_condition. Neither is "the start of a grouped
+        # sub-condition"; both are one operand, structurally.
         extra_conditions: list[ConditionTerm] = []
         while stream.current().lexeme.upper() in ("AND", "OR"):
             connector = stream.current().lexeme.upper()
             stream.advance()  # consume AND/OR
-            term_left, term_operator, term_right = self._parse_condition_term(state)
+            (
+                term_left,
+                term_operator,
+                term_right,
+                term_left_sub,
+                term_right_sub,
+                term_left_expr,
+                term_right_expr,
+            ) = self._parse_condition_term(state)
             extra_conditions.append(
                 ConditionTerm(
                     connector=connector,
                     left=term_left,
                     operator=term_operator,
                     right=term_right,
+                    left_subscript=term_left_sub,
+                    right_subscript=term_right_sub,
+                    left_expression=term_left_expr,
+                    right_expression=term_right_expr,
                 )
             )
 
@@ -1901,10 +2350,13 @@ class ProcedureDivisionParser:
             tok = stream.current()
             if tok.lexeme.upper() in ("ELSE", "END-IF"):
                 break
-            if tok.lexeme.upper() in _STATEMENT_LEXEMES:
+            upper = tok.lexeme.upper()
+            if upper == "COMPUTE" and not self._compute_has_supported_syntax(state):
+                self._skip_unsupported_statement_auto(state)
+            elif upper in _STATEMENT_LEXEMES:
                 then_statements.append(self._parse_statement(state))
-            elif tok.lexeme.upper() in _UNSUPPORTED_STATEMENT_LEXEMES:
-                self._skip_unsupported_statement(state)
+            elif upper in _UNSUPPORTED_STATEMENT_LEXEMES:
+                self._skip_unsupported_statement_auto(state)
             else:
                 raise ParserError(
                     "expected statement in IF block",
@@ -1920,10 +2372,13 @@ class ProcedureDivisionParser:
                 tok = stream.current()
                 if tok.lexeme.upper() == "END-IF":
                     break
-                if tok.lexeme.upper() in _STATEMENT_LEXEMES:
+                upper = tok.lexeme.upper()
+                if upper == "COMPUTE" and not self._compute_has_supported_syntax(state):
+                    self._skip_unsupported_statement_auto(state)
+                elif upper in _STATEMENT_LEXEMES:
                     else_statements.append(self._parse_statement(state))
-                elif tok.lexeme.upper() in _UNSUPPORTED_STATEMENT_LEXEMES:
-                    self._skip_unsupported_statement(state)
+                elif upper in _UNSUPPORTED_STATEMENT_LEXEMES:
+                    self._skip_unsupported_statement_auto(state)
                 else:
                     raise ParserError(
                         "expected statement in ELSE block",
@@ -1962,7 +2417,115 @@ class ProcedureDivisionParser:
             then_statements=tuple(then_statements),
             else_statements=tuple(else_statements),
             extra_conditions=tuple(extra_conditions),
+            condition_left_subscript=left_subscript,
+            condition_right_subscript=right_subscript,
+            condition_left_expression=left_expression,
+            condition_right_expression=right_expression,
         )
+
+    def _parse_perform_body(self, state: ParserState) -> list[StatementNode]:
+        """
+        Parse the statement list of a structured ``PERFORM``
+        (``PERFORM UNTIL`` or, task #stage34, ``PERFORM VARYING``) block,
+        stopping at ``END-PERFORM``.
+
+        An unsupported verb (READ, COMPUTE, EVALUATE, ...) here used to
+        raise a hard ``ParserError``, which the caller's statement-level
+        recovery resolves by synchronising to the next PERIOD -- and a
+        structured PERFORM/END-PERFORM has no interior periods of its own
+        guaranteed, so that could swallow the rest of the paragraph,
+        exactly the defect class
+        docs/MMIM_PARSER_VALIDATION_FIX.md §7 fixed for IF/ELSE blocks
+        (task #stage28; the identical gap was found but left unfixed
+        there, docs/MMIM_COMPUTE_EVALUATE_IF_FIX.md §8). This mirrors that
+        fix exactly: the same graceful
+        :meth:`_skip_unsupported_statement_auto` path
+        ``_parse_if_statement``'s then/else loops now also use (task
+        #stage34) -- including ``EXIT PERFORM`` (found directly in the
+        real corpus, nested inside an ``IF`` inside a ``PERFORM VARYING``
+        body: ``complex_acctbatch.cbl``'s ``4100-FIND-ACCOUNT``/
+        ``4200-FIND-CUSTOMER``), which needed that method's two-word fix
+        precisely because it is unavoidable for this loop body to parse
+        at all -- see its own docstring.
+
+        Args:
+            state: The active parser state, positioned just after the
+                ``UNTIL <condition>`` (or, task #stage34, the
+                ``VARYING ... UNTIL <condition>``) header.
+
+        Returns:
+            The body's statements, in source order. Does **not** consume
+            ``END-PERFORM`` itself -- the caller does, so it can report
+            "missing END-PERFORM" at the right position for either form.
+        """
+        stream = state.stream
+        statements: list[StatementNode] = []
+        while not stream.eof():
+            tok = stream.current()
+            if tok.lexeme.upper() == "END-PERFORM":
+                break
+            upper = tok.lexeme.upper()
+            if upper == "COMPUTE" and not self._compute_has_supported_syntax(state):
+                self._skip_unsupported_statement_auto(state)
+            elif upper in _STATEMENT_LEXEMES:
+                statements.append(self._parse_statement(state))
+            elif upper in _UNSUPPORTED_STATEMENT_LEXEMES:
+                self._skip_unsupported_statement_auto(state)
+            else:
+                raise ParserError(
+                    "expected statement in PERFORM block",
+                    line=tok.position.line,
+                    column=tok.position.column,
+                    offset=tok.position.offset,
+                )
+        return statements
+
+    def _consume_end_perform(self, state: ParserState) -> None:
+        """Consume ``END-PERFORM``, or raise ``ParserError`` if missing."""
+        stream = state.stream
+        if stream.current().lexeme.upper() == "END-PERFORM":
+            stream.advance()
+        else:
+            tok = stream.current()
+            raise ParserError(
+                "missing END-PERFORM",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+
+    def _read_perform_from_by_operand(self, state: ParserState) -> str:
+        """
+        Read one ``PERFORM VARYING`` ``FROM``/``BY`` operand token (task
+        #stage34), joining a leading sign directly against an
+        immediately-following ``NUMBER`` into one literal (``BY -1``).
+
+        Mirrors the established signed-numeric-literal joining rule in
+        :mod:`app.parser.syntax.data_parser` (its own ``VALUE`` clause
+        does the identical join for the identical reason: the lexer
+        always emits ``+``/``-`` as their own ``UNKNOWN`` token, since
+        they are also the arithmetic operators). A sign not directly
+        adjacent to a number (``BY - 1``) is left unjoined -- the same
+        token-by-token behavior as before, not a new form accepted.
+
+        Returns:
+            The operand text: a plain identifier, an unsigned literal, or
+            a joined signed literal (e.g. ``"-1"``).
+        """
+        stream = state.stream
+        tok = stream.current()
+        if tok.type is TokenType.UNKNOWN and tok.lexeme in ("+", "-"):
+            nxt = stream.peek(1)
+            if (
+                nxt.type is TokenType.NUMBER
+                and nxt.position.line == tok.position.line
+                and nxt.position.offset == tok.position.offset + len(tok.lexeme)
+            ):
+                stream.advance()  # the sign
+                stream.advance()  # the digits
+                return tok.lexeme + nxt.lexeme
+        stream.advance()
+        return tok.lexeme
 
     def _parse_perform_statement(self, state: ParserState) -> StatementNode:
         stream = state.stream
@@ -1986,45 +2549,8 @@ class ProcedureDivisionParser:
             right = tok.lexeme
             stream.advance()
 
-            # An unsupported verb (READ, COMPUTE, EVALUATE, ...) here used to
-            # raise a hard ParserError, which the caller's statement-level
-            # recovery resolves by synchronising to the next PERIOD -- and a
-            # structured PERFORM UNTIL/END-PERFORM has no interior periods of
-            # its own guaranteed, so that could swallow the rest of the
-            # paragraph, exactly the defect class
-            # docs/MMIM_PARSER_VALIDATION_FIX.md §7 fixed for IF/ELSE blocks
-            # (task #stage28; the identical gap was found but left
-            # unfixed there, docs/MMIM_COMPUTE_EVALUATE_IF_FIX.md §8). This
-            # mirrors that fix exactly: the same graceful
-            # _skip_unsupported_statement path _parse_if_statement's
-            # then/else loops already use.
-            statements = []
-            while not stream.eof():
-                tok = stream.current()
-                if tok.lexeme.upper() == "END-PERFORM":
-                    break
-                if tok.lexeme.upper() in _STATEMENT_LEXEMES:
-                    statements.append(self._parse_statement(state))
-                elif tok.lexeme.upper() in _UNSUPPORTED_STATEMENT_LEXEMES:
-                    self._skip_unsupported_statement(state)
-                else:
-                    raise ParserError(
-                        "expected statement in PERFORM block",
-                        line=tok.position.line,
-                        column=tok.position.column,
-                        offset=tok.position.offset,
-                    )
-
-            if stream.current().lexeme.upper() == "END-PERFORM":
-                stream.advance()  # consume END-PERFORM
-            else:
-                tok = stream.current()
-                raise ParserError(
-                    "missing END-PERFORM",
-                    line=tok.position.line,
-                    column=tok.position.column,
-                    offset=tok.position.offset,
-                )
+            statements = self._parse_perform_body(state)
+            self._consume_end_perform(state)
 
             # Consume the same stray trailing period _parse_if_statement
             # was fixed to consume (#108-05): every other statement
@@ -2043,6 +2569,8 @@ class ProcedureDivisionParser:
                 condition_right=right,
                 statements=tuple(statements),
             )
+        elif tok.lexeme.upper() == "VARYING":
+            return self._parse_perform_varying_statement(state, start)
         else:
             # Inline PERFORM with just a target (e.g. PERFORM PARAGRAPH-NAME),
             # optionally followed by a THRU/THROUGH range end (task
@@ -2061,8 +2589,69 @@ class ProcedureDivisionParser:
             target = tok.lexeme
             stream.advance()
 
-            thru_target = ""
             tok = stream.current()
+            if tok.lexeme.upper() == "UNTIL":
+                # Out-of-line PERFORM target UNTIL condition (task
+                # #stage37): no THRU, no body, no END-PERFORM -- COBOL
+                # repeatedly transfers control to `target` and re-tests
+                # the condition after each execution. Recognised here,
+                # before the THRU/THROUGH check below, so a THRU'd range
+                # immediately followed by UNTIL (not present anywhere in
+                # the real corpus) is deliberately left to fall through
+                # unchanged to the ordinary THRU branch below, rather
+                # than being guessed at.
+                #
+                # Before this stage, this branch did not exist: the
+                # bare-target parse below consumed only `target`,
+                # leaving `UNTIL <condition>` on the stream, which the
+                # next statement-level parse attempt rejected with
+                # SYN001 -- and since these paragraphs have no period
+                # between statements, panic-mode recovery resynchronised
+                # to the next PERIOD, silently discarding every
+                # remaining statement in the paragraph (including its
+                # own closing PERFORM/GOBACK). See the corpus evidence
+                # in tests/parser/test_stage37_perform_target_until.py.
+                stream.advance()  # consume UNTIL
+                (
+                    cond_left,
+                    cond_operator,
+                    cond_right,
+                    _,
+                    _,
+                    _cond_left_expr,
+                    _cond_right_expr,
+                ) = self._parse_condition_term(state)
+                # A parenthesized arithmetic-expression condition (task
+                # #stage38) is deliberately not represented on
+                # PerformTargetUntilStatementNode -- not evidenced
+                # anywhere in the corpus for this out-of-line PERFORM
+                # form, and out of both this stage's and Stage 37's own
+                # scope; discarded here for the same reason the PERFORM
+                # VARYING UNTIL call site above discards it.
+
+                # Same stray-trailing-period fix _parse_if_statement and
+                # the inline PERFORM UNTIL branch above already apply
+                # (#108-05): without it, a lone PERIOD after this
+                # statement -- when nested inside an IF/PERFORM body
+                # whose own statement loop has no generic PERIOD-skip --
+                # would fall into that loop's "expected statement"
+                # abandonment path.
+                self._consume_optional_period(state)
+
+                from app.parser.ast.statements import (
+                    PerformTargetUntilStatementNode,
+                )
+
+                return PerformTargetUntilStatementNode(
+                    start_position=start,
+                    end_position=stream.current().position,
+                    target=target,
+                    condition_left=cond_left,
+                    condition_operator=cond_operator,
+                    condition_right=cond_right,
+                )
+
+            thru_target = ""
             if tok.lexeme.upper() in ("THRU", "THROUGH"):
                 stream.advance()  # consume THRU/THROUGH
                 tok = stream.current()
@@ -2082,6 +2671,145 @@ class ProcedureDivisionParser:
                 target=target,
                 thru_target=thru_target,
             )
+
+    def _parse_perform_varying_statement(
+        self, state: ParserState, start: Position
+    ) -> StatementNode:
+        """
+        Parse ``PERFORM VARYING identifier FROM ... BY ... UNTIL ...
+        <body> END-PERFORM`` (task #stage34).
+
+        Grammar consumed exactly, token by token::
+
+            PERFORM VARYING identifier-1
+                FROM {identifier-2 | literal-1}
+                BY {identifier-3 | literal-2}
+                UNTIL condition-1
+                <body>
+            END-PERFORM
+
+        Before this stage, the token right after ``PERFORM`` being
+        ``VARYING`` (not ``UNTIL``) fell into the plain inline-PERFORM
+        branch below, which -- finding an ``IDENTIFIER``-shaped token
+        (``VARYING`` is not a reserved lexer word) -- misread the whole
+        construct as ``PERFORM VARYING`` (a paragraph literally named
+        "VARYING"), discarding everything after it including the loop
+        body. This method replaces that misparse with the real grammar.
+
+        Neither ``VARYING``, ``FROM``, ``BY``, nor ``UNTIL`` is a reserved
+        lexer word (each arrives as a plain ``IDENTIFIER`` token, exactly
+        like this same method's caller already treats ``THRU``/
+        ``THROUGH``), so each is recognised here by lexeme, not token
+        type -- consistent with every other multi-keyword clause this
+        parser already handles that way.
+
+        The ``UNTIL`` condition is parsed via :meth:`_parse_condition_term`
+        -- the exact same machinery ``IF`` uses -- so a subscripted
+        condition operand (task #stage32) is supported here too, for
+        free, with no second condition parser. The loop body is parsed
+        via :meth:`_parse_perform_body`, the same statement-list mechanism
+        ``PERFORM UNTIL`` already uses, so nested ``IF``, ``EXIT PERFORM``,
+        ``COMPUTE``, and subscripted table references are all handled
+        exactly as they already are elsewhere.
+
+        Args:
+            state: Active parser state, cursor on ``VARYING`` (``PERFORM``
+                already consumed by the caller).
+            start: Source position of the ``PERFORM`` token, for the
+                returned node's span.
+
+        Returns:
+            An immutable
+            :class:`~app.parser.ast.statements.PerformVaryingStatementNode`.
+
+        Raises:
+            ParserError: If the varying variable, ``FROM``, ``BY``,
+                ``UNTIL``, or ``END-PERFORM`` is missing/malformed.
+        """
+        stream = state.stream
+        stream.advance()  # consume VARYING
+
+        var_tok = stream.current()
+        if var_tok.type is not TokenType.IDENTIFIER:
+            raise ParserError(
+                "expected varying variable name after PERFORM VARYING",
+                line=var_tok.position.line,
+                column=var_tok.position.column,
+                offset=var_tok.position.offset,
+            )
+        varying_variable = var_tok.lexeme
+        stream.advance()
+
+        if stream.current().lexeme.upper() != "FROM":
+            tok = stream.current()
+            raise ParserError(
+                "expected FROM after PERFORM VARYING variable",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+        stream.advance()  # consume FROM
+        from_value = self._read_perform_from_by_operand(state)
+
+        if stream.current().lexeme.upper() != "BY":
+            tok = stream.current()
+            raise ParserError(
+                "expected BY after PERFORM VARYING ... FROM ...",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+        stream.advance()  # consume BY
+        by_value = self._read_perform_from_by_operand(state)
+
+        if stream.current().lexeme.upper() != "UNTIL":
+            tok = stream.current()
+            raise ParserError(
+                "expected UNTIL after PERFORM VARYING ... BY ...",
+                line=tok.position.line,
+                column=tok.position.column,
+                offset=tok.position.offset,
+            )
+        stream.advance()  # consume UNTIL
+
+        (
+            cond_left,
+            cond_operator,
+            cond_right,
+            cond_left_sub,
+            cond_right_sub,
+            _cond_left_expr,
+            _cond_right_expr,
+        ) = self._parse_condition_term(state)
+        # A parenthesized arithmetic-expression UNTIL condition (task
+        # #stage38) is deliberately not represented on
+        # PerformVaryingStatementNode/IRPerformVarying -- not evidenced
+        # anywhere in the corpus for this form, and out of this stage's
+        # scope. _parse_condition_term now returns it uniformly (the same
+        # shared method IF and PERFORM VARYING's UNTIL both call), but it
+        # is discarded here rather than silently corrupting cond_left/
+        # cond_right with an empty string that a downstream consumer
+        # would misread as a real (if blank) operand.
+
+        statements = self._parse_perform_body(state)
+        self._consume_end_perform(state)
+        self._consume_optional_period(state)
+
+        from app.parser.ast.statements import PerformVaryingStatementNode
+
+        return PerformVaryingStatementNode(
+            start_position=start,
+            end_position=stream.current().position,
+            varying_variable=varying_variable,
+            from_value=from_value,
+            by_value=by_value,
+            condition_left=cond_left,
+            condition_operator=cond_operator,
+            condition_right=cond_right,
+            statements=tuple(statements),
+            condition_left_subscript=cond_left_sub,
+            condition_right_subscript=cond_right_sub,
+        )
 
     def _parse_go_to_statement(self, state: ParserState) -> GoToStatementNode:
         """
@@ -2151,3 +2879,203 @@ class ProcedureDivisionParser:
             end_position=end,
             target=target,
         )
+
+    def _parse_read_statement(self, state: ParserState) -> ReadStatementNode:
+        """
+        Parse ``READ file-name [INTO identifier] [AT END stmts]
+        [NOT AT END stmts] [END-READ]`` (task #stage40).
+
+        Replaces the former ``_skip_read_statement`` opaque skip with
+        real, structural parsing, reusing the exact same ``AT``-token
+        boundary-tracking insight that method's own docstring already
+        established (see ``docs/MMIM_READ_AT_END_PARSING_FIX.md``):
+        without ``END-READ``, real COBOL closes the ``AT END``/``NOT AT
+        END`` clause at the sentence's own terminating period, so at most
+        one sentence's worth of statements is collected in that form.
+        :meth:`_parse_read_clause_body` detects this the same way that
+        method did -- by tracking whether the current clause is still
+        "before the first ``AT``" (a statement-boundary token ends the
+        clause early there, exactly as it always did) -- plus one new
+        check this method needs that the discard-only skip never did:
+        whether the *last statement actually parsed* already consumed
+        the sentence's terminating period itself (every individual
+        statement parser, e.g. ``_parse_move``, already calls
+        :meth:`_consume_optional_period`), which is what tells a
+        real-statement collector "stop -- the sentence, and therefore
+        this whole READ, is over" in the no-``END-READ`` form.
+
+        Neither ``INTO`` nor ``AT``/``END``/``NOT``/``END-READ`` is a
+        reserved lexer word (each arrives as a plain ``IDENTIFIER``
+        token, exactly like every other multi-word clause marker this
+        parser already recognises by lexeme -- ``PERFORM``'s ``THRU``,
+        ``GO``'s ``TO``).
+
+        This backend has no file-reading runtime (task #stage40's own
+        explicit scope decision -- nothing in the corpus demands one).
+        Both clauses' statement lists are still captured in full here,
+        for AST fidelity; only ``at_end_statements`` is ever lowered to
+        IR (:meth:`~app.ir.builder.IRBuilder.build_read_statement`) --
+        see that method and :class:`~app.parser.ast.statements
+        .ReadStatementNode`'s own docstring for why.
+
+        Args:
+            state: Active parser state; cursor on ``READ``.
+
+        Returns:
+            An immutable :class:`~app.parser.ast.statements.ReadStatementNode`.
+
+        Raises:
+            ParserError: If the file name, or an identifier after
+                ``INTO``, is missing.
+        """
+        stream = state.stream
+        start = stream.current().position
+        stream.advance()  # consume READ
+
+        target_tok = stream.current()
+        if target_tok.type is not TokenType.IDENTIFIER:
+            raise ParserError(
+                "expected file name after READ",
+                line=target_tok.position.line,
+                column=target_tok.position.column,
+                offset=target_tok.position.offset,
+            )
+        target = target_tok.lexeme
+        stream.advance()
+
+        into_target = ""
+        if matches_grammar_word(stream.current(), {"INTO"}):
+            stream.advance()  # consume INTO
+            into_tok = stream.current()
+            if into_tok.type is not TokenType.IDENTIFIER:
+                raise ParserError(
+                    "expected identifier after INTO in READ",
+                    line=into_tok.position.line,
+                    column=into_tok.position.column,
+                    offset=into_tok.position.offset,
+                )
+            into_target = into_tok.lexeme
+            stream.advance()
+
+        at_end_statements: list[StatementNode] = []
+        not_at_end_statements: list[StatementNode] = []
+        sentence_ended = False
+
+        if matches_grammar_word(stream.current(), {"AT"}):
+            stream.advance()  # consume AT
+            tok = stream.current()
+            if not matches_grammar_word(tok, {"END"}):
+                raise ParserError(
+                    "expected END after AT in READ",
+                    line=tok.position.line,
+                    column=tok.position.column,
+                    offset=tok.position.offset,
+                )
+            stream.advance()  # consume END
+            at_end_statements, sentence_ended = self._parse_read_clause_body(state)
+
+        if not sentence_ended and matches_grammar_word(stream.current(), {"NOT"}):
+            stream.advance()  # consume NOT
+            tok = stream.current()
+            if not matches_grammar_word(tok, {"AT"}):
+                raise ParserError(
+                    "expected AT after NOT in READ",
+                    line=tok.position.line,
+                    column=tok.position.column,
+                    offset=tok.position.offset,
+                )
+            stream.advance()  # consume AT
+            tok = stream.current()
+            if not matches_grammar_word(tok, {"END"}):
+                raise ParserError(
+                    "expected END after NOT AT in READ",
+                    line=tok.position.line,
+                    column=tok.position.column,
+                    offset=tok.position.offset,
+                )
+            stream.advance()  # consume END
+            not_at_end_statements, sentence_ended = self._parse_read_clause_body(state)
+
+        if not sentence_ended and matches_grammar_word(stream.current(), {"END-READ"}):
+            stream.advance()
+
+        end = stream.current().position
+        self._consume_optional_period(state)
+
+        return ReadStatementNode(
+            start_position=start,
+            end_position=end,
+            target=target,
+            into_target=into_target,
+            at_end_statements=tuple(at_end_statements),
+            not_at_end_statements=tuple(not_at_end_statements),
+        )
+
+    def _parse_read_clause_body(
+        self, state: ParserState
+    ) -> tuple[list[StatementNode], bool]:
+        """
+        Parse the statement list of one ``READ`` ``AT END``/``NOT AT
+        END`` clause (task #stage40), stopping at ``END-READ``, the
+        start of a ``NOT AT END`` clause, or -- for the no-``END-READ``
+        form -- the sentence's own terminating period.
+
+        Mirrors :meth:`_parse_perform_body`'s statement-collection loop
+        exactly (same ``_STATEMENT_LEXEMES``/``_UNSUPPORTED_STATEMENT_LEXEMES``/
+        ``COMPUTE``-pre-check dispatch, so nested ``IF``, ``COMPUTE``, and
+        any other already-supported statement are handled identically
+        inside a READ clause), with one addition this clause shape alone
+        needs: after each statement is parsed, checking whether *that
+        statement itself* just consumed the sentence's terminating period
+        (every statement parser already calls
+        :meth:`_consume_optional_period`). If it did, the clause -- and
+        the whole enclosing ``READ`` sentence -- is over: real COBOL's
+        own rule for the ``END-READ``-less form (at most one sentence's
+        worth of statements). The caller uses the returned ``bool`` to
+        skip checking for a further ``NOT AT END`` clause or ``END-READ``
+        in that case, exactly as `_skip_read_statement`'s own bare-period
+        handling always did.
+
+        Args:
+            state: Active parser state, positioned just after the
+                clause's ``END``/``END`` marker.
+
+        Returns:
+            ``(statements, sentence_ended)`` -- ``sentence_ended`` is
+            ``True`` only when a lone period (with no ``END-READ``) was
+            what ended this clause.
+        """
+        stream = state.stream
+        statements: list[StatementNode] = []
+        while not stream.eof():
+            tok = stream.current()
+            upper = tok.lexeme.upper()
+            if upper in ("END-READ", "NOT"):
+                break
+            if tok.type is TokenType.PERIOD:
+                # A lone period with nothing parsed yet -- an empty
+                # clause immediately closed by the sentence's own
+                # terminator (COBOL-legal, not present in the corpus).
+                stream.advance()
+                return statements, True
+            if (
+                tok.type is TokenType.KEYWORD
+                and upper in _DIVISION_KEYWORDS
+                and stream.peek().type is TokenType.KEYWORD
+                and stream.peek().lexeme.upper() == "DIVISION"
+            ):
+                break
+            if upper == "COMPUTE" and not self._compute_has_supported_syntax(state):
+                self._skip_unsupported_statement_auto(state)
+            elif upper in _STATEMENT_LEXEMES:
+                statements.append(self._parse_statement(state))
+                if stream.peek(-1).type is TokenType.PERIOD:
+                    return statements, True
+                continue
+            elif upper in _UNSUPPORTED_STATEMENT_LEXEMES:
+                self._skip_unsupported_statement_auto(state)
+            else:
+                break
+            if stream.peek(-1).type is TokenType.PERIOD:
+                return statements, True
+        return statements, False
