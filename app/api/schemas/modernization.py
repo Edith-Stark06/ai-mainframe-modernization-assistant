@@ -182,8 +182,31 @@ class CloudReadinessResponse(BaseModel):
     confidence: float
 
 
+class JclInvocationResponse(BaseModel):
+    """One JCL job step (workspace-wide) that runs this program via
+    ``EXEC PGM=`` -- see ``app.workspace.jcl_correlation``'s own
+    module docstring for why this is the honest, buildable half of
+    JCL/workspace correlation (VSAM-ness is not a real JCL-level
+    signal, so it is not claimed here)."""
+
+    jcl_filename: str
+    job_name: Optional[str]
+    step_name: str
+    line: int
+
+
 class ModernizationIntelligenceResponse(BaseModel):
     business_rules: List[Phase4BusinessRuleResponse]
     risks: List[ModernizationRiskResponse]
     strategies: List[StrategyRecommendationResponse]
     cloud_readiness: Optional[CloudReadinessResponse] = None
+    invoked_by_jobs: List[JclInvocationResponse] = Field(
+        default_factory=list,
+        description=(
+            "Every JCL job step in this workspace whose EXEC PGM= "
+            "matches this program's name, or an empty list if none was "
+            "found or the workspace has no .jcl files. PROC= steps that "
+            "indirectly run this program via a cataloged procedure are "
+            "not detected (see app.workspace.jcl_correlation)."
+        ),
+    )

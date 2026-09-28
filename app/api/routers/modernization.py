@@ -1,4 +1,6 @@
 import uuid
+from dataclasses import asdict
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from app.api.schemas.modernization import (
@@ -6,6 +8,7 @@ from app.api.schemas.modernization import (
     ModernizationPipelineResponse,
     ModernizationIntelligenceResponse,
     FlowResponse,
+    JclInvocationResponse,
     ModernizationScoreResponse,
     RecommendationResponse,
 )
@@ -17,6 +20,8 @@ from app.modernization.scoring.confidence_aware import score_with_confidence
 from app.modernization.scoring.service import calculate_scores
 from app.modernization.recommendations.service import generate_recommendations
 from app.ingestion.workspace import WorkspaceManager
+from app.workspace.inventory import InventoryBuilder
+from app.workspace.jcl_correlation import find_invoking_jobs
 
 router = APIRouter(
     prefix="/workspaces/{workspace_id}/modernization", tags=["modernization"]
@@ -136,5 +141,29 @@ def execute_modernization_intelligence(
         logger.error(f"Modernization intelligence failed for {source_path}: {e}")
         raise HTTPException(status_code=500, detail="Modernization intelligence failed")
 
+    # Workspace-level JCL correlation: which job step(s) actually run this
+    # program (task followup to #stage46/#stage48 -- see
+    # app.workspace.jcl_correlation's own module docstring for scope).
+    # Best-effort: never fails the whole request over it.
+    invoked_by_jobs: list[JclInvocationResponse] = []
+    try:
+        program_name = source_path.stem.upper()
+        ident_div = getattr(analysis_result.ast, "identification_division", None)
+        if ident_div is not None:
+            pid_node = getattr(ident_div, "program_id", None)
+            if pid_node is not None:
+                program_name = pid_node.value.upper()
+
+        ws = workspace_manager.get(str(workspace_id))
+        inventory = InventoryBuilder().build(
+            workspace_id=str(workspace_id), path=Path(ws.path)
+        )
+        invoked_by_jobs = [
+            JclInvocationResponse(**asdict(inv))
+            for inv in find_invoking_jobs(program_name, inventory)
+        ]
+    except Exception as e:
+        logger.error(f"JCL invocation correlation failed for {source_path}: {e}")
+
     payload = result.to_dict()
-    return ModernizationIntelligenceResponse(**payload)
+    return ModernizationIntelligenceResponse(**payload, invoked_by_jobs=invoked_by_jobs)

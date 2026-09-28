@@ -89,6 +89,10 @@ class JclParameter:
     key: str | None
     value: str
 
+    def to_dict(self) -> dict[str, str | None]:
+        """Serialize to a JSON-compatible dict."""
+        return {"key": self.key, "value": self.value}
+
 
 @dataclass(frozen=True)
 class RawStatement:
