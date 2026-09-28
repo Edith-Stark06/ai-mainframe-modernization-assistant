@@ -46,6 +46,7 @@ Project:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from app.jcl.lexer import JclParameter
 
@@ -73,6 +74,14 @@ class JclJob:
     parameters: tuple[JclParameter, ...]
     line: int
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "name": self.name,
+            "parameters": [p.to_dict() for p in self.parameters],
+            "line": self.line,
+        }
+
 
 @dataclass(frozen=True)
 class JclDDStatement:
@@ -90,6 +99,14 @@ class JclDDStatement:
     name: str | None
     parameters: tuple[JclParameter, ...]
     line: int
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "name": self.name,
+            "parameters": [p.to_dict() for p in self.parameters],
+            "line": self.line,
+        }
 
 
 @dataclass(frozen=True)
@@ -114,6 +131,15 @@ class JclUnsupportedStatement:
     operation: str
     parameters: tuple[JclParameter, ...]
     line: int
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "name": self.name,
+            "operation": self.operation,
+            "parameters": [p.to_dict() for p in self.parameters],
+            "line": self.line,
+        }
 
 
 @dataclass(frozen=True)
@@ -159,6 +185,17 @@ class JclStep:
                 return first.value
         return None
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "name": self.name,
+            "parameters": [p.to_dict() for p in self.parameters],
+            "line": self.line,
+            "dd_statements": [d.to_dict() for d in self.dd_statements],
+            "program": self.program,
+            "procedure": self.procedure,
+        }
+
 
 @dataclass(frozen=True)
 class JclProgram:
@@ -177,3 +214,11 @@ class JclProgram:
     job: JclJob | None
     steps: tuple[JclStep, ...] = field(default_factory=tuple)
     unsupported: tuple[JclUnsupportedStatement, ...] = field(default_factory=tuple)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "job": self.job.to_dict() if self.job is not None else None,
+            "steps": [s.to_dict() for s in self.steps],
+            "unsupported": [u.to_dict() for u in self.unsupported],
+        }

@@ -51,8 +51,18 @@ def test_intelligence_endpoint_happy_path(monkeypatch, tmp_path) -> None:
     # task #stage48: cloud_readiness is a new top-level key, present
     # whenever the router can re-read the source (as it can here) --
     # see tests/api/test_modernization_intelligence.py's own dedicated
-    # cloud-readiness test below for its content.
-    assert set(body) == {"business_rules", "risks", "strategies", "cloud_readiness"}
+    # cloud-readiness test below for its content. invoked_by_jobs (JCL
+    # correlation follow-on) is always present, empty when no .jcl file
+    # in the workspace invokes this program -- see its own dedicated
+    # test below.
+    assert set(body) == {
+        "business_rules",
+        "risks",
+        "strategies",
+        "cloud_readiness",
+        "invoked_by_jobs",
+    }
+    assert body["invoked_by_jobs"] == []
 
     assert len(body["business_rules"]) == 2  # then + else
     rule = body["business_rules"][0]
@@ -128,6 +138,35 @@ def test_intelligence_endpoint_cloud_readiness_omitted_on_reread_failure(
     assert body["cloud_readiness"] is None
     # Everything that does not depend on the raw source text is unaffected.
     assert len(body["business_rules"]) == 2
+
+
+def test_intelligence_endpoint_invoked_by_jobs_correlation(
+    monkeypatch, tmp_path
+) -> None:
+    """Follow-on to task #stage46/#stage48: a .jcl file in the same
+    workspace whose EXEC PGM= matches this program's PROGRAM-ID (ELIG)
+    must be surfaced as invoked_by_jobs, not silently ignored."""
+    _mock_workspace(monkeypatch, tmp_path)
+    (tmp_path / "elig.cbl").write_text(_SOURCE, encoding="utf-8")
+    (tmp_path / "run_elig.jcl").write_text(
+        "//RUNELIG  JOB (ACCT),'RUN ELIG'\n"
+        "//STEP01   EXEC PGM=ELIG\n"
+        "//INFILE   DD DSN=ELIG.INPUT,DISP=SHR\n",
+        encoding="utf-8",
+    )
+
+    resp = client.post(
+        f"/api/v1/workspaces/{uuid.uuid4()}/modernization/intelligence",
+        json={"filename": "elig.cbl"},
+    )
+    assert resp.status_code == 200
+    invoked_by_jobs = resp.json()["invoked_by_jobs"]
+    assert len(invoked_by_jobs) == 1
+    invocation = invoked_by_jobs[0]
+    assert invocation["jcl_filename"] == "run_elig.jcl"
+    assert invocation["job_name"] == "RUNELIG"
+    assert invocation["step_name"] == "STEP01"
+    assert invocation["line"] == 2
 
 
 def test_intelligence_endpoint_is_deterministic(monkeypatch, tmp_path) -> None:

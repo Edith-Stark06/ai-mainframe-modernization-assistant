@@ -150,6 +150,18 @@ class TestRequiresRearchitecture:
         assert assessment.tier is CloudReadinessTier.REQUIRES_REARCHITECTURE
         assert any("EXEC DLI" in e for e in assessment.evidence)
 
+    def test_single_call_cbltdli_triggers_requires_rearchitecture(
+        self, analyze
+    ) -> None:
+        """``CALL 'CBLTDLI'`` is COBOL's standard DL/I call interface --
+        as unambiguous an IMS signal as ``EXEC DLI...END-EXEC``."""
+        _, assessment = _assess(
+            analyze,
+            "MAIN-PARA.\n" "    CALL 'CBLTDLI' USING WS-A.\n" "    STOP RUN.\n",
+        )
+        assert assessment.tier is CloudReadinessTier.REQUIRES_REARCHITECTURE
+        assert any("CBLTDLI" in e for e in assessment.evidence)
+
     def test_two_vsam_indicators_triggers_requires_rearchitecture(
         self, analyze
     ) -> None:
@@ -202,6 +214,40 @@ class TestNotRecommended:
             "    EXEC DLI\n        GET UNIQUE A\n    END-EXEC.\n"
             "    EXEC DLI\n        GET UNIQUE B\n    END-EXEC.\n"
             "    EXEC DLI\n        GET UNIQUE C\n    END-EXEC.\n"
+            "    STOP RUN.\n",
+        )
+        assert assessment.tier is CloudReadinessTier.NOT_RECOMMENDED
+
+    def test_cics_and_call_cbltdli_together_triggers_not_recommended(
+        self, analyze
+    ) -> None:
+        """The two DL/I forms (``EXEC DLI`` and ``CALL 'CBLTDLI'``) are
+        equivalent evidence -- CICS plus either one must combine the
+        same way."""
+        _, assessment = _assess(
+            analyze,
+            "MAIN-PARA.\n"
+            "    EXEC CICS\n"
+            "        SEND MAP('MYMAP')\n"
+            "    END-EXEC.\n"
+            "    CALL 'CBLTDLI' USING WS-A.\n"
+            "    STOP RUN.\n",
+        )
+        assert assessment.tier is CloudReadinessTier.NOT_RECOMMENDED
+        joined = " ".join(assessment.evidence)
+        assert "EXEC CICS" in joined and "CBLTDLI" in joined
+
+    def test_mixed_dli_forms_combine_toward_not_recommended(self, analyze) -> None:
+        """Two ``EXEC DLI`` occurrences plus one ``CALL 'CBLTDLI'`` is
+        three total IMS/DL-I signals -- the same threshold three
+        ``EXEC DLI``-only occurrences trigger, since the two forms are
+        counted together."""
+        _, assessment = _assess(
+            analyze,
+            "MAIN-PARA.\n"
+            "    EXEC DLI\n        GET UNIQUE A\n    END-EXEC.\n"
+            "    EXEC DLI\n        GET UNIQUE B\n    END-EXEC.\n"
+            "    CALL 'CBLTDLI' USING WS-A.\n"
             "    STOP RUN.\n",
         )
         assert assessment.tier is CloudReadinessTier.NOT_RECOMMENDED

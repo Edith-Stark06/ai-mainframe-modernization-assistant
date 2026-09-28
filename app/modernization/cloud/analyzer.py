@@ -9,16 +9,21 @@ Purpose:
     own method: no fact is inferred or scored, every rule cites the exact
     facts that triggered it, and there is no numeric threshold anywhere.
 
-    Four of the five facts (``EXEC SQL``/``EXEC CICS``/``EXEC DLI``/VSAM
-    organization) come from the *raw source text*, not the AST: this
-    parser deliberately does not model ``EXEC SQL``/``EXEC CICS`` (see
-    ``app/parser/lexer/lexer.py``'s own "Non-responsibilities"), so no
-    AST-level signal exists to read them from. Detecting them is a
-    handful of unambiguous, line-anchored regular expressions over the
-    original file -- nothing here approximates COBOL parsing, and
-    nothing claims to. The fifth and sixth facts (external CALL count,
-    parser coverage) reuse the exact same
-    :class:`~app.analysis.models.AnalysisResult` fields
+    Five of the six facts (``EXEC SQL``/``EXEC CICS``/``EXEC DLI``/
+    ``CALL 'CBLTDLI'``/VSAM organization) come from the *raw source
+    text*, not the AST: this parser deliberately does not model ``EXEC
+    SQL``/``EXEC CICS`` (see ``app/parser/lexer/lexer.py``'s own
+    "Non-responsibilities"), so no AST-level signal exists to read them
+    from. Detecting them is a handful of unambiguous, line-anchored
+    regular expressions over the original file -- nothing here
+    approximates COBOL parsing, and nothing claims to. ``CBLTDLI`` is
+    IBM's own fixed, documented COBOL-to-DL/I call interface name (not
+    a guessed or fuzzy library name -- there is exactly one standard
+    entry point a COBOL program calls to reach IMS/DL-I), so a literal
+    ``CALL 'CBLTDLI'`` is as unambiguous an IMS signal as ``EXEC
+    DLI...END-EXEC`` and is counted as the same kind of evidence. The
+    remaining two facts (external CALL count, parser coverage) reuse the
+    exact same :class:`~app.analysis.models.AnalysisResult` fields
     :mod:`app.modernization.risk` and :mod:`app.modernization.strategy`
     already do.
 
@@ -30,12 +35,9 @@ Responsibilities:
       with cited evidence.
 
 Non-responsibilities:
-    - IMS/DL-I calls made via ``CALL 'CBLTDLI'`` rather than ``EXEC
-      DLI...END-EXEC`` -- both are real, evidenced IMS access patterns,
-      but only the ``EXEC DLI`` form is detected; the ``CALL`` form is
-      indistinguishable from an ordinary external subroutine call
-      without a hard-coded, guessable list of IMS runtime routine names,
-      which this stage does not maintain.
+    - Assembler-callable IMS entry points (e.g. ``AERTDLI``) or any
+      other DL/I call interface besides COBOL's own ``CBLTDLI`` --
+      out of scope for a COBOL-only analyzer.
     - JCL-level signals (a job's DD statements referencing VSAM
       datasets, or step counts) -- this analyzer is scoped to one COBOL
       program, matching every other Phase 4/7 analyzer's own scope; a
@@ -80,6 +82,7 @@ __all__ = ["CloudReadinessAnalyzer"]
 _EXEC_SQL_RE = re.compile(r"\bEXEC\s+SQL\b", re.IGNORECASE)
 _EXEC_CICS_RE = re.compile(r"\bEXEC\s+CICS\b", re.IGNORECASE)
 _EXEC_DLI_RE = re.compile(r"\bEXEC\s+DLI\b", re.IGNORECASE)
+_CALL_CBLTDLI_RE = re.compile(r"\bCALL\s+['\"]CBLTDLI['\"]", re.IGNORECASE)
 _VSAM_ORGANIZATION_RE = re.compile(
     r"\bORGANIZATION\s+(?:IS\s+)?(?:INDEXED|RELATIVE)\b", re.IGNORECASE
 )
@@ -104,10 +107,18 @@ class _CloudFacts:
     exec_sql_lines: tuple[int, ...]
     exec_cics_lines: tuple[int, ...]
     exec_dli_lines: tuple[int, ...]
+    call_cbltdli_lines: tuple[int, ...]
     vsam_lines: tuple[int, ...]
     external_call_count: int
     has_critical_risk: bool
     coverage_ratio: float | None
+
+    @property
+    def dli_lines(self) -> tuple[int, ...]:
+        """Every IMS/DL-I signal line, ``EXEC DLI`` and ``CALL 'CBLTDLI'``
+        combined and sorted -- the two forms are equally unambiguous
+        evidence of the same coupling (see the module docstring)."""
+        return tuple(sorted(self.exec_dli_lines + self.call_cbltdli_lines))
 
 
 class CloudReadinessAnalyzer:
@@ -176,6 +187,7 @@ class CloudReadinessAnalyzer:
             exec_sql_lines=_matching_lines(source, _EXEC_SQL_RE),
             exec_cics_lines=_matching_lines(source, _EXEC_CICS_RE),
             exec_dli_lines=_matching_lines(source, _EXEC_DLI_RE),
+            call_cbltdli_lines=_matching_lines(source, _CALL_CBLTDLI_RE),
             vsam_lines=(
                 _matching_lines(source, _VSAM_ORGANIZATION_RE)
                 + _matching_lines(source, _VSAM_ACCESS_RE)
@@ -201,20 +213,18 @@ class CloudReadinessAnalyzer:
                 "consumed -- this assessment's own facts cannot be trusted "
                 "below that"
             )
-        if facts.exec_cics_lines and facts.exec_dli_lines:
+        if facts.exec_cics_lines and facts.dli_lines:
             evidence.append(
                 f"both EXEC CICS ({len(facts.exec_cics_lines)} occurrence(s), "
-                f"line(s) {_format_lines(facts.exec_cics_lines)}) and EXEC DLI "
-                f"({len(facts.exec_dli_lines)} occurrence(s), line(s) "
-                f"{_format_lines(facts.exec_dli_lines)}) are present -- coupled "
-                "to both a transaction monitor and a hierarchical database at "
-                "once"
+                f"line(s) {_format_lines(facts.exec_cics_lines)}) and IMS/DL-I "
+                f"access ({_describe_dli(facts)}) are present -- coupled to "
+                "both a transaction monitor and a hierarchical database at once"
             )
-        if len(facts.exec_dli_lines) >= 3:
+        if len(facts.dli_lines) >= 3:
             evidence.append(
-                f"EXEC DLI appears {len(facts.exec_dli_lines)} times (line(s) "
-                f"{_format_lines(facts.exec_dli_lines)}) -- substantial IMS/DL-I "
-                "coupling, an access pattern with no cloud-native equivalent"
+                f"IMS/DL-I access ({_describe_dli(facts)}) appears "
+                f"{len(facts.dli_lines)} times -- substantial IMS/DL-I coupling, "
+                "an access pattern with no cloud-native equivalent"
             )
         if facts.has_critical_risk:
             evidence.append(
@@ -257,11 +267,10 @@ class CloudReadinessAnalyzer:
                 "transaction-processing coupling has no drop-in cloud "
                 "equivalent"
             )
-        if facts.exec_dli_lines:
+        if facts.dli_lines:
             evidence.append(
-                f"EXEC DLI appears {len(facts.exec_dli_lines)} time(s) "
-                f"(line(s) {_format_lines(facts.exec_dli_lines)}) -- IMS/DL-I "
-                "hierarchical database access has no drop-in cloud equivalent"
+                f"IMS/DL-I access ({_describe_dli(facts)}) -- hierarchical "
+                "database access has no drop-in cloud equivalent"
             )
         if len(facts.vsam_lines) >= 2:
             evidence.append(
@@ -331,8 +340,9 @@ class CloudReadinessAnalyzer:
 
     def _rule_cloud_ready(self, facts: _CloudFacts) -> CloudReadinessAssessment:
         evidence = [
-            "no EXEC SQL, EXEC CICS, EXEC DLI, or VSAM indexed/relative/"
-            "dynamic file organization detected in the source",
+            "no EXEC SQL, EXEC CICS, EXEC DLI, CALL 'CBLTDLI', or VSAM "
+            "indexed/relative/dynamic file organization detected in the "
+            "source",
             f"{facts.external_call_count} distinct external CALL target(s)",
         ]
         if facts.coverage_ratio is not None:
@@ -349,6 +359,24 @@ class CloudReadinessAnalyzer:
             ),
             evidence=tuple(evidence),
         )
+
+
+def _describe_dli(facts: _CloudFacts) -> str:
+    """Render whichever IMS/DL-I form(s) *facts* actually has evidence
+    for -- ``EXEC DLI``, ``CALL 'CBLTDLI'``, or both -- with line
+    numbers, so evidence always names the exact syntax found."""
+    parts: list[str] = []
+    if facts.exec_dli_lines:
+        parts.append(
+            f"EXEC DLI x{len(facts.exec_dli_lines)} (line(s) "
+            f"{_format_lines(facts.exec_dli_lines)})"
+        )
+    if facts.call_cbltdli_lines:
+        parts.append(
+            f"CALL 'CBLTDLI' x{len(facts.call_cbltdli_lines)} (line(s) "
+            f"{_format_lines(facts.call_cbltdli_lines)})"
+        )
+    return "; ".join(parts)
 
 
 def _matching_lines(source: str, pattern: re.Pattern[str]) -> tuple[int, ...]:

@@ -42,6 +42,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 from app.jcl.ast import JclProgram
 
@@ -73,6 +74,15 @@ class JclDiagnostic:
     line: int
     severity: JclSeverity = JclSeverity.WARNING
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "code": self.code,
+            "message": self.message,
+            "line": self.line,
+            "severity": self.severity.value,
+        }
+
 
 @dataclass(frozen=True)
 class JclAnalysisResult:
@@ -95,3 +105,12 @@ class JclAnalysisResult:
     diagnostics: tuple[JclDiagnostic, ...] = field(default_factory=tuple)
     success: bool = True
     error: Exception | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "program": self.program.to_dict() if self.program is not None else None,
+            "diagnostics": [d.to_dict() for d in self.diagnostics],
+            "success": self.success,
+            "error": str(self.error) if self.error is not None else None,
+        }
