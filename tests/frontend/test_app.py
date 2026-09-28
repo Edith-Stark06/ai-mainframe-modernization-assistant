@@ -292,7 +292,7 @@ def _make_app(*, enter_workspace: bool = True) -> AppTest:
 
 
 def _load_workspace(at: AppTest, workspace_id: str = "ws-1") -> AppTest:
-    at.text_input(key="manual_ws_input").set_value(workspace_id)
+    at.text_input(key="manual_ws_input").set_value(workspace_id).run()
     at.button(key="load_workspace_button").click().run()
     return at
 
