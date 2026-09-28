@@ -13,37 +13,40 @@ authors = [
     { name = "Ramana Sree, Verona Ann Mariya" }
 ]
 
+# Exact-pinned (not just floor-pinned): an unpinned "ruff" and an
+# unpinned Streamlit each independently broke CI within the same hour
+# (ruff 0.16 expanded its default rule set; Streamlit's AppTest gained a
+# stricter, correct disabled-widget check that a latent test-ordering
+# bug had never tripped before). Every version below is the exact one
+# this codebase's full test suite, black, ruff, and mypy are currently
+# verified green under. Bumping any of them is a deliberate, separate
+# change -- re-run the full suite before raising a pin.
 dependencies = [
-    "fastapi",
-    "uvicorn[standard]",
-    "streamlit",
-    "langchain",
-    "langchain-community",
-    "langchain-ollama",
-    "chromadb",
-    "sentence-transformers",
-    "pydantic",
-    "pydantic-settings",
-    "python-dotenv",
-    "python-multipart",
-    "aiofiles",
-    "loguru",
-    "chardet",
-    "httpx"
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.54.0",
+    "streamlit==1.64.0",
+    "langchain==1.4.2",
+    "langchain-community==0.4.2",
+    "langchain-ollama==1.1.0",
+    "chromadb==1.5.9",
+    "sentence-transformers==6.1.0",
+    "pydantic==2.13.5",
+    "pydantic-settings==2.15.0",
+    "python-dotenv==1.2.3",
+    "python-multipart==0.0.32",
+    "aiofiles==25.1.0",
+    "loguru==0.7.3",
+    "chardet==7.6.0",
+    "httpx==0.28.1"
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest",
-    "pytest-cov",
-    "black",
-    # Pinned: ruff 0.16 expanded its default rule set (adds flake8-comprehensions,
-    # isort, and others beyond the E4/E7/E9/F this project's lint pass was
-    # actually validated against), which silently broke CI's unpinned install
-    # with ~977 pre-existing violations unrelated to any real change. Pin to
-    # the version this codebase is actually clean under; bump deliberately.
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "black==26.5.1",
     "ruff==0.15.20",
-    "mypy"
+    "mypy==2.3.1"
 ]
 
 [tool.setuptools.packages.find]
