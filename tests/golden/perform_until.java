@@ -14,7 +14,9 @@ public class PerformTest {
     }
 
     private void subPara() {
-        // TODO: implement CALL/PERFORM target 'SUB-PARA' (BE009).
+
+        System.out.println(String.format("%02d", cnt));
+
     }
 
 }

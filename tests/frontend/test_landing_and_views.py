@@ -139,6 +139,34 @@ ANALYSIS_RESULT = {
             }
         ],
     },
+    "data_flow_graph": {
+        "id": "data-flow-graph",
+        "name": "data-flow",
+        "nodes": [
+            {
+                "id": "para_MAIN-PARA",
+                "node_type": "PROCESS",
+                "name": "MAIN-PARA",
+                "metadata": {},
+            },
+            {
+                "id": "var_WS-AGE",
+                "node_type": "DATA_ITEM",
+                "name": "WS-AGE",
+                "metadata": {},
+            },
+        ],
+        "edges": [
+            {
+                "id": "edge_0",
+                "source_id": "para_MAIN-PARA",
+                "target_id": "var_WS-AGE",
+                "edge_type": "READS",
+                "metadata": {},
+            }
+        ],
+        "metadata": {},
+    },
     "business_rules": [],
     "error": None,
     "ai_analysis": None,
@@ -389,6 +417,25 @@ def test_dependencies_view_renders_real_graph_and_flat_list(monkeypatch):
     # the real graph node identifiers.
     node_rows = _dataframe_with_column(at, "Program").value
     assert set(node_rows["Program"]) == {"MAIN", "SUBRTN"}
+
+
+def test_dependencies_view_renders_data_flow_graph(monkeypatch):
+    monkeypatch.setattr(
+        BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_ONE_FILE
+    )
+    monkeypatch.setattr(
+        BackendClient, "get_analysis", lambda self, ws_id, filename: ANALYSIS_RESULT
+    )
+
+    at = _make_app()
+    _enter_workspace(at)
+    _load_and_select(at)
+    _open_view(at, "Dependencies")
+
+    assert not at.exception
+    node_rows = _dataframe_with_column(at, "Node").value
+    assert set(node_rows["Node"]) == {"MAIN-PARA", "WS-AGE"}
+    assert set(node_rows["Kind"]) == {"PROCESS", "DATA_ITEM"}
 
 
 def test_dependencies_filter_by_type(monkeypatch):

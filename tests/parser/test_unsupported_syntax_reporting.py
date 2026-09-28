@@ -368,14 +368,21 @@ class TestDiagnosticPlumbing:
 
 class TestDuplicateDiagnosticAggregation:
     """
-    #108-07: repeated diagnostics of the same kind (e.g. several COMP-3
-    fields) must remain individually representable, including location,
+    #108-07: repeated diagnostics of the same kind (e.g. several SIGN
+    clauses) must remain individually representable, including location,
     even when grouped for readability.
+
+    Uses ``SIGN`` rather than the originally-written ``COMP-3``: task
+    #stage41 gave ``USAGE``/``COMP*`` a real parser/AST field, so it no
+    longer produces a repeatable ``SYN200``. ``SIGN`` still does, and
+    preserves this class's original shape and purpose.
     """
 
     @staticmethod
-    def _multi_comp3_source(count: int) -> str:
-        items = "\n".join(f"01 WS-AMT-{i} PIC S9(7)V99 COMP-3." for i in range(count))
+    def _multi_sign_source(count: int) -> str:
+        items = "\n".join(
+            f"01 WS-AMT-{i} PIC S9(7)V99 SIGN IS TRAILING." for i in range(count)
+        )
         return (
             _ID
             + "DATA DIVISION.\nWORKING-STORAGE SECTION.\n"
@@ -384,14 +391,14 @@ class TestDuplicateDiagnosticAggregation:
         )
 
     def test_every_occurrence_is_in_the_flat_list(self) -> None:
-        _, state = _parse(self._multi_comp3_source(5))
+        _, state = _parse(self._multi_sign_source(5))
 
-        comp3_diags = [d for d in state.diagnostics if d.code == "SYN200"]
-        assert len(comp3_diags) == 5
-        assert len({(d.line, d.column) for d in comp3_diags}) == 5
+        sign_diags = [d for d in state.diagnostics if d.code == "SYN200"]
+        assert len(sign_diags) == 5
+        assert len({(d.line, d.column) for d in sign_diags}) == 5
 
     def test_grouping_preserves_total_occurrence_count(self) -> None:
-        _, state = _parse(self._multi_comp3_source(5))
+        _, state = _parse(self._multi_sign_source(5))
 
         groups = group_syntax_diagnostics(state.diagnostics)
         total = sum(g.count for g in groups)
@@ -399,25 +406,25 @@ class TestDuplicateDiagnosticAggregation:
         assert total == len(state.diagnostics)
 
     def test_grouping_collapses_by_code_without_losing_locations(self) -> None:
-        _, state = _parse(self._multi_comp3_source(5))
+        _, state = _parse(self._multi_sign_source(5))
 
         groups = group_syntax_diagnostics(state.diagnostics)
-        comp3_group = next(g for g in groups if g.code == "SYN200")
+        sign_group = next(g for g in groups if g.code == "SYN200")
 
-        assert comp3_group.count == 5
-        assert len(comp3_group.occurrences) == 5
-        locations = {(d.line, d.filename) for d in comp3_group.occurrences}
+        assert sign_group.count == 5
+        assert len(sign_group.occurrences) == 5
+        locations = {(d.line, d.filename) for d in sign_group.occurrences}
         assert len(locations) == 5  # five distinct source lines, all kept
 
     def test_serialized_groups_still_carry_every_occurrence(self) -> None:
-        _, state = _parse(self._multi_comp3_source(5))
+        _, state = _parse(self._multi_sign_source(5))
 
         serialized = serialize_diagnostic_groups(state.diagnostics)
-        comp3_group = next(g for g in serialized if g["code"] == "SYN200")
+        sign_group = next(g for g in serialized if g["code"] == "SYN200")
 
-        assert comp3_group["count"] == 5
-        assert len(comp3_group["occurrences"]) == 5
-        assert len({o["line"] for o in comp3_group["occurrences"]}) == 5
+        assert sign_group["count"] == 5
+        assert len(sign_group["occurrences"]) == 5
+        assert len({o["line"] for o in sign_group["occurrences"]}) == 5
 
 
 # ===========================================================================
@@ -499,18 +506,24 @@ class TestCoverageAndSuccessSemantics:
     def test_unmodelled_syntax_still_reports_complete_parser_coverage(self) -> None:
         """
         The parser reaches EOF, an unmodelled-clause diagnostic exists
-        (COMP-3, dropped from the picture string rather than the AST),
+        (``SIGN``, dropped from the picture string rather than the AST),
         and coverage remains `parse_complete: True` -- again, parser
         coverage, not AST completeness.  ElementaryItemNode has no field
-        for USAGE/COMP-3 at all, so this is a case where the data item
-        IS represented, but incompletely -- exactly the #109 concern
+        for SIGN at all, so this is a case where the data item IS
+        represented, but incompletely -- exactly the #109 concern
         `parse_complete` deliberately does not speak to.
+
+        Uses ``SIGN`` rather than the originally-written ``COMP-3``: task
+        #stage41 gave ``USAGE``/``COMP*`` a real parser/AST field
+        (:attr:`~app.parser.ast.data_items.ElementaryItemNode.usage`), so
+        it is no longer an example of an unmodelled clause. ``SIGN``
+        still is, and preserves this test's original shape and purpose.
         """
         result = AnalysisService().analyze_file(
             _write_tmp_cobol(
                 _ID
                 + "DATA DIVISION.\nWORKING-STORAGE SECTION.\n"
-                + "01 WS-AMOUNT PIC S9(7)V99 COMP-3.\n"
+                + "01 WS-AMOUNT PIC S9(7)V99 SIGN IS TRAILING.\n"
                 + "PROCEDURE DIVISION.\nMAIN.\n    STOP RUN.\n"
             )
         )
@@ -528,8 +541,8 @@ class TestCoverageAndSuccessSemantics:
         assert result.ast.data_division.working_storage is not None
         item = result.ast.data_division.working_storage.items[0]
         assert not hasattr(
-            item, "usage"
-        ), "the AST has no field for COMP-3 even though parse_complete=True"
+            item, "sign"
+        ), "the AST has no field for SIGN even though parse_complete=True"
 
     # -- 4. Abandoned / unconsumed input --------------------------------
 
@@ -643,12 +656,119 @@ class TestCoverageAndSuccessSemantics:
         longer fires. The remaining 2 (`ALL '-'`/`ALL '='`, a `STRING`
         figurative-constant-repetition construct) are unrelated and
         unchanged. `success` stays `False`.
+
+        49 -> 48 (task #stage32) is the OCCURS/subscripted-operand
+        representation fix: `IF WA-ACCOUNT-ID(WS-IDX) = TR-ACCOUNT-ID` at
+        line 323 (already named above as the concrete example that first
+        surfaced this fixture's subscripted-condition gap) and several
+        sibling `IF`s in `4300-VALIDATE-TRANSACTION` and its callees on
+        subscripted table elements -- previously each its own latent
+        `SYN005 "expected comparison operator"`, this grammar's comparison
+        operand check having never accepted a subscripted reference -- now
+        parse as a single structured operand instead
+        (`app.parser.ast.statements.Subscript`), net -1 diagnostic.
+        `statements_parsed` rises 60 -> 68 (confirmed directly, not
+        assumed) as the previously-dropped `IF`/`END-IF` bodies these
+        `SYN005`s used to discard whole are now reachable -- the same
+        "fixing one gate reveals previously-unreachable code" pattern this
+        fixture's own history above already shows for the `NOT =` fix.
+        `success` stays `False` (2 semantic diagnostics, `ZZZ,ZZZ,ZZ9`
+        edited-PICTURE and the `STRING`/figurative-constant-repetition gap,
+        are both untouched -- neither is a subscript). See
+        `tests/parser/test_perform_until_unsupported_statement_fix.py
+        ::test_fixture_diagnostic_total_and_statements_parsed_move_by_the_read_fix`
+        for the full per-paragraph accounting.
+
+        48 -> 47 (task #stage34) is the `PERFORM VARYING` implementation:
+        this fixture's four occurrences (`4100-FIND-ACCOUNT`,
+        `4200-FIND-CUSTOMER`, `5000-CALCULATE-EXPOSURE`,
+        `5100-RISK-AGGREGATION`) previously mis-parsed into a bare
+        `PerformStatementNode(target="VARYING")`, stranding the loop
+        variable (`WS-IDX`/`WS-IDX2`) on the stream as an unexpected
+        token -- 4 latent `SYN001 "unexpected token"` diagnostics (2 per
+        variable name, one per loop). Task #stage34's real
+        `PerformVaryingStatementNode`/parser removes all 4; it also newly
+        reaches two `EXIT PERFORM` statements nested inside two of those
+        loops' `IF` bodies (`4100-FIND-ACCOUNT`/`4200-FIND-CUSTOMER`) and
+        correctly reports each as its own
+        `SYN100 "unsupported statement 'EXIT PERFORM'"` instead of
+        letting a mis-skipped bare `EXIT` leave a stray `PERFORM` token
+        to corrupt the surrounding parse -- see
+        `tests/parser/test_stage34_perform_varying.py` for the
+        parser-level tests and `docs`-free inline documentation in
+        `app.parser.syntax.procedure_parser
+        .ProcedureDivisionParser._skip_unsupported_statement_auto`.
+        `statements_parsed` moves 68 -> 67 (confirmed directly, not
+        assumed) -- the four loops' headers and genuinely-supported body
+        statements are now real, counted statements, net of what the
+        previous `SYN001` misparse recovery had, by accident, still
+        managed to count nearby. `success` stays `False`; the 2 semantic
+        diagnostics (unrelated to subscripts or loops) are untouched.
+
+        47 -> 44 (task #stage35) is the COMPUTE implementation. This
+        fixture has 6 real COMPUTE statements (`4310-CHECK-LIMIT` x2,
+        `4330-CHECK-DATE` x1, `4410-CALCULATE-FEE` x1,
+        `4420-UPDATE-ACCOUNT-TABLE` x1, `5000-CALCULATE-EXPOSURE` x1). 4
+        are plain `+ - * /` expressions (optionally subscripted, one
+        inside a `PERFORM VARYING` body) -- squarely Stage 35's supported
+        grammar -- and now parse into a real `ComputeStatementNode`
+        instead of a `SYN100` skip: net -4 diagnostics. The other 2 use
+        syntax Stage 35 deliberately does not implement (neither is
+        anywhere in the 45-source training corpus) and are still
+        correctly reported as `SYN100 "unsupported statement 'COMPUTE'"`:
+        `4330-CHECK-DATE`'s `COMPUTE WS-MONTH = FUNCTION MOD(...)` (an
+        intrinsic-function operand) and `4410-CALCULATE-FEE`'s
+        `COMPUTE WS-CURRENT-FEE ROUNDED = ...` (the `ROUNDED` clause).
+        Verified directly: with
+        `ProcedureDivisionParser._compute_has_supported_syntax` forced to
+        always return `False` (reproducing the pre-#stage35 behavior
+        exactly, since that predicate is the only thing #stage35 added
+        to the skip decision -- the skip mechanism itself is unchanged),
+        this fixture reproduces the documented pre-#stage35 baseline
+        byte-for-byte: 47 diagnostics, 6 of them COMPUTE, 67
+        `statements_parsed`. `statements_parsed` rises 67 -> 69 here (not
+        67 -> 71): it counts each paragraph's own top-level statement
+        list, and 2 of the 4 newly-parsed COMPUTEs are nested inside an
+        `IF` (`4310-CHECK-LIMIT`'s second, `5000-CALCULATE-EXPOSURE`'s
+        one) rather than being a top-level paragraph statement
+        themselves -- the same counting rule already visible above for
+        nested `IF`/`PERFORM` bodies. `success` stays `False`; the 2
+        semantic diagnostics are untouched.
+
+        44 -> 41 (task #stage40) is the `READ` implementation. This
+        fixture has 3 real `READ ... AT END ... NOT AT END ...
+        END-READ` occurrences (`2000-LOAD-CUSTOMERS`, `3000-LOAD-
+        ACCOUNTS`, `4000-PROCESS-TRANSACTIONS`, lines 191/229/256),
+        each previously its own `SYN100 "unsupported statement
+        'READ'"`; all three now parse into a real `ReadStatementNode`
+        with zero diagnostics (net -3). See
+        `tests/parser/test_perform_until_unsupported_statement_fix.py
+        ::test_fixture_diagnostic_total_and_statements_parsed_move_by_the_read_fix`
+        for the full per-paragraph accounting. `statements_parsed`
+        stays at 69 (each `PERFORM UNTIL` body already counted as one
+        statement before this fix -- now real content instead of a
+        fully-discarded unsupported statement, not an additional one).
+        `success` stays `False`; the 2 semantic diagnostics are
+        untouched.
+
+        41 -> 24 (task #stage41) is the `USAGE`/`COMP*` implementation:
+        this fixture has 17 real `COMP-3` occurrences (an accumulator
+        pattern spread across `1000`-series working-storage fields, the
+        `WS-ACCOUNT-TABLE` subtable's `WA-BALANCE`/`WA-LIMIT`, and
+        `AUDIT-AMOUNT`), each previously its own `SYN200 "'COMP-3'
+        clause ... not represented"`; all 17 now attach a real
+        `UsageType.COMP_3` via `ElementaryItemNode.usage` with zero
+        diagnostics (net -17, confirmed directly: 17 is exactly this
+        fixture's own COMP-3 occurrence count, not a coincidence).
+        `statements_parsed` is unchanged (USAGE adds no PROCEDURE
+        DIVISION statements). `success` stays `False`; the 2 semantic
+        diagnostics are untouched.
         """
         if not _COMPLEX_FIXTURE.exists():
             return
         result = AnalysisService().analyze_file(str(_COMPLEX_FIXTURE))
 
-        assert len(result.syntax_diagnostics) == 49
+        assert len(result.syntax_diagnostics) == 24
 
     def test_complex_fixture_does_not_report_unqualified_success(self) -> None:
         """

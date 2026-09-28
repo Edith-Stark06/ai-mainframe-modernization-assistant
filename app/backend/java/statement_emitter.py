@@ -42,6 +42,14 @@ Purpose:
     for the exact scope (signed items, edited PICTUREs and group ``DISPLAY``
     are deliberately left unformatted).
 
+    Task #stage42 gives :func:`emit_compute` the same optional
+    ``ConditionContext`` parameter: when the ``COMPUTE`` target's declared
+    Java type is ``int``/``int[]`` and the expression tree contains any
+    ``double``-typed operand, the rendered expression is wrapped in an
+    explicit ``(int)`` cast — Java, unlike COBOL, has no implicit
+    ``double`` -> ``int`` narrowing conversion on assignment. See
+    :func:`emit_compute` and :func:`_expression_has_double_operand`.
+
 Design:
     Operand translation is shared across all emitters via the private helper
     :func:`_translate_operand`, which converts an IR operand string into the
@@ -51,6 +59,31 @@ Design:
     * Pure numeric strings (integer or decimal, optional sign) → emitted as-is.
     * Otherwise → treated as COBOL identifier, converted to lowerCamelCase via
       :func:`~app.backend.java.naming.to_java_field_name`.
+
+    Task #stage33 adds Java-array lowering for a structured table subscript
+    (task #stage32's ``IRSubscript``, carried by ``IRMove``/``IRAdd``/
+    ``IRSubtract``/``IRMultiply``/``IRDivide``/``IRDisplay``/``IRIf``/
+    ``IRConditionTerm``). Every one of those instruction types' emitter —
+    including :func:`~app.backend.java.control_flow_emitter.emit_if` via
+    :func:`~app.backend.java.control_flow_emitter._build_condition`, which
+    imports from this module exactly as it already did — reaches Java array
+    indexing through exactly two functions, never by composing ``[...]``
+    itself:
+
+    * :func:`_translate_subscript_index` — the *only* place COBOL's 1-based
+      subscript becomes a 0-based Java index: a literal subscript ``"2"``
+      becomes ``"1"``; an identifier subscript ``"WS-I"`` becomes
+      ``"wsI - 1"`` (via the same :func:`~app.backend.java.naming.to_java_field_name`
+      every other identifier goes through — no second naming algorithm).
+    * :func:`_render_reference` — renders a base COBOL name as a plain Java
+      field (``"wsItem"``) or, when given a non-empty subscript tuple, as an
+      indexed array reference (``"wsItem[1]"``). :func:`_translate_operand`
+      gained an optional *subscripts* parameter and delegates its own
+      identifier branch (rule 4) to this same function, so a subscripted
+      *value* operand (MOVE source, arithmetic ``left``, a condition
+      operand, a DISPLAY operand) and a subscripted *target* (MOVE/
+      arithmetic ``result``, rendered directly via :func:`_render_reference`
+      since a target is never a literal) share one implementation.
 
     Arithmetic instructions follow the compound-assignment pattern — the
     destination (``instruction.result``) receives the in-place operation:
@@ -131,19 +164,22 @@ from __future__ import annotations
 
 import re
 
-from app.backend.java.condition_context import ConditionContext
+from app.backend.java.condition_context import ConditionContext, operand_java_type
 from app.backend.java.control_flow_emitter import (
     emit_else,
     emit_end_if,
     emit_end_perform,
     emit_if,
     emit_perform_until,
+    emit_perform_varying,
 )
 from app.backend.java.generator import BackendDiagnostic, BackendSeverity
 from app.backend.java.naming import to_java_field_name
 from app.ir.instructions import (
     IRAdd,
+    IRArithmeticExpression,
     IRCall,
+    IRCompute,
     IRDisplay,
     IRDivide,
     IRElse,
@@ -153,14 +189,18 @@ from app.ir.instructions import (
     IRInstruction,
     IRMove,
     IRMultiply,
+    IROperandExpression,
     IRPerformUntil,
+    IRPerformVarying,
     IRReturn,
+    IRSubscript,
     IRSubtract,
 )
 
 __all__ = [
     "emit_add",
     "emit_call",
+    "emit_compute",
     "emit_display",
     "emit_divide",
     "emit_else",
@@ -170,6 +210,7 @@ __all__ = [
     "emit_move",
     "emit_multiply",
     "emit_perform_until",
+    "emit_perform_varying",
     "emit_return",
     "emit_statement",
     "emit_subtract",
@@ -198,13 +239,19 @@ def emit_statement(
     * :class:`~app.ir.instructions.IRSubtract` → ``-=`` compound assignment.
     * :class:`~app.ir.instructions.IRMultiply` → ``*=`` compound assignment.
     * :class:`~app.ir.instructions.IRDivide`   → ``/=`` compound assignment.
+    * :class:`~app.ir.instructions.IRCompute` (task #stage35) → a fresh Java
+      assignment of the translated expression (``result = <expr>;``), not a
+      compound assignment.
     * :class:`~app.ir.instructions.IRCall`     → ``target(args);`` (or ``result = target(args);``).
     * :class:`~app.ir.instructions.IRReturn`   → ``return;``.
     * :class:`~app.ir.instructions.IRIf`       → ``if (<cond>) {`` (at *depth*).
     * :class:`~app.ir.instructions.IRElse`     → ``} else {`` (at *depth*).
     * :class:`~app.ir.instructions.IREndIf`    → ``}`` (at *depth*).
     * :class:`~app.ir.instructions.IRPerformUntil` → ``while (!(<cond>)) {`` (at *depth*).
-    * :class:`~app.ir.instructions.IREndPerform` → ``}`` (at *depth*).
+    * :class:`~app.ir.instructions.IRPerformVarying` (task #stage34) →
+      ``for (<init>; <continue>; <step>) {`` (at *depth*).
+    * :class:`~app.ir.instructions.IREndPerform` → ``}`` (at *depth*, closes
+      either an ``IRPerformUntil`` or an ``IRPerformVarying``).
 
     All other instructions produce a ``// TODO: <type>`` comment and a
     ``BE005`` WARNING so that generation continues rather than failing.
@@ -227,9 +274,12 @@ def emit_statement(
             Optional :class:`~app.backend.java.condition_context.ConditionContext`.
             Passed through to :func:`emit_display` (task #stage31), where it
             supplies the declared PICTURE width/scale of a DISPLAY'd field
-            for zero-/space-padding.  Not otherwise consulted by this
-            dispatcher: an ``IRIf``/``IRPerformUntil`` reached here (a direct
-            call, not the depth-aware path in
+            for zero-/space-padding, and to :func:`emit_compute` (task
+            #stage42), where it supplies the target's declared Java type to
+            decide whether a ``double``-into-``int`` narrowing cast is
+            needed.  Not otherwise consulted by this dispatcher: an
+            ``IRIf``/``IRPerformUntil`` reached here (a direct call, not the
+            depth-aware path in
             :func:`~app.backend.java.generator._collect_statements`) is
             translated exactly as before, with no condition context.
             ``None`` (the default) reproduces the exact pre-#stage31
@@ -247,6 +297,7 @@ def emit_statement(
         emit_end_perform as _emit_end_perform,
         emit_if as _emit_if,
         emit_perform_until as _emit_perform_until,
+        emit_perform_varying as _emit_perform_varying,
     )
 
     if isinstance(instruction, IRMove):
@@ -267,6 +318,9 @@ def emit_statement(
     if isinstance(instruction, IRDivide):
         return emit_divide(instruction, diagnostics)
 
+    if isinstance(instruction, IRCompute):
+        return emit_compute(instruction, diagnostics, context)
+
     if isinstance(instruction, IRCall):
         return emit_call(instruction, diagnostics)
 
@@ -284,6 +338,9 @@ def emit_statement(
 
     if isinstance(instruction, IRPerformUntil):
         return _emit_perform_until(instruction, depth, diagnostics)
+
+    if isinstance(instruction, IRPerformVarying):
+        return _emit_perform_varying(instruction, depth, diagnostics)
 
     if isinstance(instruction, IREndPerform):
         return _emit_end_perform(depth, diagnostics)
@@ -322,6 +379,10 @@ def emit_move(
         - ``MOVE "HELLO" -> WS-GREETING`` → ``wsGreeting = "HELLO";``
         - ``MOVE 42 -> WS-COUNT``         → ``wsCount = 42;``
         - ``MOVE WS-A -> WS-B``           → ``wsB = wsA;``
+        - ``MOVE 123 -> WS-ITEM(2)``      → ``wsItem[1] = 123;`` (task
+          #stage33 — ``instruction.result_subscript``)
+        - ``MOVE WS-ITEM(WS-I) -> WS-TOTAL`` → ``wsTotal = wsItem[wsI - 1];``
+          (``instruction.source_subscript``)
 
     Args:
         instruction:
@@ -356,8 +417,8 @@ def emit_move(
         )
         return []
 
-    java_target = to_java_field_name(target)
-    java_source = _translate_operand(source)
+    java_target = _render_reference(target, instruction.result_subscript)
+    java_source = _translate_operand(source, instruction.source_subscript)
 
     return [f"{java_target} = {java_source};"]
 
@@ -380,6 +441,9 @@ def emit_display(
         - ``DISPLAY "HELLO"``    → ``System.out.println("HELLO");``
         - ``DISPLAY WS-NAME``    → ``System.out.println(wsName);``
         - ``DISPLAY 42``         → ``System.out.println(42);``
+        - ``DISPLAY WS-ITEM(2)``    → ``System.out.println(wsItem[1]);``
+          (task #stage33 — ``instruction.operand_subscript``)
+        - ``DISPLAY WS-ITEM(WS-I)`` → ``System.out.println(wsItem[wsI - 1]);``
 
     With *context* supplied, an operand that is a plain field reference is
     additionally formatted the way COBOL DISPLAY implicitly formats it
@@ -414,8 +478,10 @@ def emit_display(
         )
         return []
 
-    java_operand = _translate_operand(operand)
-    java_operand = _format_display_operand(operand, java_operand, context)
+    java_operand = _translate_operand(operand, instruction.operand_subscript)
+    java_operand = _format_display_operand(
+        operand, java_operand, context, bool(instruction.operand_subscript)
+    )
     return [f"System.out.println({java_operand});"]
 
 
@@ -635,10 +701,225 @@ def _emit_arithmetic(
             )
         )
 
-    java_result = to_java_field_name(result)
-    java_left = _translate_operand(left)
+    # task #stage33: `result` mirrors the IR's own `right` operand for all
+    # four arithmetic instructions (Stage 32 populated `result_subscript`
+    # and `right_subscript` identically; the emitter has never read `right`
+    # itself, only `result`/`left`, so `result_subscript` is what belongs
+    # here — see this module's docstring and app/ir/instructions.py).
+    java_result = _render_reference(result, instruction.result_subscript)
+    java_left = _translate_operand(left, instruction.left_subscript)
 
     return [f"{java_result} {operator} {java_left};"]
+
+
+# ---------------------------------------------------------------------------
+# COMPUTE → Java assignment of a translated expression (task #stage35)
+# ---------------------------------------------------------------------------
+
+#: Arithmetic operator precedence, matching
+#: :data:`app.ir.instructions._ARITHMETIC_PRECEDENCE` exactly (COBOL's and
+#: Java's precedence for ``+ - * /`` are identical) -- kept as its own
+#: private copy here rather than imported, the same way this module's own
+#: :func:`_render_operand`-equivalent (:func:`_render_reference`/
+#: :func:`_translate_operand`) is already an independent, Java-specific
+#: sibling of :mod:`app.ir.instructions`'s debug-text
+#: ``_render_operand``, not a shared/parametrized implementation.
+_ARITHMETIC_PRECEDENCE: dict[str, int] = {"+": 1, "-": 1, "*": 2, "/": 2}
+
+
+def _translate_expression(
+    expression: IRArithmeticExpression, parent_precedence: int = 0
+) -> str:
+    """
+    Render an :data:`~app.ir.instructions.IRArithmeticExpression` tree into
+    a Java expression string (task #stage35).
+
+    A leaf operand goes through :func:`_translate_operand` exactly the way
+    every other arithmetic instruction's operand already does — literal/
+    identifier classification, lowerCamelCase field naming, and (task
+    #stage32/33) a subscripted leaf's 0-based Java array index, all via the
+    same single conversion point every other emitter uses. A
+    :class:`~app.ir.instructions.IRBinaryExpression` node recurses on both
+    sides and inserts parentheses only where COBOL's (and Java's — the two
+    languages' precedence for ``+ - * /`` is identical, so no translation
+    between them is needed) evaluation order would otherwise change; see
+    :func:`app.ir.instructions.render_arithmetic_expression`'s docstring
+    for the precedence-climbing algorithm this mirrors.
+
+    Args:
+        expression: The expression tree to render.
+        parent_precedence: The precedence level of the context this
+            expression is being printed into; ``0`` for a top-level
+            expression, which is never parenthesized.
+
+    Returns:
+        A Java expression string, e.g. ``"b * (c + d)"``.
+
+    Examples:
+        >>> _translate_expression(
+        ...     IRBinaryExpression(
+        ...         operator="*",
+        ...         left=IROperandExpression(value="B"),
+        ...         right=IRBinaryExpression(
+        ...             operator="+",
+        ...             left=IROperandExpression(value="C"),
+        ...             right=IROperandExpression(value="D"),
+        ...         ),
+        ...     )
+        ... )
+        'b * (c + d)'
+    """
+    if isinstance(expression, IROperandExpression):
+        return _translate_operand(expression.value, expression.subscript)
+
+    precedence = _ARITHMETIC_PRECEDENCE[expression.operator]
+    left_text = _translate_expression(expression.left, precedence)
+    right_text = _translate_expression(expression.right, precedence + 1)
+    text = f"{left_text} {expression.operator} {right_text}"
+    if precedence < parent_precedence:
+        return f"({text})"
+    return text
+
+
+def _expression_has_double_operand(
+    expression: IRArithmeticExpression, context: ConditionContext
+) -> bool:
+    """
+    ``True`` if any leaf operand of *expression* is Java-typed ``double``
+    (task #stage42).
+
+    Mirrors Java's own numeric-promotion rule for ``+``/``-``/``*``/``/``:
+    an arithmetic expression is ``double``-valued if *any* operand
+    anywhere in its tree is, regardless of where in the tree it sits —
+    so this recurses into both sides of every
+    :class:`~app.ir.instructions.IRBinaryExpression` node rather than
+    only checking the top level.
+
+    A leaf that is a subscripted ``OCCURS`` array element (task
+    #stage32/33) is checked against ``"double[]"`` too:
+    :attr:`~app.backend.java.field_model.JavaField.java_type` for an
+    array field is the *array's* type (``"double[]"``), never the bare
+    element type, but a subscripted reference inside an arithmetic
+    expression always denotes one scalar element (Java has no arithmetic
+    operators on array references), so ``operand_java_type``'s
+    ``"double[]"`` answer for that leaf means the same thing a plain
+    ``"double"`` field would.
+
+    Args:
+        expression: The expression tree to inspect.
+        context: What is known about the operands' declared types.
+
+    Returns:
+        Whether Java would infer this expression's type as ``double``.
+    """
+    if isinstance(expression, IROperandExpression):
+        return operand_java_type(expression.value, context) in (
+            "double",
+            "double[]",
+        )
+    return _expression_has_double_operand(
+        expression.left, context
+    ) or _expression_has_double_operand(expression.right, context)
+
+
+def emit_compute(
+    instruction: IRCompute,
+    diagnostics: list[BackendDiagnostic],
+    context: ConditionContext | None = None,
+) -> list[str]:
+    """
+    Translate an :class:`~app.ir.instructions.IRCompute` into a Java
+    assignment (task #stage35).
+
+    Unlike :func:`emit_add` and its siblings — a compound assignment onto
+    an existing value, because that is all ADD/SUBTRACT/MULTIPLY/DIVIDE's
+    COBOL grammar ever expresses — COMPUTE assigns a freshly evaluated
+    expression, so this always emits a plain ``=`` assignment, never a
+    compound operator.
+
+    Rules:
+        - ``COMPUTE A = B + C``            → ``a = b + c;``
+        - ``COMPUTE A = B * (C + D)``      → ``a = b * (c + d);``
+        - ``COMPUTE A(WS-I) = B(WS-I) * C`` → ``a[wsI - 1] = b[wsI - 1] * c;``
+          (task #stage32/33 — ``instruction.result_subscript`` and each
+          leaf operand's own subscript, translated by the same
+          :func:`_translate_subscript_index` every other emitter uses)
+        - ``COMPUTE A = B * C`` where ``A`` is ``int`` and ``B``/``C``
+          make the expression ``double``-valued → ``a = (int) (b * c);``
+          (task #stage42 — see below)
+
+    COBOL allows a ``COMPUTE`` with a decimal-valued expression to store
+    into an integer-PICTURE target (implicitly truncating, unless
+    ``ROUNDED`` is specified — this backend does not model ``ROUNDED``,
+    an unevidenced, separate, out-of-scope gap). Java has no implicit
+    narrowing conversion for ``double`` → ``int`` in an assignment, so
+    the un-cast translation (still emitted when *context* is ``None``, or
+    the target's type is unknown to it) fails to compile with
+    "incompatible types: possible lossy conversion from double to int" —
+    confirmed directly against the real corpus source that surfaced this
+    (``data/sources/phase6-v2/inventory_reorder.cbl``,
+    ``COMPUTE REORDER-POINT-QTY = (AVG-DAILY-DEMAND * SUPPLIER-LEAD-DAYS
+    * SEASONALITY-INDEX) + SAFETY-STOCK-LEVEL``, an integer target with
+    two ``V99`` decimal operands in the expression). An explicit
+    ``(int)`` cast reproduces COBOL's own truncate-on-store behavior
+    (Java's numeric cast truncates toward zero, matching COBOL's default
+    un-``ROUNDED`` truncation for this domain's non-negative quantities).
+
+    Args:
+        instruction:
+            The :class:`~app.ir.instructions.IRCompute` to lower.
+        diagnostics:
+            Mutable list; diagnostics appended on error.
+        context:
+            Optional :class:`~app.backend.java.condition_context.ConditionContext`
+            carrying every declared field's Java type, used to detect the
+            ``double``-into-``int`` narrowing case above. Without it, the
+            expression is translated exactly as before, with no cast --
+            matching every other optional-context translation in this
+            backend.
+
+    Returns:
+        A list containing exactly one Java assignment string, or an empty
+        list when the instruction is malformed.
+    """
+    target = instruction.result
+
+    if not target:
+        diagnostics.append(
+            BackendDiagnostic(
+                severity=BackendSeverity.WARNING,
+                message="IRCompute has empty result (target); skipping.",
+                code="BE006",
+            )
+        )
+        return []
+
+    if instruction.expression is None:
+        diagnostics.append(
+            BackendDiagnostic(
+                severity=BackendSeverity.WARNING,
+                message=f"IRCompute to '{target}' has no expression; skipping.",
+                code="BE006",
+            )
+        )
+        return []
+
+    java_target = _render_reference(target, instruction.result_subscript)
+    java_expression = _translate_expression(instruction.expression)
+
+    if (
+        context is not None
+        # "int[]" (task #stage33's OCCURS array element type) needs the
+        # cast exactly like a scalar "int" field does -- a subscripted
+        # COMPUTE target assigns one element, never the whole array, and
+        # JavaField.java_type carries the trailing "[]" regardless of
+        # whether a particular occurrence is subscripted.
+        and context.field_types.get(to_java_field_name(target)) in ("int", "int[]")
+        and _expression_has_double_operand(instruction.expression, context)
+    ):
+        java_expression = f"(int) ({java_expression})"
+
+    return [f"{java_target} = {java_expression};"]
 
 
 # ---------------------------------------------------------------------------
@@ -797,7 +1078,90 @@ def _escape_java_string_content(text: str) -> str:
     return text.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def _translate_operand(operand: str) -> str:
+def _translate_subscript_index(subscript: IRSubscript) -> str:
+    """
+    Lower one structured, 1-based COBOL subscript (task #stage32's
+    ``IRSubscript``) into its 0-based Java array-index expression.
+
+    This is the **only** place the ``-1`` adjustment happens anywhere in the
+    Java backend (task #stage33) -- never in the AST, never in the IR (both
+    deliberately preserve COBOL's own 1-based meaning), and never
+    recomputed independently by any individual emitter.
+
+    Args:
+        subscript:
+            A single ``IRSubscript`` — ``kind="literal"`` (a bare integer)
+            or ``kind="identifier"`` (a data-name, already canonicalised by
+            :meth:`~app.ir.builder.IRBuilder.build_subscripts` the same way
+            any other operand is).
+
+    Returns:
+        A Java index expression string.
+
+    Examples:
+        >>> _translate_subscript_index(IRSubscript(kind="literal", value="2"))
+        '1'
+        >>> _translate_subscript_index(IRSubscript(kind="literal", value="1"))
+        '0'
+        >>> _translate_subscript_index(IRSubscript(kind="identifier", value="WS-I"))
+        'wsI - 1'
+        >>> _translate_subscript_index(
+        ...     IRSubscript(kind="identifier", value="CURRENT-IDX")
+        ... )
+        'currentIdx - 1'
+    """
+    if subscript.kind == "literal":
+        try:
+            return str(int(subscript.value) - 1)
+        except ValueError:
+            # Defensive only: task #stage32's parser captures a literal
+            # subscript from a NUMBER token exclusively, so a non-integer
+            # literal value cannot occur in practice.
+            return f"({subscript.value} - 1)"
+    return f"{to_java_field_name(subscript.value)} - 1"
+
+
+def _render_reference(name: str, subscripts: tuple[IRSubscript, ...] = ()) -> str:
+    """
+    Render a COBOL identifier reference as a Java expression.
+
+    With no *subscripts*, this is exactly
+    :func:`~app.backend.java.naming.to_java_field_name` — a plain field
+    reference, byte-for-byte what every pre-#stage33 caller already
+    produced. With one (task #stage32/#stage33 scope is single-dimension
+    only), it is a Java array-indexed reference built from the **same**
+    :func:`_translate_subscript_index` every other emitter uses — this
+    function is the one place ``[...]`` is composed anywhere in the Java
+    backend.
+
+    Args:
+        name:
+            A COBOL identifier (e.g. ``"WS-ITEM"``).
+        subscripts:
+            Zero or one :class:`~app.ir.instructions.IRSubscript`. Empty by
+            default so every existing call site is unaffected.
+
+    Returns:
+        ``"wsItem"`` (no subscripts) or ``"wsItem[1]"`` /
+        ``"wsItem[wsI - 1]"`` (one subscript).
+
+    Examples:
+        >>> _render_reference("WS-ITEM")
+        'wsItem'
+        >>> _render_reference("WS-ITEM", (IRSubscript(kind="literal", value="2"),))
+        'wsItem[1]'
+        >>> _render_reference(
+        ...     "WS-ITEM", (IRSubscript(kind="identifier", value="WS-I"),)
+        ... )
+        'wsItem[wsI - 1]'
+    """
+    java_name = to_java_field_name(name)
+    if not subscripts:
+        return java_name
+    return f"{java_name}[{_translate_subscript_index(subscripts[0])}]"
+
+
+def _translate_operand(operand: str, subscripts: tuple[IRSubscript, ...] = ()) -> str:
     """
     Convert an IR operand string into a Java expression string.
 
@@ -816,13 +1180,19 @@ def _translate_operand(operand: str) -> str:
     3. **Numeric literal** — operand matches ``[-+]?[0-9]+(\\.?[0-9]*)``:\
        returned unchanged (e.g. ``'42'`` → ``'42'``).
     4. **Identifier** — everything else is treated as a COBOL name and
-       converted to lowerCamelCase via
-       :func:`~app.backend.java.naming.to_java_field_name`.
+       rendered via :func:`_render_reference` (lowerCamelCase, plus a Java
+       array index when *subscripts* is non-empty, task #stage33).
 
     Args:
         operand:
             An IR operand string such as ``'"HELLO"'``, ``"'Y'"``, ``'42'``,
             or ``'WS-GREETING'``.
+        subscripts:
+            Zero or one structured :class:`~app.ir.instructions.IRSubscript`
+            (task #stage32) for *operand*, when it is a table reference.
+            Empty by default; a literal/numeric *operand* can never carry
+            one (COBOL cannot subscript a literal), so this only ever
+            affects rule 4.
 
     Returns:
         A Java expression string ready for embedding in a statement.
@@ -836,6 +1206,8 @@ def _translate_operand(operand: str) -> str:
         '42'
         >>> _translate_operand('WS-GREETING')
         'wsGreeting'
+        >>> _translate_operand('WS-ITEM', (IRSubscript(kind="literal", value="2"),))
+        'wsItem[1]'
     """
     # 1. Double-quoted string literal
     if operand.startswith('"') and operand.endswith('"') and len(operand) >= 2:
@@ -849,8 +1221,8 @@ def _translate_operand(operand: str) -> str:
     if re.match(r"^[+-]?\d+(\.\d+)?$", operand):
         return operand
 
-    # 4. COBOL identifier → lowerCamelCase
-    return to_java_field_name(operand)
+    # 4. COBOL identifier → lowerCamelCase, optionally array-indexed
+    return _render_reference(operand, subscripts)
 
 
 # ---------------------------------------------------------------------------
@@ -868,6 +1240,7 @@ def _format_display_operand(
     operand: str,
     java_operand: str,
     context: ConditionContext | None,
+    subscripted: bool = False,
 ) -> str:
     """
     Apply COBOL DISPLAY's implicit PICTURE formatting to *java_operand*,
@@ -899,6 +1272,17 @@ def _format_display_operand(
           not a field reference at all, so no declared width exists for it.
         - Anything else *context* does not know about (no *context*, or the
           operand does not resolve to a declared field).
+        - (task #stage33) A bare, *unsubscripted* reference to an
+          ``OCCURS`` field (:attr:`~app.backend.java.field_model.JavaField.occurs`
+          is not ``None``) -- its declared ``digits``/``length`` describe
+          one *element*, not the Java array itself, and formatting the
+          array reference as if it were that element would not compile.
+          This mirrors Stage 31's own documented gap ("OCCURS/subscripted
+          item DISPLAY" in ``docs/MMIM_DISPLAY_FORMATTING_FIX.md`` §11) --
+          still deliberately unformatted, now for a precise, checked
+          reason instead of never being reachable at all. A *subscripted*
+          reference to one element of that same field (``subscripted=True``)
+          is formatted exactly like any other elementary field.
 
     Args:
         operand:
@@ -910,6 +1294,12 @@ def _format_display_operand(
         context:
             Optional :class:`~app.backend.java.condition_context.ConditionContext`.
             ``None`` returns *java_operand* unchanged.
+        subscripted:
+            ``True`` when *operand* carried a structured subscript (task
+            #stage32) that :func:`_translate_operand` already applied to
+            *java_operand* -- i.e. *java_operand* names one array element,
+            not the whole array. Defaults to ``False``, reproducing every
+            pre-#stage33 caller's behavior exactly.
 
     Returns:
         A Java expression string: either *java_operand* unchanged, or a
@@ -936,8 +1326,16 @@ def _format_display_operand(
     if _NUMERIC_OPERAND_RE.match(operand):
         return java_operand
 
-    fld = context.fields.get(java_operand)
+    # task #stage33: look up the *base* field, never the (possibly
+    # subscripted) rendered expression -- context.fields is keyed by plain
+    # Java field name, so "wsItem[1]" would never be found.
+    fld = context.fields.get(to_java_field_name(operand))
     if fld is None:
+        return java_operand
+
+    # task #stage33: an OCCURS field's digits/length describe one element;
+    # only apply them when *java_operand* already names one (subscripted).
+    if fld.occurs is not None and not subscripted:
         return java_operand
 
     if fld.digits is not None and not fld.signed:

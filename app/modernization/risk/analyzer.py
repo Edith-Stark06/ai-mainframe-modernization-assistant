@@ -397,10 +397,9 @@ class RiskAnalyzer:
                 title="PERFORM to an unresolved target",
                 explanation=(
                     "A PERFORM names something that is not a paragraph defined in this "
-                    "program. It is either an external procedure, a parser gap (for "
-                    "example PERFORM VARYING is currently recorded with the target "
-                    "'VARYING'), or dead code. The real control-flow target is unknown "
-                    "to the analysis."
+                    "program. It is either an external procedure, an unsupported PERFORM "
+                    "form this parser cannot yet represent, or dead code. The real "
+                    "control-flow target is unknown to the analysis."
                 ),
                 evidence=tuple(
                     f"PERFORM '{name}' (unresolved) — {len(srcs)} site(s)"

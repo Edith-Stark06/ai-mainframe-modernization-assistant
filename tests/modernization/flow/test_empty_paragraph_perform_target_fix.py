@@ -155,12 +155,16 @@ class TestExistingEmptyTarget:
             f"EMPTY-PARA.\n{verb_body}\n"
         )
 
-    def test_read_only_paragraph_resolves_to_a_process_node(self) -> None:
-        flow = _flow_for(
-            self._source(
-                "    READ SOME-FILE\n        AT END DISPLAY 'EOF'\n    END-READ.\n"
-            )
-        )
+    def test_write_only_paragraph_resolves_to_a_process_node(self) -> None:
+        """Uses ``WRITE`` rather than the originally-written ``READ``: task
+        #stage40 gave ``READ`` a real parser/AST node -- its ``AT END``
+        clause now lowers to real IR (a ``DISPLAY`` instruction here), so a
+        paragraph whose only statement is ``READ ... AT END`` is no longer
+        statement-empty and no longer exercises this test's own subject
+        (an existing paragraph the IR has zero instructions for). ``WRITE``
+        remains genuinely unsupported (per the Stage 40 discovery report)
+        and preserves this test's original shape and purpose."""
+        flow = _flow_for(self._source("    WRITE SOME-RECORD.\n"))
         target = _performs_target(flow, "PERFORM EMPTY-PARA")
         assert target.node_type is NodeType.PROCESS
         assert target.id == "empty_T_EMPTY-PARA"
@@ -375,14 +379,24 @@ def test_real_batch_acct_update_nonempty_perform_targets_still_resolve_normally(
 def test_real_batch_acct_update_paragraph_and_node_counts_are_stable(
     batch_acct_result,
 ):
-    """Exactly the 1 expected empty-anchor node appears (was 2; task
-    #stage25 made ``1000-OPEN-FILES`` no longer empty -- see
-    test_real_batch_acct_update_empty_targets_resolve above); nothing else
-    about the CFG shape moves."""
+    """Exactly 1 empty-anchor node appears (was 2 from task #stage37 through
+    Stage 39; task #stage40's ``READ`` implementation removes
+    ``2000-READ-RECORD`` from this list, not adds to it): that paragraph's
+    only statement is ``READ ACCT-IN-FILE INTO FD-ACCT-RECORD AT END MOVE
+    'Y' TO WS-EOF-FLAG NOT AT END ADD 1 TO WS-RECORDS-READ END-READ``,
+    which now has a real parser/AST/IR node -- its ``AT END`` clause's
+    ``MOVE`` lowers to a real ``IRMove`` (task #stage40's always-end-of-file
+    model), so the paragraph is no longer statement-empty and no longer
+    resolves as an anchor node; it gets a normal ``PROCESS`` node keyed by
+    its own statement, exactly like any other non-empty paragraph.
+    ``4000-CLOSE-FILES`` (body: ``CLOSE ACCT-IN-FILE.``, an unsupported
+    statement, no representable AST statements -- unaffected by Stage 40,
+    which does not touch ``CLOSE``) remains the sole empty anchor. Nothing
+    else about the CFG shape moves."""
     flow = generate_flow(batch_acct_result)
     empty_nodes = sorted(n.name for n in flow.nodes if n.id.startswith("empty_"))
     assert empty_nodes == [
-        "2000-READ-RECORD (no representable statements)",
+        "4000-CLOSE-FILES (no representable statements)",
     ]
     assert not [n for n in flow.nodes if n.id.startswith("ext_")]
 

@@ -1357,6 +1357,7 @@ class TestAnalyzeEndpointDependenciesSummary:
             "dependencies",
             "dependency_summary",
             "dependency_graph",
+            "data_flow_graph",
             "error",
         }
         actual_fields = set(body.keys())
@@ -1386,6 +1387,95 @@ class TestAnalyzeEndpointDependenciesSummary:
 
         assert graph1["nodes"] == graph2["nodes"]
         assert graph1["edges"] == graph2["edges"]
+
+
+_COBOL_WITH_MOVE = b"""        IDENTIFICATION DIVISION.
+        PROGRAM-ID. MOVE-TEST.
+
+        DATA DIVISION.
+        WORKING-STORAGE SECTION.
+        01 WS-SOURCE PIC 9(5) VALUE 0.
+        01 WS-TARGET PIC 9(5) VALUE 0.
+
+        PROCEDURE DIVISION.
+        MAIN-PARAGRAPH.
+            MOVE WS-SOURCE TO WS-TARGET.
+            STOP RUN.
+"""
+
+
+class TestAnalyzeEndpointDataFlowGraph:
+    """Tests for the data_flow_graph field (task #stage49)."""
+
+    def test_analyze_data_flow_graph_empty(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """A program with no VARIABLE_READ/WRITE dependencies yields an empty graph."""
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+        flow = body["data_flow_graph"]
+        assert flow is not None
+        assert flow["nodes"] == []
+        assert flow["edges"] == []
+
+    def test_analyze_data_flow_graph_move(
+        self, client: TestClient, workspace_root: Path
+    ) -> None:
+        """A MOVE statement must yield a paragraph node, two data-item nodes, and a READS/WRITES edge each."""
+        ws_id = _create_workspace(workspace_root, {"move.cbl": _COBOL_WITH_MOVE})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "move.cbl"},
+        ).json()
+        flow = body["data_flow_graph"]
+        assert flow is not None
+
+        node_ids = {n["id"] for n in flow["nodes"]}
+        assert node_ids == {
+            "para_MAIN-PARAGRAPH",
+            "var_WS-SOURCE",
+            "var_WS-TARGET",
+        }
+
+        edge_types = {
+            (e["source_id"], e["target_id"], e["edge_type"]) for e in flow["edges"]
+        }
+        assert ("para_MAIN-PARAGRAPH", "var_WS-SOURCE", "READS") in edge_types
+        assert ("para_MAIN-PARAGRAPH", "var_WS-TARGET", "WRITES") in edge_types
+
+    def test_analyze_data_flow_graph_internal_error(
+        self, client: TestClient, workspace_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An internal error where no AST is generated must yield no data flow graph."""
+        from app.analysis.models import AnalysisResult
+
+        def mock_analyze_file(*args, **kwargs) -> AnalysisResult:
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[],
+                semantic_diagnostics=[],
+                success=False,
+                error=Exception("Simulated internal compiler crash"),
+                dependencies=[],
+                ast=None,
+                ir=None,
+            )
+
+        monkeypatch.setattr(
+            "app.api.routers.analysis.AnalysisService.analyze_file", mock_analyze_file
+        )
+
+        ws_id = _create_workspace(workspace_root, {"hello.cbl": _COBOL_HELLO})
+        body = client.post(
+            f"/api/v1/workspaces/{ws_id}/analyze",
+            json={"filename": "hello.cbl"},
+        ).json()
+
+        assert body["success"] is False
+        assert body["data_flow_graph"] is None
 
 
 class TestAnalyzeBusinessRules:

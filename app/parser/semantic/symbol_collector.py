@@ -214,6 +214,9 @@ class SymbolCollectorVisitor(SemanticVisitor):
             picture=node.picture,
             declared_at=node.start_position,
             value=node.value,
+            occurs=node.occurs,
+            redefines=node.redefines,
+            usage=node.usage,
         )
 
     def visit_group_item(self, node: GroupItemNode) -> None:
@@ -229,6 +232,9 @@ class SymbolCollectorVisitor(SemanticVisitor):
             level=node.level,
             picture=None,
             declared_at=node.start_position,
+            occurs=node.occurs,
+            redefines=node.redefines,
+            usage=node.usage,
         )
 
     def visit_condition_name(self, node: ConditionNameNode) -> None:
@@ -253,6 +259,9 @@ class SymbolCollectorVisitor(SemanticVisitor):
         picture: str | None,
         declared_at: object,
         value: str | None = None,
+        occurs: int | None = None,
+        redefines: str | None = None,
+        usage: str | None = None,
     ) -> None:
         """
         Create and register a :class:`~app.parser.semantic.symbols.VariableSymbol`.
@@ -274,6 +283,16 @@ class SymbolCollectorVisitor(SemanticVisitor):
             value:
                 The raw ``VALUE`` clause literal of an elementary item, or
                 ``None`` (the default) when there is none.
+            occurs:
+                The declared ``OCCURS n [TIMES]`` cardinality (task
+                #stage32), or ``None`` (the default) when there is none.
+            redefines:
+                The base item's uppercased data-name from a ``REDEFINES
+                base-name`` clause (task #stage39), or ``None`` (the
+                default) when there is none.
+            usage:
+                The uppercased ``USAGE`` clause operand (task #stage41),
+                or ``None`` (the default) when there is none.
         """
         from app.parser.lexer.position import Position
 
@@ -286,6 +305,9 @@ class SymbolCollectorVisitor(SemanticVisitor):
             level=level,
             picture=picture,
             value=value,
+            occurs=occurs,
+            redefines=redefines,
+            usage=usage,
         )
         registered = self._table.register(sym)
         if registered:

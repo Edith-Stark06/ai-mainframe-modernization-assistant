@@ -60,9 +60,23 @@ _RANGES = {
         "confidence": (0.95, 1.0),
         "coverage": (0.95, 1.0),
     },
+    # task #stage41: this fixture's COMP-3 fields now have a real
+    # parser/AST field (ElementaryItemNode.usage) and no longer produce
+    # any diagnostic; its GO TO was already supported by an earlier,
+    # separate fix (task #stage17). Nothing in this fixture is
+    # unsupported/unmodelled any more (confirmed directly: 0 distinct
+    # codes, 0 occurrences), so confidence/coverage are now both 1.0,
+    # matching "trivial"/"low_complexity"'s range rather than the
+    # degraded range this fixture used to earn. Its file is intentionally
+    # left unmodified -- it is BENCHMARK_SOURCE_IDS-tagged (see
+    # app/dataset/corpus.py) and app/benchmark/curated.py's frozen
+    # benchmark-v1 spec keys an adversarial trap off its exact content;
+    # see test_unsupported_syntax_reported_and_lowers_confidence below
+    # for this range's own regression test, now driven by an inline
+    # source instead of this fixture.
     "unsupported_syntax": {
-        "confidence": (0.45, 0.85),
-        "coverage": (0.45, 0.85),
+        "confidence": (0.95, 1.0),
+        "coverage": (0.95, 1.0),
     },
     "incomplete_parsing": {
         "confidence": (0.0, 0.55),
@@ -148,8 +162,32 @@ def test_parser_failure_no_falsely_strong_conclusion(scores) -> None:
     assert sc.analysis_confidence < 0.2
 
 
-def test_unsupported_syntax_reported_and_lowers_confidence(scores) -> None:
-    sc = scores["unsupported_syntax"]
+def test_unsupported_syntax_reported_and_lowers_confidence(tmp_path) -> None:
+    """task #stage41: the ``unsupported_syntax`` fixture's own COMP-3
+    fields now have a real parser/AST field and no longer produce any
+    diagnostic (see the updated ``_RANGES["unsupported_syntax"]`` comment
+    above), so this test can no longer use that fixture to prove
+    "unsupported syntax lowers confidence" -- it never touches that
+    fixture file, to avoid disturbing app/benchmark/curated.py's frozen
+    benchmark-v1 adversarial trap, which is keyed to that exact file's
+    content. Driven instead by an inline source with a construct that is
+    still genuinely unsupported (``WRITE``), preserving this test's
+    original claim and shape."""
+    from app.modernization.scoring.confidence_aware import score_with_confidence
+
+    ar = analyze_source(
+        "       IDENTIFICATION DIVISION.\n"
+        "       PROGRAM-ID. T.\n"
+        "       DATA DIVISION.\n"
+        "       WORKING-STORAGE SECTION.\n"
+        "       01 WS-REC PIC X(10).\n"
+        "       PROCEDURE DIVISION.\n"
+        "       MAIN-PARA.\n"
+        "           WRITE WS-REC.\n"
+        "           STOP RUN.\n",
+        tmp_path,
+    )
+    sc = score_with_confidence(ar)
     us = sc.coverage_report.unsupported_syntax
     assert us.distinct_codes >= 1
     assert us.total_occurrences >= 1
@@ -161,9 +199,15 @@ def test_unsupported_syntax_reported_and_lowers_confidence(scores) -> None:
 
 
 def test_file_processing_constructs_are_unsupported_not_ignored(scores) -> None:
+    """task #stage40: READ moved out of the unsupported-statement family
+    (it now has a real parser/AST node -- ReadStatementNode). This
+    fixture's OPEN/CLOSE remain unsupported (2 occurrences); READ no
+    longer contributes a SYN100. Measured directly, not guessed."""
     sc = scores["file_processing"]
     us = sc.coverage_report.unsupported_syntax
-    assert us.total_occurrences >= 3  # SELECT/FD/OPEN/READ/CLOSE family
+    assert (
+        us.total_occurrences >= 2
+    )  # OPEN/CLOSE family (SELECT/FD unmodelled too, but silent)
     assert sc.analysis_confidence < 0.8
 
 

@@ -969,9 +969,34 @@ def test_real_source_compiles_and_branches_like_cobol(
     )
     assert done.returncode == 0, done.stderr
 
-    # the AUTO branch calls the (stub) paragraph method; the ELSE branch of LIFE
-    # assigns finalCalculatedPrem = annualBasePrem (1200.0). A kind that is
-    # neither takes that final else path; AUTO / LIFE take the stub branches.
+    # task #stage36: the AUTO/LIFE paragraphs (1000-PROCESS-AUTO-POLICY /
+    # 2000-PROCESS-LIFE-POLICY) used to be empty BE009 stubs -- PERFORM
+    # targets whose body was dropped upstream of the backend -- so every
+    # branch left finalCalculatedPrem at its declared default (0.0). Task
+    # #stage36 now outlines each into a real method, so their own COMPUTE
+    # statements (task #stage35, always correctly represented in the IR --
+    # this is purely the previously-missing Java text catching up) actually
+    # run.
+    #
+    # NUM-VEHICLE-DRIVERS/SMOKER-STATUS-CODE are both REDEFINES-only
+    # elementary items with no VALUE clause of their own. Task #stage39
+    # gave a REDEFINES group's children a derived initializer -- sliced
+    # from the base item's (POLICY-RAW-PAYLOAD) own literal VALUE at each
+    # child's byte offset, COBOL's actual overlay semantics -- but this
+    # corpus's own base literal does not happen to align meaningfully with
+    # either redefining view's field layout (measured, not assumed: see
+    # tests/backend/test_stage39_redefines_java.py). NUM-VEHICLE-DRIVERS's
+    # byte range slices to two space characters, which is not a valid
+    # digit string, so it is still correctly declined and the field still
+    # keeps its plain Java default (0) -- unaffected by task #stage39.
+    # SMOKER-STATUS-CODE's byte range does slice to a real (if
+    # not-business-meaningful) letter, "O" -- no longer null, but "O" is
+    # not "Y" either, so _cobolEquals(smokerStatusCode, "Y") is false
+    # exactly as it always was, for a different underlying reason. Both
+    # paragraphs therefore still take their "not flagged" ELSE branch:
+    # AUTO -> annualBasePrem(1200.00) * 1.05 = 1260.0, LIFE ->
+    # 1200.00 * 1.15 = 1380.0. Measured directly by running the compiled
+    # harness (not hand-derived), not assumed.
     def run(kind: str) -> dict[str, str]:
         out = subprocess.run(
             ["java", "Harness", cls, f"policyKind=s:{kind}"],
@@ -981,17 +1006,18 @@ def test_real_source_compiles_and_branches_like_cobol(
         ).stdout
         return dict(line.split("=", 1) for line in out.split("\n") if "=" in line)
 
-    assert run("AUTO")["finalCalculatedPrem"] == "0.0"  # AUTO branch: no assignment
-    assert run("LIFE")["finalCalculatedPrem"] == "0.0"  # LIFE branch: no assignment
-    assert run("AUTO  ")["finalCalculatedPrem"] == "0.0"  # padded: still AUTO
+    assert run("AUTO")["finalCalculatedPrem"] == "1260.0"  # AUTO branch, not-risky
+    assert run("LIFE")["finalCalculatedPrem"] == "1380.0"  # LIFE branch, not-smoker
+    assert run("AUTO  ")["finalCalculatedPrem"] == "1260.0"  # padded: still AUTO
     assert run("BOAT")["finalCalculatedPrem"] == "1200.0"  # neither: else path
 
 
-def test_real_corpus_only_these_three_sources_use_the_helper(tmp_path) -> None:
-    """Across all 45 corpus sources exactly three carry the helper: the ones
-    with a text comparison in *reachable* code whose operands are both known
-    text (the other text comparisons sit in paragraph bodies the backend
-    skips).
+def test_real_corpus_only_these_twenty_three_sources_use_the_helper(tmp_path) -> None:
+    """Across all 45 corpus sources exactly twenty-three carry the helper: the
+    ones with a text comparison in *reachable* code whose operands are
+    both known text (any other text comparison sits in a paragraph body
+    the backend cannot reach for a separate, unrelated reason -- e.g. a
+    paragraph whose own body is entirely unsupported statements).
 
     Was only ``t_policy_redefines`` (Stage 24); task #stage25
     (docs/MMIM_NEGATED_COMPARISON_FIX.md) makes ``t_batch_acct_update``'s
@@ -1007,7 +1033,49 @@ def test_real_corpus_only_these_three_sources_use_the_helper(tmp_path) -> None:
     and the comparison correctly gets the helper instead of identity ``==``.
     ``t_inventory_extract`` and ``t_payroll_file_post`` -- the other two
     FILE-SECTION sources -- declare FD fields too but never compare one
-    against a text literal, so they do not join this list."""
+    against a text literal, so they do not join this list.
+
+    3 -> 20 (task #stage36): every one of these three text comparisons
+    was already reachable in the *entry* paragraph's own body -- Stage 36
+    (outlining a ``PERFORM`` target's own body into a real method) changes
+    nothing for any of them. What it *does* change is every text
+    comparison that previously sat inside a non-entry paragraph, which was
+    -- regardless of how the comparison itself parsed -- always an empty
+    ``BE009`` stub before this stage. 17 more sources join for exactly
+    that reason (their own text comparison is inside a ``PERFORM``
+    target's body, now genuinely emitted for the first time), confirmed
+    directly against the real pipeline, not assumed. No source's
+    comparison *logic* changed; only whether the paragraph containing it
+    was ever emitted at all.
+
+    20 -> 22 (task #stage37): the out-of-line ``PERFORM paragraph-name
+    UNTIL condition`` fix (see
+    ``tests/parser/test_stage37_perform_target_until.py``) restores the
+    *entry* paragraph's own tail statements -- previously dropped by the
+    exact pre-existing gap this docstring's own ``t_batch_acct_update``
+    paragraph above already named. Two sources' loop condition is itself
+    a text comparison against a paragraph now correctly parsed, in code
+    that is (and, before this stage's fix, silently was not) reachable:
+    ``t_inventory_extract`` (``UNTIL WS-INV-EOF = 'Y'``) and
+    ``t_payroll_file_post`` (``UNTIL WS-PAY-EOF = 'Y'``).
+    ``t_batch_acct_update`` and ``t_daily_trans_report`` -- the other two
+    Stage 37-evidenced sources -- were already on this list (their own
+    text comparisons live elsewhere, in code Stage 36 had already made
+    reachable), so this fix changes nothing further for them.
+
+    22 -> 23 (task #stage38): the IF-condition parenthesized
+    arithmetic-expression operand fix (see
+    ``tests/parser/test_stage38_if_arithmetic_expression.py``) restores
+    ``t_inventory_reorder``'s ``3000-CALCULATE-ORDER-QUANTITY`` and
+    ``4000-EVALUATE-EXPEDITE-NEED`` paragraphs, previously entirely
+    empty (``SYN005`` dropped every statement in each). Both paragraphs
+    open with a pre-existing, already-correctly-parseable text
+    comparison, ``IF NEEDS-REORDER-FLAG = 'Y'``, that was never
+    reachable in generated Java until now -- the same "restored
+    paragraph body, unrelated pre-existing comparison now reachable for
+    the first time" pattern Stage 36/37 already caused for other
+    sources above, not a change to this source's COMPUTE-related
+    ``javac`` failure (still present, still unrelated, still deferred)."""
     from app.dataset.corpus import load_training_corpus
 
     users = []
@@ -1018,7 +1086,27 @@ def test_real_corpus_only_these_three_sources_use_the_helper(tmp_path) -> None:
         if COBOL_EQUALS in java:
             users.append(rec.source_id)
     assert users == [
+        "t_account_eligibility",
+        "t_account_validate",
         "t_batch_acct_update",
+        "t_bonus_calc",
+        "t_condition_names_88",
+        "t_credit_approval",
+        "t_customer_record",
         "t_daily_trans_report",
+        "t_fraud_pipeline",
+        "t_insurance_claim",
+        "t_inventory_extract",
+        "t_inventory_reorder",
+        "t_loan_underwrite",
+        "t_mortgage_service",
+        "t_payment_gateway",
+        "t_payroll_deduct",
+        "t_payroll_file_post",
+        "t_payroll_net_pay",
         "t_policy_redefines",
+        "t_pricing_tier",
+        "t_reorder_point",
+        "t_shared_state_hazard",
+        "t_tax_withhold",
     ]

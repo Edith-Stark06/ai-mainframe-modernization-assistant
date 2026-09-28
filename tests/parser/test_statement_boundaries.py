@@ -96,8 +96,15 @@ class TestUnsupportedStatementNotAbsorbed:
         assert "OPEN" in state.diagnostics[0].message
 
     def test_consecutive_unsupported_verbs_each_diagnosed(self) -> None:
-        """Each period-less unsupported verb is reported separately."""
-        program, state = _parse("    OPEN INPUT F1\n    READ F1\n    STOP RUN.\n")
+        """Each period-less unsupported verb is reported separately.
+
+        Uses ``WRITE`` rather than the originally-written ``READ``: task
+        #stage40 gave ``READ`` a real parser/AST node, so it is no
+        longer an example of an *unsupported* verb -- ``WRITE`` still is
+        (unevidenced/unimplemented, per the Stage 40 discovery report),
+        and this test's own purpose (consecutive unsupported verbs don't
+        absorb each other) is unaffected by the substitution."""
+        program, state = _parse("    OPEN INPUT F1\n    WRITE F1\n    STOP RUN.\n")
 
         assert _names(program) == ["StopRun"]
         assert len(state.diagnostics) == 2

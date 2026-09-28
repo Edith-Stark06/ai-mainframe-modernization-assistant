@@ -81,11 +81,23 @@ def test_failing_assertion_is_reported_not_masked(
 
 
 def test_error_expectation_field_is_readable(elig_bundle, elig_project, tmp_path):
-    # eligibility's rules are all non-executable (BE009 stubs / unreached),
-    # so #130 must generate ZERO artifacts for it — not fabricate a test
+    # task #stage36: eligibility_rules.cbl's three PERFORMed paragraphs
+    # (CHECK-ELIGIBILITY/CALCULATE-TOTAL/REVIEW-AMOUNT) used to all be
+    # BE009 stubs -- no real Java body existed for #130 to generate a test
+    # against -- so this test's original assertion (zero artifacts) was
+    # protecting against #130 fabricating a test for non-executable code.
+    # Task #stage36 outlines every PERFORM-to-local-paragraph target into
+    # a real method, so those three now execute; only STATUS-STEP (never
+    # PERFORMed by anyone in this source) remains non-executable. The
+    # protective intent survives, now checkable both ways: an artifact
+    # exists for every executable rule, and still none for the
+    # non-executable one -- measured directly, not assumed.
     suite = extract_behavioral_tests(elig_bundle)
     files, artifacts = generate_java_tests(suite, elig_project)
-    assert artifacts == ()
+    assert len(artifacts) == len(suite.executable_tests) == 8
+    non_executable_ids = {t.test_id for t in suite.non_executable_tests}
+    artifact_source_ids = {a.behavioral_test_id for a in artifacts}
+    assert not (non_executable_ids & artifact_source_ids)
 
 
 def test_source_and_business_rule_mapping_on_artifacts(if_else_bundle, if_else_project):

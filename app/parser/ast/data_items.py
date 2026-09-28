@@ -137,6 +137,47 @@ class ElementaryItemNode(DataItemNode):
         value:
             The optional VALUE clause literal (e.g. ``"0"``), or
             ``None`` if absent.
+        occurs:
+            The declared cardinality of an ``OCCURS n [TIMES]`` clause
+            (task #stage32), or ``None`` if the item has none. Both
+            ``OCCURS 5`` and ``OCCURS 5 TIMES`` produce the same value —
+            ``TIMES`` is consumed as optional syntax, never required.
+            ``OCCURS DEPENDING ON``, ``INDEXED BY``, and any other
+            qualifier beyond the bare count remain unrepresented and out
+            of scope; see
+            :meth:`~app.parser.syntax.data_parser.DataDivisionParser._parse_occurs_clause`.
+        redefines:
+            The base item's data-name from a ``REDEFINES base-name``
+            clause (task #stage39), uppercased, or ``None`` if the item
+            has none. An item whose own name is redefined by a *later*
+            sibling is unaffected — this field only ever names what
+            *this* item itself redefines, never the reverse. See
+            :meth:`~app.parser.syntax.data_parser.DataDivisionParser._parse_elementary_or_group`
+            for exactly how the clause is recognised, and
+            :func:`~app.backend.java.generator._resolve_redefines_values`
+            for how a redefining *group*'s elementary children derive
+            their initial value from the base item's own ``VALUE``
+            literal (the one evidenced corpus shape; an elementary item
+            redefining another elementary item is captured here but not
+            further resolved — unevidenced).
+        usage:
+            The uppercased operand of a ``USAGE [IS] usage-word`` clause,
+            or of a bare ``usage-word`` (no leading ``USAGE`` keyword —
+            both are valid COBOL, and the real training corpus uses the
+            bare form exclusively), e.g. ``"COMP-3"``, ``"COMP"``,
+            ``"BINARY"``, ``"PACKED-DECIMAL"`` (task #stage41), or
+            ``None`` if the item has none (equivalent to ``DISPLAY``).
+            Recorded exactly as written -- alias normalisation
+            (``BINARY`` -> ``COMP``, ``PACKED-DECIMAL`` -> ``COMP-3``,
+            ...) happens downstream in
+            :meth:`~app.parser.semantic.type_builder.TypeBuilder.usage_from_string`,
+            not here. See
+            :meth:`~app.parser.syntax.data_parser.DataDivisionParser._parse_usage_clause`
+            for exactly how the clause is recognised. This affects only
+            the resolved :class:`~app.parser.semantic.types.UsageType`
+            attached during semantic analysis, never the generated Java
+            (which derives its field type from ``picture`` alone) -- a
+            purely representational fix, not a behavior change.
 
     Examples:
         >>> from app.parser.lexer.position import Position
@@ -151,6 +192,9 @@ class ElementaryItemNode(DataItemNode):
 
     picture: str
     value: str | None = None
+    occurs: int | None = field(default=None, metadata={"omit_if_empty": True})
+    redefines: str | None = field(default=None, metadata={"omit_if_empty": True})
+    usage: str | None = field(default=None, metadata={"omit_if_empty": True})
 
     def accept(self, visitor: object) -> object:
         """
@@ -190,6 +234,32 @@ class GroupItemNode(DataItemNode):
             The group-name string (uppercased).
         children:
             Ordered tuple of subordinate :class:`DataItemNode` instances.
+        occurs:
+            The declared cardinality of an ``OCCURS n [TIMES]`` clause on
+            the *group itself* (task #stage32) — e.g. a repeating record,
+            ``05 WS-ENTRY OCCURS 5 TIMES.`` with its own ``children`` —
+            or ``None`` if the group does not repeat. See
+            :attr:`ElementaryItemNode.occurs` for the exact grammar
+            accepted and what remains unrepresented.
+        redefines:
+            The base item's data-name from a ``REDEFINES base-name``
+            clause (task #stage39), uppercased, or ``None`` if the item
+            has none — see :attr:`ElementaryItemNode.redefines` for the
+            full explanation; a redefining *group* (this corpus's one
+            evidenced shape, e.g. ``05 AUTO-PAYLOAD REDEFINES
+            POLICY-RAW-PAYLOAD.``) is the form
+            :func:`~app.backend.java.generator._resolve_redefines_values`
+            actually derives child values for.
+        usage:
+            A ``USAGE`` clause on the group itself (task #stage41), or
+            ``None`` if it has none — see :attr:`ElementaryItemNode.usage`
+            for the full explanation. Unevidenced in the real training
+            corpus (every ``COMP``/``COMP-3`` occurrence there is on an
+            elementary item); captured here for grammatical symmetry with
+            :attr:`occurs`/:attr:`redefines`, but no downstream consumer
+            (semantic analysis, Java generation) currently reads a
+            group's own ``usage`` -- COBOL's group-level USAGE
+            inheritance to elementary children is not implemented.
 
     Examples:
         >>> from app.parser.lexer.position import Position
@@ -203,6 +273,9 @@ class GroupItemNode(DataItemNode):
     """
 
     children: tuple[DataItemNode, ...] = field(default_factory=tuple)
+    occurs: int | None = field(default=None, metadata={"omit_if_empty": True})
+    redefines: str | None = field(default=None, metadata={"omit_if_empty": True})
+    usage: str | None = field(default=None, metadata={"omit_if_empty": True})
 
     def accept(self, visitor: object) -> object:
         """

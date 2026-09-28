@@ -83,7 +83,26 @@ def test_perform_is_not_reported_as_external_call(analyze) -> None:
     assert _by_cat(risks, RiskCategory.EXTERNAL_CALL) == []
 
 
-def test_unresolved_perform_target_from_perform_varying(analyze) -> None:
+def test_perform_varying_is_not_an_unresolved_perform_target(analyze) -> None:
+    """
+    Before task #stage34, ``PERFORM VARYING`` mis-parsed into
+    ``PerformStatementNode(target="VARYING")`` -- a bare PERFORM to a
+    paragraph literally named "VARYING", which does not exist anywhere
+    in the program. The CFG's ``EXTERNAL``-node/``PERFORMS``-edge
+    detection this risk is built on (see
+    ``RiskAnalyzer._detect_unresolved_perform_targets``) correctly, if
+    accidentally, flagged that as an ``UNRESOLVED_PERFORM_TARGET`` --
+    this test (originally named
+    ``test_unresolved_perform_target_from_perform_varying``) locked in
+    that symptom as the only observable signal the analysis pipeline
+    gave for the underlying parser bug.
+
+    Task #stage34 replaces the misparse with a real, structured
+    ``PerformVaryingStatementNode``/``IRPerformVarying`` loop -- it is no
+    longer a PERFORM to anything, so nothing here can be an "unresolved
+    PERFORM target" any more. Confirmed directly: this loop now produces
+    zero risk findings in this category.
+    """
     _, risks = _analyze_risks(
         analyze,
         "       P1.\n"
@@ -92,9 +111,7 @@ def test_unresolved_perform_target_from_perform_varying(analyze) -> None:
         "           END-PERFORM.\n           STOP RUN.\n",
     )
     unresolved = _by_cat(risks, RiskCategory.UNRESOLVED_PERFORM_TARGET)
-    assert len(unresolved) == 1
-    assert any("VARYING" in e for e in unresolved[0].evidence)
-    assert unresolved[0].severity is RiskSeverity.MEDIUM
+    assert unresolved == []
 
 
 def test_shared_mutable_state_two_paragraphs_is_medium(analyze) -> None:
@@ -160,13 +177,21 @@ def test_shallow_nesting_not_reported(analyze) -> None:
     assert _by_cat(risks, RiskCategory.DEEPLY_NESTED_CONDITIONS) == []
 
 
-def test_unsupported_syntax_from_comp3(analyze) -> None:
+def test_unsupported_syntax_from_sign_clause(analyze) -> None:
+    """Uses ``SIGN`` rather than the originally-written ``COMP-3``: task
+    #stage41 gave ``USAGE``/``COMP*`` a real parser/AST field, so a
+    ``COMP-3`` field no longer produces any diagnostic (no more
+    ``UNSUPPORTED_SYNTAX``/``DATA_COMPLEXITY`` risk either -- both risk
+    categories are derived purely from ``ar.syntax_diagnostics``, and
+    there are none left to derive from). ``SIGN`` still produces a
+    ``SYN200``/``UNMODELLED`` diagnostic and preserves this test's
+    original shape and purpose."""
     src = textwrap.dedent("""\
        IDENTIFICATION DIVISION.
        PROGRAM-ID. T.
        DATA DIVISION.
        WORKING-STORAGE SECTION.
-       01 WS-PACKED PIC 9(7) COMP-3 VALUE 0.
+       01 WS-PACKED PIC S9(7) SIGN IS TRAILING VALUE 0.
        01 WS-B PIC X VALUE SPACE.
        PROCEDURE DIVISION.
        P1.
@@ -180,7 +205,7 @@ def test_unsupported_syntax_from_comp3(analyze) -> None:
     data = _by_cat(risks, RiskCategory.DATA_COMPLEXITY)
     assert unsup and all(r.severity is RiskSeverity.HIGH for r in unsup)
     assert data and data[0].severity is RiskSeverity.MEDIUM
-    assert any("COMP-3" in e for r in data for e in r.evidence)
+    assert any("SIGN" in e for r in data for e in r.evidence)
 
 
 def test_undocumented_business_rules_low_and_aggregate(analyze) -> None:

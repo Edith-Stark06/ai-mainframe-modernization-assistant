@@ -58,12 +58,13 @@ Responsibilities:
     - Accept an optional :class:`~app.parser.ast.program.ProgramNode`; when
       provided, walk its PROCEDURE DIVISION and translate every currently
       supported statement type: MOVE, DISPLAY, ACCEPT, ADD, SUBTRACT,
-      MULTIPLY, DIVIDE, IF (with nested statements and ELSE), PERFORM,
-      PERFORM UNTIL, GO TO, CALL, STOP RUN, and GOBACK (task #109 audit
-      and completeness pass; see ``_translate_statement`` for the exact
-      dispatch and ``tests/ir/test_ir_ast_node_coverage.py`` for the full
-      AST -> IR mapping matrix, including which of these are actually
-      reachable from real COBOL source today).
+      MULTIPLY, DIVIDE, COMPUTE (task #stage35), IF (with nested
+      statements and ELSE), PERFORM, PERFORM UNTIL, GO TO, CALL, STOP
+      RUN, and GOBACK (task #109 audit and completeness pass; see
+      ``_translate_statement`` for the exact dispatch and
+      ``tests/ir/test_ir_ast_node_coverage.py`` for the full AST -> IR
+      mapping matrix, including which of these are actually reachable
+      from real COBOL source today).
     - Stamp every emitted instruction with the source position of the AST
       statement it came from and the name of the enclosing paragraph
       (task #109; see :meth:`_emit` and
@@ -77,11 +78,15 @@ Responsibilities:
     - Log lifecycle events via Loguru.
 
 Non-responsibilities:
-    - EVALUATE, OPEN/CLOSE/READ/WRITE, COMPUTE, STRING/UNSTRING/INSPECT,
-      and every other verb the parser itself classifies as unsupported
-      (task #105/#108) -- these have no AST representation to translate,
-      so there is nothing for this module to lose; see task #108's audit
-      for the parser-side accounting of these.
+    - EVALUATE, OPEN/CLOSE/READ/WRITE, STRING/UNSTRING/INSPECT, and every
+      other verb the parser itself classifies as unsupported (task
+      #105/#108) -- these have no AST representation to translate, so
+      there is nothing for this module to lose; see task #108's audit
+      for the parser-side accounting of these. A ``COMPUTE`` using
+      ``ROUNDED`` or an intrinsic ``FUNCTION`` operand is included in
+      this same set (task #stage35) -- neither reaches this module,
+      since the parser itself never produces a ``ComputeStatementNode``
+      for either.
     - Java code generation.
     - Re-parsing identifiers (uses resolved symbols from SymbolTable).
     - Optimisation passes.
@@ -180,15 +185,20 @@ from loguru import logger
 
 from app.ir.blocks import IRBasicBlock
 from app.ir.instructions import (
+    IRArithmeticExpression,
+    IRBinaryExpression,
     IRConditionTerm,
     IREndIf,
     IRIf,
     IRElse,
+    IROperandExpression,
     IRPerformUntil,
+    IRPerformVarying,
     IREndPerform,
     IRAccept,
     IRAdd,
     IRCall,
+    IRCompute,
     IRDisplay,
     IRDivide,
     IRInstruction,
@@ -196,6 +206,7 @@ from app.ir.instructions import (
     IRMove,
     IRMultiply,
     IRReturn,
+    IRSubscript,
     IRSubtract,
 )
 from app.ir.program import IRFunction, IRModule, IRProgram
@@ -212,7 +223,9 @@ if TYPE_CHECKING:
         PerformUntilStatementNode,
         AcceptStatementNode,
         AddStatementNode,
+        ArithmeticExpression,
         CallStatementNode,
+        ComputeStatementNode,
         DisplayStatementNode,
         DivideStatementNode,
         GoToStatementNode,
@@ -220,9 +233,13 @@ if TYPE_CHECKING:
         MoveStatementNode,
         MultiplyStatementNode,
         PerformStatementNode,
+        PerformTargetUntilStatementNode,
+        PerformVaryingStatementNode,
+        ReadStatementNode,
         StatementNode,
         StopRunStatementNode,
         GobackStatementNode,
+        Subscript,
         SubtractStatementNode,
     )
 
@@ -647,6 +664,7 @@ class IRBuilder:
             AcceptStatementNode,
             AddStatementNode,
             CallStatementNode,
+            ComputeStatementNode,
             DisplayStatementNode,
             DivideStatementNode,
             GobackStatementNode,
@@ -655,7 +673,10 @@ class IRBuilder:
             MoveStatementNode,
             MultiplyStatementNode,
             PerformStatementNode,
+            PerformTargetUntilStatementNode,
             PerformUntilStatementNode,
+            PerformVaryingStatementNode,
+            ReadStatementNode,
             StopRunStatementNode,
             SubtractStatementNode,
         )
@@ -695,17 +716,31 @@ class IRBuilder:
             if instr_div:
                 instr_div = self._emit(instr_div, stmt.start_position)
             return instr_div
+        if isinstance(stmt, ComputeStatementNode):
+            instr_compute = self.build_compute_instruction(stmt)
+            if instr_compute:
+                instr_compute = self._emit(instr_compute, stmt.start_position)
+            return instr_compute
         if isinstance(stmt, IfStatementNode):
             self.build_if_statement(stmt)
             return None
         if isinstance(stmt, PerformStatementNode):
             self.build_perform_statement(stmt)
             return None
+        if isinstance(stmt, PerformTargetUntilStatementNode):
+            self.build_perform_target_until_statement(stmt)
+            return None
         if isinstance(stmt, PerformUntilStatementNode):
             self.build_perform_until_statement(stmt)
             return None
+        if isinstance(stmt, PerformVaryingStatementNode):
+            self.build_perform_varying_statement(stmt)
+            return None
         if isinstance(stmt, GoToStatementNode):
             self.build_go_to_statement(stmt)
+            return None
+        if isinstance(stmt, ReadStatementNode):
+            self.build_read_statement(stmt)
             return None
         if isinstance(stmt, CallStatementNode):
             instr_call = self.build_call_instruction(stmt)
@@ -733,6 +768,45 @@ class IRBuilder:
         )
         return None
 
+    def build_subscripts(
+        self, subscripts: tuple[Subscript, ...]
+    ) -> tuple[IRSubscript, ...]:
+        """
+        Lower AST :class:`~app.parser.ast.statements.Subscript` entries
+        into their IR image (task #stage32).
+
+        Each subscript's own operand text is translated the same way
+        :meth:`build_operand` translates any other operand -- symbol-table
+        canonicalisation (:meth:`build_variable_reference`) for an
+        identifier subscript, unchanged text (:meth:`build_literal`) for
+        a literal one -- so a subscript's identifier is resolved
+        consistently with every other identifier reference in the IR.
+
+        COBOL's own 1-based subscript meaning is never adjusted here: the
+        subscript's ``value`` is carried through exactly as parsed. See
+        :class:`~app.ir.instructions.IRSubscript`'s own docstring for
+        where the eventual 0-based Java index adjustment belongs instead
+        (Stage 33, not this method).
+
+        Args:
+            subscripts:
+                The AST subscript tuple from a statement's
+                ``*_subscript`` field (empty for an unsubscripted
+                operand).
+
+        Returns:
+            The IR image, in the same order; empty when *subscripts* is
+            empty.
+        """
+        result: list[IRSubscript] = []
+        for sub in subscripts:
+            if sub.kind == "identifier":
+                value = self.build_variable_reference(sub.value)
+            else:
+                value = self.build_literal(sub.value)
+            result.append(IRSubscript(kind=sub.kind, value=value))
+        return tuple(result)
+
     def build_move_instruction(self, stmt: MoveStatementNode) -> IRMove:
         """
         Lower a single ``MoveStatementNode`` into an
@@ -741,6 +815,14 @@ class IRBuilder:
         The COBOL ``MOVE source TO target`` maps to::
 
             IRMove(source=build_operand(source), result=build_operand(target))
+
+        A subscripted ``source``/``target`` (task #stage32) additionally
+        populates ``source_subscript``/``result_subscript`` via
+        :meth:`build_subscripts` -- ``source``/``result`` themselves stay
+        the clean base name either way (never a flattened
+        ``"WS-ITEM ( WS-I )"`` string; that AST-level fix is
+        :meth:`app.parser.syntax.procedure_parser.ProcedureDivisionParser._read_operand`'s,
+        not this method's).
 
         Args:
             stmt:
@@ -752,6 +834,8 @@ class IRBuilder:
         """
         ir_source = self.build_operand(stmt.source)
         ir_target = self.build_operand(stmt.target)
+        ir_source_subscript = self.build_subscripts(stmt.source_subscript)
+        ir_target_subscript = self.build_subscripts(stmt.target_subscript)
         logger.debug(
             "IRBuilder.build_move_instruction(): MOVE {!r} TO {!r} "
             "→ IRMove(source={!r}, result={!r}).",
@@ -760,7 +844,12 @@ class IRBuilder:
             ir_source,
             ir_target,
         )
-        return IRMove(source=ir_source, result=ir_target)
+        return IRMove(
+            source=ir_source,
+            result=ir_target,
+            source_subscript=ir_source_subscript,
+            result_subscript=ir_target_subscript,
+        )
 
     def build_display_instruction(self, stmt: DisplayStatementNode) -> IRDisplay:
         """
@@ -776,13 +865,14 @@ class IRBuilder:
             An :class:`~app.ir.instructions.IRDisplay` instruction.
         """
         ir_operand = self.build_operand(stmt.operand)
+        ir_operand_subscript = self.build_subscripts(stmt.operand_subscript)
         logger.debug(
             "IRBuilder.build_display_instruction(): DISPLAY {!r} "
             "→ IRDisplay(operand={!r}).",
             stmt.operand,
             ir_operand,
         )
-        return IRDisplay(operand=ir_operand)
+        return IRDisplay(operand=ir_operand, operand_subscript=ir_operand_subscript)
 
     def build_accept_instruction(self, stmt: AcceptStatementNode) -> IRAccept:
         """
@@ -809,6 +899,8 @@ class IRBuilder:
     def build_add_instruction(self, stmt: AddStatementNode) -> IRAdd:
         ir_left = self.build_operand(stmt.left)
         ir_right = self.build_operand(stmt.right)
+        ir_left_subscript = self.build_subscripts(stmt.left_subscript)
+        ir_right_subscript = self.build_subscripts(stmt.right_subscript)
         logger.debug(
             "IRBuilder.build_add_instruction(): ADD {!r} TO {!r} → IRAdd(left={!r}, right={!r}).",
             stmt.left,
@@ -816,11 +908,20 @@ class IRBuilder:
             ir_left,
             ir_right,
         )
-        return IRAdd(left=ir_left, right=ir_right, result=ir_right)
+        return IRAdd(
+            left=ir_left,
+            right=ir_right,
+            result=ir_right,
+            left_subscript=ir_left_subscript,
+            right_subscript=ir_right_subscript,
+            result_subscript=ir_right_subscript,
+        )
 
     def build_subtract_instruction(self, stmt: SubtractStatementNode) -> IRSubtract:
         ir_left = self.build_operand(stmt.left)
         ir_right = self.build_operand(stmt.right)
+        ir_left_subscript = self.build_subscripts(stmt.left_subscript)
+        ir_right_subscript = self.build_subscripts(stmt.right_subscript)
         logger.debug(
             "IRBuilder.build_subtract_instruction(): SUBTRACT {!r} FROM {!r} → IRSubtract(left={!r}, right={!r}).",
             stmt.left,
@@ -828,11 +929,20 @@ class IRBuilder:
             ir_left,
             ir_right,
         )
-        return IRSubtract(left=ir_left, right=ir_right, result=ir_right)
+        return IRSubtract(
+            left=ir_left,
+            right=ir_right,
+            result=ir_right,
+            left_subscript=ir_left_subscript,
+            right_subscript=ir_right_subscript,
+            result_subscript=ir_right_subscript,
+        )
 
     def build_multiply_instruction(self, stmt: MultiplyStatementNode) -> IRMultiply:
         ir_left = self.build_operand(stmt.left)
         ir_right = self.build_operand(stmt.right)
+        ir_left_subscript = self.build_subscripts(stmt.left_subscript)
+        ir_right_subscript = self.build_subscripts(stmt.right_subscript)
         logger.debug(
             "IRBuilder.build_multiply_instruction(): MULTIPLY {!r} BY {!r} → IRMultiply(left={!r}, right={!r}).",
             stmt.left,
@@ -840,11 +950,20 @@ class IRBuilder:
             ir_left,
             ir_right,
         )
-        return IRMultiply(left=ir_left, right=ir_right, result=ir_right)
+        return IRMultiply(
+            left=ir_left,
+            right=ir_right,
+            result=ir_right,
+            left_subscript=ir_left_subscript,
+            right_subscript=ir_right_subscript,
+            result_subscript=ir_right_subscript,
+        )
 
     def build_divide_instruction(self, stmt: DivideStatementNode) -> IRDivide:
         ir_left = self.build_operand(stmt.left)
         ir_right = self.build_operand(stmt.right)
+        ir_left_subscript = self.build_subscripts(stmt.left_subscript)
+        ir_right_subscript = self.build_subscripts(stmt.right_subscript)
         logger.debug(
             "IRBuilder.build_divide_instruction(): DIVIDE {!r} INTO {!r} → IRDivide(left={!r}, right={!r}).",
             stmt.left,
@@ -852,28 +971,151 @@ class IRBuilder:
             ir_left,
             ir_right,
         )
-        return IRDivide(left=ir_left, right=ir_right, result=ir_right)
+        return IRDivide(
+            left=ir_left,
+            right=ir_right,
+            result=ir_right,
+            left_subscript=ir_left_subscript,
+            right_subscript=ir_right_subscript,
+            result_subscript=ir_right_subscript,
+        )
+
+    def build_expression(
+        self, expression: ArithmeticExpression
+    ) -> IRArithmeticExpression:
+        """
+        Lower a single AST :data:`~app.parser.ast.statements.ArithmeticExpression`
+        node into its IR image (task #stage35).
+
+        Recurses through the tree, lowering each leaf operand the same
+        way every other arithmetic instruction's operand already is
+        (:meth:`build_operand` for the value, :meth:`build_subscripts` for
+        a table-element leaf's subscript) — an expression tree is not a
+        new kind of operand, just more than one of the kind that already
+        exists.
+
+        Args:
+            expression:
+                The AST expression node (an
+                :class:`~app.parser.ast.statements.OperandExpression` leaf
+                or a nested
+                :class:`~app.parser.ast.statements.BinaryExpression`).
+
+        Returns:
+            The IR image: an :class:`~app.ir.instructions.IROperandExpression`
+            or a nested :class:`~app.ir.instructions.IRBinaryExpression`.
+        """
+        from app.parser.ast.statements import BinaryExpression, OperandExpression
+
+        if isinstance(expression, OperandExpression):
+            return IROperandExpression(
+                value=self.build_operand(expression.value),
+                subscript=self.build_subscripts(expression.subscript),
+            )
+        if isinstance(expression, BinaryExpression):
+            return IRBinaryExpression(
+                operator=expression.operator,
+                left=self.build_expression(expression.left),
+                right=self.build_expression(expression.right),
+            )
+        raise TypeError(
+            f"IRBuilder.build_expression(): unrecognised expression node "
+            f"type {type(expression).__name__!r}."
+        )
+
+    def build_compute_instruction(self, stmt: ComputeStatementNode) -> IRCompute:
+        """
+        Lower a single ``ComputeStatementNode`` into an
+        :class:`~app.ir.instructions.IRCompute` (task #stage35).
+
+        Unlike :meth:`build_add_instruction` and its siblings, the
+        right-hand side is lowered recursively via :meth:`build_expression`
+        rather than as a single flat operand — COMPUTE's grammar is an
+        arbitrary expression tree, not a fixed operand pair.
+
+        Args:
+            stmt:
+                The :class:`~app.parser.ast.statements.ComputeStatementNode`
+                to lower.
+
+        Returns:
+            An :class:`~app.ir.instructions.IRCompute` instruction.
+        """
+        ir_target = self.build_operand(stmt.target)
+        ir_target_subscript = self.build_subscripts(stmt.target_subscript)
+        ir_expression = self.build_expression(stmt.expression)
+        logger.debug(
+            "IRBuilder.build_compute_instruction(): COMPUTE {!r} = ... → "
+            "IRCompute(result={!r}).",
+            stmt.target,
+            ir_target,
+        )
+        return IRCompute(
+            result=ir_target,
+            result_subscript=ir_target_subscript,
+            expression=ir_expression,
+        )
+
+    def _lower_condition_operand(
+        self, text: str, expression: "ArithmeticExpression | None"
+    ) -> tuple[str, "IRArithmeticExpression | None"]:
+        """
+        Lower one IF-condition operand (task #stage38): a parenthesized
+        arithmetic expression via :meth:`build_expression` (reused
+        unchanged from ``COMPUTE``), or a plain operand via
+        :meth:`build_operand` exactly as before this stage.
+
+        Mutually exclusive, mirroring the AST's own representation
+        (:class:`~app.parser.ast.statements.IfStatementNode`'s
+        ``condition_left``/``condition_left_expression`` pair) -- never
+        both populated for the same operand.
+        """
+        if expression is not None:
+            return "", self.build_expression(expression)
+        return self.build_operand(text), None
 
     def build_if_statement(self, stmt: IfStatementNode) -> None:
-        ir_left = self.build_operand(stmt.condition_left)
-        ir_right = self.build_operand(stmt.condition_right)
+        ir_left, ir_left_expr = self._lower_condition_operand(
+            stmt.condition_left, stmt.condition_left_expression
+        )
+        ir_right, ir_right_expr = self._lower_condition_operand(
+            stmt.condition_right, stmt.condition_right_expression
+        )
+        ir_left_subscript = self.build_subscripts(stmt.condition_left_subscript)
+        ir_right_subscript = self.build_subscripts(stmt.condition_right_subscript)
         # Every AND/OR-joined term the parser recorded, in source order --
         # the first triple alone is only the first term of a compound IF.
-        extra_terms = tuple(
-            IRConditionTerm(
-                connector=term.connector,
-                left=self.build_operand(term.left),
-                operator=term.operator,
-                right=self.build_operand(term.right),
+        extra_terms_list: list[IRConditionTerm] = []
+        for term in stmt.extra_conditions:
+            term_left, term_left_expr = self._lower_condition_operand(
+                term.left, term.left_expression
             )
-            for term in stmt.extra_conditions
-        )
+            term_right, term_right_expr = self._lower_condition_operand(
+                term.right, term.right_expression
+            )
+            extra_terms_list.append(
+                IRConditionTerm(
+                    connector=term.connector,
+                    left=term_left,
+                    operator=term.operator,
+                    right=term_right,
+                    left_subscript=self.build_subscripts(term.left_subscript),
+                    right_subscript=self.build_subscripts(term.right_subscript),
+                    left_expression=term_left_expr,
+                    right_expression=term_right_expr,
+                )
+            )
+        extra_terms = tuple(extra_terms_list)
         self._emit(
             IRIf(
                 left=ir_left,
                 operator=stmt.condition_operator,
                 right=ir_right,
                 extra_terms=extra_terms,
+                left_subscript=ir_left_subscript,
+                right_subscript=ir_right_subscript,
+                left_expression=ir_left_expr,
+                right_expression=ir_right_expr,
             ),
             stmt.start_position,
         )
@@ -922,6 +1164,49 @@ class IRBuilder:
             logger.warning("Unresolved target in GO TO statement. Continuing.")
         else:
             self._emit(IRJump(target=stmt.target), stmt.start_position)
+
+    def build_read_statement(self, stmt: ReadStatementNode) -> None:
+        """
+        Lower a single ``ReadStatementNode`` (task #stage40).
+
+        Only ``at_end_statements`` is lowered, each via the ordinary
+        :meth:`_translate_statement` dispatch in sequence -- no new IR
+        instruction type, reusing exactly the same mechanism
+        :meth:`build_if_statement`'s ``then_statements`` and
+        :meth:`build_perform_until_statement`'s body already use. No
+        ``IRIf``/branch marker is emitted around them: this backend has
+        no file-reading runtime (task #stage40's own explicit scope
+        decision), so a ``READ`` here is modelled as *always* reaching
+        end-of-file -- the ``AT END`` statements are the only ones ever
+        reachable, unconditionally, not conditionally.
+
+        ``not_at_end_statements`` is deliberately never lowered here --
+        under this same always-end-of-file model they are provably
+        unreachable, so lowering them would misrepresent them as live
+        code. This is not silent: a ``BE014`` diagnostic-worthy fact is
+        recorded via a debug log here and documented on
+        :class:`~app.parser.ast.statements.ReadStatementNode` itself;
+        the statements remain fully present on the AST for any future
+        stage that adds a real file runtime.
+
+        Neither the file name (``stmt.target``) nor the ``INTO`` target
+        (``stmt.into_target``) is represented in the IR -- there is no
+        file-content source to read into it from, so nothing would ever
+        assign it a value; leaving it unmentioned is the same "no
+        provably correct value" restraint every other under-specified
+        operand in this backend already applies, not an omission.
+        """
+        for at_end_stmt in stmt.at_end_statements:
+            self._translate_statement(at_end_stmt)
+        if stmt.not_at_end_statements:
+            logger.debug(
+                "IRBuilder.build_read_statement(): READ {!r}'s NOT AT END "
+                "clause ({} statement(s)) is not lowered -- unreachable "
+                "under this backend's always-end-of-file READ model "
+                "(task #stage40, no file-reading runtime).",
+                stmt.target,
+                len(stmt.not_at_end_statements),
+            )
 
     def build_stop_run_instruction(self, stmt: StopRunStatementNode) -> IRReturn:
         """
@@ -1207,6 +1492,83 @@ class IRBuilder:
         self._emit(
             IRPerformUntil(
                 left=ir_left, operator=stmt.condition_operator, right=ir_right
+            ),
+            stmt.start_position,
+        )
+        for body_stmt in stmt.statements:
+            self._translate_statement(body_stmt)
+        self._emit(IREndPerform(), stmt.start_position)
+
+    def build_perform_target_until_statement(
+        self, stmt: PerformTargetUntilStatementNode
+    ) -> None:
+        """
+        Lower a ``PerformTargetUntilStatementNode`` (task #stage37, an
+        out-of-line ``PERFORM paragraph-name UNTIL condition``) into the
+        identical ``IRPerformUntil`` / ``IREndPerform`` loop-marker pair
+        :meth:`build_perform_until_statement` already emits for the
+        *inline* form, with a single ``IRCall`` in between standing in
+        for the loop body -- reusing :meth:`build_perform_statement`'s
+        own ``comment="PERFORM"`` tagging so that both the Java
+        backend's paragraph-outlining scan (``_local_perform_targets``)
+        and the control-flow-graph builder (task #110) recognise this as
+        an ordinary local ``PERFORM`` target, whether or not it happens
+        to sit inside a loop. The target paragraph's own instructions are
+        never duplicated here -- only a reference to it.
+        """
+        ir_left = self.build_operand(stmt.condition_left)
+        ir_right = self.build_operand(stmt.condition_right)
+        self._emit(
+            IRPerformUntil(
+                left=ir_left, operator=stmt.condition_operator, right=ir_right
+            ),
+            stmt.start_position,
+        )
+        if not stmt.target:
+            logger.warning("Unsupported PERFORM form: missing target. Continuing.")
+        else:
+            self._emit(
+                IRCall(target=stmt.target, comment="PERFORM"),
+                stmt.start_position,
+            )
+        self._emit(IREndPerform(), stmt.start_position)
+
+    def build_perform_varying_statement(
+        self, stmt: PerformVaryingStatementNode
+    ) -> None:
+        """
+        Lower a ``PerformVaryingStatementNode`` into an ``IRPerformVarying``
+        header, the recursively-lowered loop body, and the same
+        ``IREndPerform`` closer :meth:`build_perform_until_statement` uses
+        (task #stage34) -- mirroring that method's exact shape, plus the
+        three fields ``PERFORM VARYING`` adds on top of a plain
+        ``PERFORM UNTIL``.
+
+        The varying variable is always an identifier (never a literal, per
+        COBOL's own grammar), but is still lowered via :meth:`build_operand`
+        -- exactly like :meth:`build_move_instruction` lowers its own
+        always-identifier MOVE target -- so it goes through the identical
+        literal-or-identifier classification (trivially resolving to
+        :meth:`build_variable_reference`) every other operand does, rather
+        than a second, PERFORM-VARYING-specific code path.
+        """
+        ir_varying_variable = self.build_operand(stmt.varying_variable)
+        ir_from = self.build_operand(stmt.from_value)
+        ir_by = self.build_operand(stmt.by_value)
+        ir_left = self.build_operand(stmt.condition_left)
+        ir_right = self.build_operand(stmt.condition_right)
+        ir_left_subscript = self.build_subscripts(stmt.condition_left_subscript)
+        ir_right_subscript = self.build_subscripts(stmt.condition_right_subscript)
+        self._emit(
+            IRPerformVarying(
+                varying_variable=ir_varying_variable,
+                from_value=ir_from,
+                by_value=ir_by,
+                left=ir_left,
+                operator=stmt.condition_operator,
+                right=ir_right,
+                left_subscript=ir_left_subscript,
+                right_subscript=ir_right_subscript,
             ),
             stmt.start_position,
         )

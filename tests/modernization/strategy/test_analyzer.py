@@ -78,7 +78,14 @@ def test_clean_program_with_rules_recommends_refactor(analyze) -> None:
 def test_unsupported_heavy_program_recommends_rewrite_and_suppresses_rehost(
     analyze,
 ) -> None:
-    lines = "\n".join(f"       01 WS-P{i} PIC 9(5) COMP-3 VALUE 0." for i in range(12))
+    """Uses ``SIGN`` rather than the originally-written ``COMP-3``: task
+    #stage41 gave ``USAGE``/``COMP*`` a real parser/AST field, so 12
+    ``COMP-3`` fields no longer produce any diagnostic and this program
+    would no longer be "unsupported-heavy". ``SIGN`` still produces a
+    ``SYN200`` per field and preserves this test's original shape."""
+    lines = "\n".join(
+        f"       01 WS-P{i} PIC S9(5) SIGN IS TRAILING VALUE 0." for i in range(12)
+    )
     _, _, risks, recs = _strategies(
         analyze,
         f"""\

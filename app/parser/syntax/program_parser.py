@@ -24,7 +24,10 @@ Responsibilities:
 
 Non-responsibilities:
     - Statement or expression parsing (delegated to ProcedureDivisionParser).
-    - COPY book expansion.
+    - COPY book expansion -- happens upstream of this parser entirely
+      (task #stage45, :class:`~app.parser.resolver.copybook.CopybookExpander`,
+      run by ``AnalysisService.analyze_file`` before the lexer even sees
+      the source), so no ``COPY`` token ever reaches this class.
     - Semantic analysis.
 
 Dependencies:

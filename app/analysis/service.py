@@ -8,12 +8,13 @@ Purpose:
     1. Source reading
     2. Source-format detection and, for fixed format, position-preserving
        normalization (``FormatDetector``, ``SourceNormalizer``)
-    3. Lexical analysis (``CobolLexer``)
-    4. Parsing (``ProgramParser``)
-    5. Semantic analysis (``SemanticAnalyzer``)
-    6. IR construction (``IRBuilder``)
-    7. Java field construction (``build_fields_from_symbols``)
-    8. Java code generation (``generate_with_diagnostics``)
+    3. COPY-book expansion (``CopybookExpander``, task #stage45)
+    4. Lexical analysis (``CobolLexer``)
+    5. Parsing (``ProgramParser``)
+    6. Semantic analysis (``SemanticAnalyzer``)
+    7. IR construction (``IRBuilder``)
+    8. Java field construction (``build_fields_from_symbols``)
+    9. Java code generation (``generate_with_diagnostics``)
 
     The service returns an :class:`~app.analysis.models.AnalysisResult` that
     bundles the generated Java source with all collected diagnostics.
@@ -41,6 +42,7 @@ Dependencies:
     - :mod:`app.parser.lexer.lexer`            — ``CobolLexer``.
     - :mod:`app.parser.lexer.normalizer`       — ``SourceNormalizer``.
     - :mod:`app.parser.lexer.source_format`    — ``SourceFormat``.
+    - :mod:`app.parser.resolver.copybook`      — ``CopybookExpander``.
     - :mod:`app.parser.semantic.analyzer`       — ``SemanticAnalyzer``.
     - :mod:`app.parser.semantic.symbols`        — ``VariableSymbol``.
     - :mod:`app.parser.syntax.program_parser`   — ``ProgramParser``.
@@ -86,6 +88,7 @@ from app.parser.lexer.format_detector import FormatDetector, SourceDocument
 from app.parser.lexer.lexer import CobolLexer
 from app.parser.lexer.normalizer import SourceNormalizer
 from app.parser.lexer.source_format import SourceFormat
+from app.parser.resolver.copybook import CopybookExpander
 from app.parser.semantic.analyzer import SemanticAnalyzer
 from app.parser.semantic.symbols import VariableSymbol
 from app.parser.syntax.program_parser import ProgramParser
@@ -234,6 +237,38 @@ class AnalysisService:
         # Stage 0.5 — source format detection and normalization
         # ------------------------------------------------------------------
         source = self.prepare_source(source, path)
+
+        # ------------------------------------------------------------------
+        # Stage 0.75 — COPY-book expansion (task #stage45)
+        # ------------------------------------------------------------------
+        logger.debug("AnalysisService: expanding COPY statements.")
+        try:
+            source = CopybookExpander([path.parent]).expand(source, str(path))
+        except Exception as exc:
+            # Broad, matching Stage 1 (lex)'s own convention just below:
+            # CopybookExpander.expand() runs the same CobolLexer.tokenize()
+            # internally to find COPY statement boundaries, so a source
+            # with an unrelated lexer error (e.g. a genuinely unterminated
+            # string literal) raises that same LexerError here, before
+            # Stage 1 ever runs -- not only CopybookNotFoundError /
+            # MalformedCopyStatementError / CircularCopyError. Narrowing
+            # this to only those three would let an unrelated lexer
+            # failure escape uncaught instead of becoming the same clean
+            # ``AnalysisResult(success=False, error=exc)`` Stage 1 would
+            # have produced for it anyway.
+            logger.error(
+                "AnalysisService: COPY expansion error in '{}': {}.", path, exc
+            )
+            return AnalysisResult(
+                java_source="",
+                backend_diagnostics=[],
+                semantic_diagnostics=[],
+                success=False,
+                error=exc,
+                dependencies=[],
+                ast=None,
+                ir=None,
+            )
 
         # ------------------------------------------------------------------
         # Stage 1 — lex

@@ -390,19 +390,35 @@ class TestUnmodelledClauseTermination:
     """
 
     def test_comp_3_does_not_enter_picture(self) -> None:
-        """Previously ``'S9(7)V99COMP-3'`` with no diagnostic."""
+        """Previously ``'S9(7)V99COMP-3'`` with no diagnostic, then (once
+        that corruption was fixed) ``'S9(7)V99'`` with a "not represented"
+        diagnostic. Task #stage41 gave ``COMP-3``/``USAGE`` its own
+        dedicated clause parser -- mirroring ``REDEFINES``'s own task
+        #stage39 pull-out above -- since the clause's entire grammar is
+        just one operand (the usage-word), so nothing is lost and no
+        diagnostic is warranted any more: the usage-word is now captured
+        on ``item.usage`` instead of being discarded."""
         item, state = _one_item("01 A PIC S9(7)V99 COMP-3.\n")
 
         assert item.picture == "S9(7)V99"
-        assert len(state.diagnostics) == 1
-        assert "COMP-3" in state.diagnostics[0].message
+        assert item.usage == "COMP-3"
+        assert state.diagnostics == []
 
     def test_redefines_does_not_enter_picture(self) -> None:
-        """Previously ``'X(5)REDEFINESWS-B'`` with no diagnostic."""
+        """Previously ``'X(5)REDEFINESWS-B'``, with a "not represented"
+        diagnostic (REDEFINES fell through to the same opaque
+        unmodelled-clause skip OCCURS's own sibling test below still
+        exercises). Task #stage39 gave REDEFINES its own dedicated
+        clause parser -- mirroring OCCURS's own task #stage32
+        pull-out -- since the clause's entire grammar is just one
+        operand (the base name), so nothing is lost and no diagnostic
+        is warranted any more: the base name is now captured on
+        ``item.redefines`` instead of being discarded."""
         item, state = _one_item("01 A PIC X(5) REDEFINES WS-B.\n")
 
         assert item.picture == "X(5)"
-        assert any("REDEFINES" in d.message for d in state.diagnostics)
+        assert item.redefines == "WS-B"
+        assert state.diagnostics == []
 
     def test_occurs_keeps_the_item(self) -> None:
         """Previously the whole data item was dropped."""
@@ -418,11 +434,36 @@ class TestUnmodelledClauseTermination:
         assert item.picture == "X(5)"
 
     def test_usage_is_comp_3_is_one_clause(self) -> None:
-        """``USAGE [IS] COMP-3`` is reported once, not twice."""
+        """``USAGE [IS] COMP-3`` is captured as one clause, not reported
+        twice. Task #stage41: no longer reported at all (see
+        ``test_comp_3_does_not_enter_picture`` above) -- the usage-word
+        is captured on ``item.usage`` regardless of whether the source
+        used the leading ``USAGE [IS]`` form or the bare form."""
         item, state = _one_item("01 A PIC S9(4) USAGE IS COMP-3.\n")
 
         assert item.picture == "S9(4)"
+        assert item.usage == "COMP-3"
+        assert state.diagnostics == []
+
+    def test_usage_is_malformed_operand_is_diagnosed_and_recovers(self) -> None:
+        """A malformed ``USAGE IS <not-a-usage-word>`` clause is still
+        diagnosed (SYN200, matching every other unmodelled clause -- an
+        unrepresentable *malformed* clause is exactly as unrepresented as
+        a well-formed one) and the garbage operand is consumed up to the
+        next real boundary, so the item survives with its picture and a
+        following VALUE clause intact -- not abandoned by a cascading
+        "expected '.'" recovery. Found and fixed alongside task #stage41's
+        own ``USAGE`` clause parser: the initial implementation returned
+        without consuming the invalid operand, leaking it onto the stream
+        and triggering exactly that cascade."""
+        item, state = _one_item("01 A PIC S9(4) USAGE IS FOOBAR VALUE 5.\n")
+
+        assert item.picture == "S9(4)"
+        assert item.usage is None
+        assert item.value == "5"
         assert len(state.diagnostics) == 1
+        assert state.diagnostics[0].code == "SYN200"
+        assert "USAGE" in state.diagnostics[0].message
 
     def test_clause_before_value_keeps_both(self) -> None:
         """A skipped clause must not consume a following VALUE clause."""
@@ -466,7 +507,14 @@ class TestUnsupportedStatementHandling:
         assert "OPEN" in state.diagnostics[0].message
 
     def test_each_unsupported_verb_reported_once(self) -> None:
-        """Several unsupported verbs interleaved with supported ones."""
+        """Several unsupported verbs interleaved with supported ones.
+
+        task #stage40: ``READ`` now has a real parser/AST node, so it
+        joins ``DISPLAY``/``STOP RUN`` as a *represented* statement here
+        -- only ``OPEN``/``CLOSE`` remain unsupported (2 diagnostics, not
+        3). Measured directly, not guessed; this test's own purpose
+        (each unsupported verb reported exactly once, regardless of
+        interleaving) is otherwise unaffected."""
         source = (
             _ID + "PROCEDURE DIVISION.\nMAIN.\n"
             '    OPEN INPUT F1.\n    READ F1.\n    DISPLAY "X".\n'
@@ -475,8 +523,8 @@ class TestUnsupportedStatementHandling:
         program, state = _parse(source)
         paragraph = program.procedure_division.paragraphs[0]
 
-        assert len(paragraph.statements) == 2
-        assert len(state.diagnostics) == 3
+        assert len(paragraph.statements) == 3
+        assert len(state.diagnostics) == 2
 
     def test_scope_delimited_construct_skipped_whole(self) -> None:
         """EVALUATE ... END-EVALUATE. is skipped as a single statement."""

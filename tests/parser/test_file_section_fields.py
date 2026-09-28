@@ -312,7 +312,38 @@ def test_real_file_section_sources_now_compile_with_javac(
 def test_full_corpus_javac_pass_rate_is_now_45_of_45(tmp_path: Path) -> None:
     """The exact real-corpus regression this stage exists to fix: `javac`
     was 41/45 (docs/MMIM_JAVA_IF_EMISSION_FIX.md §7 onward) purely because
-    of undeclared FILE SECTION fields; it is 45/45 now."""
+    of undeclared FILE SECTION fields; it was 45/45 after this stage.
+
+    45 -> 44 (task #stage36): a genuinely new, independent, pre-existing
+    gap this stage's own investigation found and *deliberately left
+    unfixed*, per its explicit scope discipline ("if this exposes a
+    genuinely separate bug, document it separately instead of silently
+    expanding scope"). `t_inventory_reorder`'s
+    `1000-CALCULATE-REORDER-POINT` paragraph was always an empty `BE009`
+    stub before task #stage36 outlined real `PERFORM` targets; the
+    paragraph's own `COMPUTE REORDER-POINT-QTY = (AVG-DAILY-DEMAND *
+    SUPPLIER-LEAD-DAYS * SEASONALITY-INDEX) + SAFETY-STOCK-LEVEL`
+    (`REORDER-POINT-QTY` is `PIC 9(5)` -> Java `int`; the expression mixes
+    in two `V99` operands -> Java `double`) is a Stage 35 COMPUTE code
+    generation gap -- `emit_compute` never casts the expression's Java
+    type to the target's -- now reached and surfaced for the first time
+    (identical root cause to the two `CALL ... USING` bugs task #stage36
+    *did* fix in this same investigation, except this one is Stage 35's
+    own feature, which task #stage36 was explicitly told not to modify
+    merely because outlining now reaches it). Confirmed directly:
+    `javac` fails with "incompatible types: possible lossy conversion
+    from double to int" at exactly that line, in only this one source.
+
+    44 -> 45 (task #stage42) fixes that exact gap: `emit_compute` now
+    accepts the same optional `ConditionContext` every other type-aware
+    emitter already does, and inserts an explicit `(int)` cast around the
+    whole expression when the target's declared Java type is `int` (or
+    `int[]`, an OCCURS array element) and the expression tree contains
+    any `double`-typed operand anywhere. `t_inventory_reorder` now
+    compiles cleanly like every other corpus source -- see
+    `tests/backend/test_stage42_compute_narrowing_cast.py` for the
+    dedicated tests, including a runtime-execution check that the cast
+    truncates rather than merely compiling."""
     ok = 0
     corpus = load_training_corpus()
     for rec in corpus:
@@ -330,7 +361,12 @@ def test_full_corpus_javac_pass_rate_is_now_45_of_45(tmp_path: Path) -> None:
         )
         if proc.returncode == 0:
             ok += 1
-    assert ok == len(corpus) == 45
+        else:
+            raise AssertionError(
+                f"unexpected javac failure for {rec.source_id}: {proc.stderr}"
+            )
+    assert len(corpus) == 45
+    assert ok == 45
 
 
 # ===========================================================================

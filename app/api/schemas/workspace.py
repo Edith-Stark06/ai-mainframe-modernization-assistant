@@ -43,6 +43,8 @@ from pydantic import BaseModel, ConfigDict, Field
 __all__ = [
     "InventoryResponse",
     "ScannedFileSchema",
+    "SearchMatchSchema",
+    "SearchResponse",
     "SummaryResponse",
     "TypeCountSchema",
 ]
@@ -156,3 +158,54 @@ class SummaryResponse(BaseModel):
     scanned_at: datetime = Field(
         ..., description="UTC timestamp of summary generation."
     )
+
+
+class SearchMatchSchema(BaseModel):
+    """
+    Serialisable record of one matching line, mirroring
+    :class:`app.workspace.search.SearchMatch`.
+
+    Attributes:
+        filename: The matching file's basename.
+        path:     The matching file's absolute path.
+        line:     1-based line number of the match.
+        snippet:  The matching line's text (truncated around the match
+            when the line is long).
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    filename: str = Field(..., description="Matching file's basename.")
+    path: str = Field(..., description="Matching file's absolute path.")
+    line: int = Field(..., ge=1, description="1-based line number of the match.")
+    snippet: str = Field(..., description="The matching line's text.")
+
+
+class SearchResponse(BaseModel):
+    """
+    Response envelope for ``GET /workspaces/{workspace_id}/search``.
+
+    Attributes:
+        success:        Always ``True`` on success.
+        workspace_id:   UUID4 of the searched workspace.
+        query:          The search query, exactly as given.
+        matches:        Every match found (capped; see ``truncated``).
+        files_searched: How many files were actually scanned.
+        files_matched:  How many distinct files contributed a match.
+        truncated:      ``True`` if the match cap was reached -- more
+            matches may exist beyond what ``matches`` shows.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    success: bool = Field(
+        default=True, description="Always True for successful responses."
+    )
+    workspace_id: str = Field(..., description="UUID4 of the searched workspace.")
+    query: str = Field(..., description="The search query, exactly as given.")
+    matches: list[SearchMatchSchema] = Field(..., description="Matching lines.")
+    files_searched: int = Field(..., ge=0, description="Files actually scanned.")
+    files_matched: int = Field(
+        ..., ge=0, description="Distinct files with at least one match."
+    )
+    truncated: bool = Field(..., description="True if the match cap was reached.")

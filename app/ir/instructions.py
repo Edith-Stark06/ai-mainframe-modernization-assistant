@@ -70,8 +70,11 @@ from app.parser.lexer.position import Position
 __all__ = [
     "IRAccept",
     "IRAdd",
+    "IRArithmeticExpression",
     "IRAssignment",
+    "IRBinaryExpression",
     "IRCall",
+    "IRCompute",
     "IRConditionTerm",
     "IRConditionalBranch",
     "IRDisplay",
@@ -84,10 +87,191 @@ __all__ = [
     "IRJump",
     "IRMove",
     "IRMultiply",
+    "IROperandExpression",
     "IRPerformUntil",
+    "IRPerformVarying",
     "IRReturn",
+    "IRSubscript",
     "IRSubtract",
 ]
+
+
+@dataclass(frozen=True)
+class IRSubscript:
+    """
+    IR image of :class:`app.parser.ast.statements.Subscript` (task
+    #stage32) — a single-dimension COBOL table subscript, carried through
+    unchanged from the AST.
+
+    COBOL's own 1-based subscript meaning is preserved exactly as the
+    parser captured it: ``value`` is never adjusted to a 0-based Java
+    array index here. That translation is a Java-generation concern
+    (Stage 33), applied exactly once, at the single point the Java
+    backend renders an indexed reference — never in the IR, and never
+    duplicated across more than one backend emitter.
+
+    Attributes:
+        kind:
+            ``"literal"`` for a bare integer subscript or
+            ``"identifier"`` for a data-name subscript — mirrors
+            :attr:`app.parser.ast.statements.Subscript.kind` exactly.
+        value:
+            The subscript's own operand text, already lowered by
+            :meth:`~app.ir.builder.IRBuilder.build_subscripts` the same
+            way any other operand is (symbol-table canonicalisation for
+            an identifier, unchanged text for a literal).
+
+    Examples:
+        >>> from app.ir.instructions import IRSubscript
+        >>> IRSubscript(kind="literal", value="2")
+        IRSubscript(kind='literal', value='2')
+    """
+
+    kind: str = field(default="")
+    value: str = field(default="")
+
+
+def _render_operand(name: str, subscripts: tuple[IRSubscript, ...]) -> str:
+    """Render *name* with its subscript (task #stage32), e.g.
+    ``WS-ITEM(WS-I)``, or just *name* unchanged when *subscripts* is
+    empty — used only for human-readable text
+    (:meth:`IRIf.condition_text`), never for Java generation (Stage 33)."""
+    if not subscripts:
+        return name
+    return f"{name}({','.join(s.value for s in subscripts)})"
+
+
+@dataclass(frozen=True)
+class IROperandExpression:
+    """
+    IR image of :class:`app.parser.ast.statements.OperandExpression`
+    (task #stage35) — one leaf of a ``COMPUTE`` expression tree.
+
+    ``value`` is already lowered by :meth:`~app.ir.builder.IRBuilder.build_operand`
+    (canonical variable reference or literal text), the same as every
+    other arithmetic instruction's operand.
+
+    Attributes:
+        value:
+            The operand's lowered text.
+        subscript:
+            A single-dimension subscript (task #stage32) when ``value``
+            names a table element, empty otherwise.
+
+    Examples:
+        >>> IROperandExpression(value="WS-PRICE")
+        IROperandExpression(value='WS-PRICE', subscript=())
+    """
+
+    value: str = field(default="")
+    subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
+
+
+@dataclass(frozen=True)
+class IRBinaryExpression:
+    """
+    IR image of :class:`app.parser.ast.statements.BinaryExpression`
+    (task #stage35) — one ``left operator right`` node of a ``COMPUTE``
+    expression tree.
+
+    Attributes:
+        operator:
+            One of ``"+"``, ``"-"``, ``"*"``, ``"/"``.
+        left:
+            The left operand: an :class:`IROperandExpression` or a
+            nested :class:`IRBinaryExpression`.
+        right:
+            The right operand: an :class:`IROperandExpression` or a
+            nested :class:`IRBinaryExpression`.
+
+    Examples:
+        >>> expr = IRBinaryExpression(
+        ...     operator="+",
+        ...     left=IROperandExpression(value="WS-A"),
+        ...     right=IROperandExpression(value="WS-B"),
+        ... )
+        >>> expr.operator
+        '+'
+    """
+
+    operator: str
+    left: "IRArithmeticExpression"
+    right: "IRArithmeticExpression"
+
+
+#: A COMPUTE expression node in the IR: either a leaf operand or a binary
+#: operation on two further expression nodes (task #stage35).
+IRArithmeticExpression = IROperandExpression | IRBinaryExpression
+
+#: Arithmetic operator precedence: ``*``/``/`` bind tighter than ``+``/``-``,
+#: matching both COBOL's and Java's standard precedence — no translation
+#: between the two languages is ever needed (task #stage35).
+_ARITHMETIC_PRECEDENCE: dict[str, int] = {"+": 1, "-": 1, "*": 2, "/": 2}
+
+
+def render_arithmetic_expression(
+    expression: IRArithmeticExpression, parent_precedence: int = 0
+) -> str:
+    """
+    Render an :data:`IRArithmeticExpression` tree back to text, inserting
+    parentheses only where evaluation order would otherwise change
+    (task #stage35).
+
+    This is a standard precedence-climbing printer: a node is wrapped in
+    parentheses exactly when its own operator binds *less* tightly than
+    the context it is printed in requires — never more, never less — so
+    the output is always semantically equivalent to the tree, whether or
+    not the original source used the same parentheses. This is used both
+    for human-readable IR text (:meth:`IRCompute.expression_text`) and,
+    with the same tree walked a second time for 0-based subscript
+    translation, for Java generation
+    (:func:`app.backend.java.statement_emitter.emit_compute`) — COBOL's
+    and Java's arithmetic-operator precedence are identical, so nothing
+    about this printer's parenthesization logic is COBOL- or
+    Java-specific.
+
+    A left operand is printed against its own operator's precedence (an
+    equal-precedence left child never needs parentheses, since ``+``/
+    ``-``/``*``/``/`` are all left-associative and print left-to-right
+    unambiguously); a right operand is printed against one more than its
+    own operator's precedence, so ``A - (B - C)`` keeps its parentheses
+    (dropping them would silently change the result to ``(A - B) - C``).
+
+    Args:
+        expression: The expression tree to render.
+        parent_precedence: The precedence level of the context this
+            expression is being printed into; ``0`` (the default) for a
+            top-level expression, which is never parenthesized.
+
+    Returns:
+        The expression as text, e.g. ``"B * (C + D)"``.
+
+    Examples:
+        >>> render_arithmetic_expression(
+        ...     IRBinaryExpression(
+        ...         operator="*",
+        ...         left=IROperandExpression(value="B"),
+        ...         right=IRBinaryExpression(
+        ...             operator="+",
+        ...             left=IROperandExpression(value="C"),
+        ...             right=IROperandExpression(value="D"),
+        ...         ),
+        ...     )
+        ... )
+        'B * (C + D)'
+    """
+    if isinstance(expression, IROperandExpression):
+        return _render_operand(expression.value, expression.subscript)
+
+    precedence = _ARITHMETIC_PRECEDENCE[expression.operator]
+    left_text = render_arithmetic_expression(expression.left, precedence)
+    right_text = render_arithmetic_expression(expression.right, precedence + 1)
+    text = f"{left_text} {expression.operator} {right_text}"
+    if precedence < parent_precedence:
+        return f"({text})"
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +321,16 @@ class IRInstruction(IRNode):
             read only ``function.blocks[0]`` -- see
             :mod:`app.ir.builder`'s module docstring).  Also excluded
             from equality comparison.
+        result_subscript:
+            A structured subscript for ``result`` when the write-target
+            it names is a single-dimension, literal- or identifier-
+            subscripted table reference (task #stage32) — e.g. for
+            :class:`IRMove`/:class:`IRAdd`/:class:`IRSubtract`/
+            :class:`IRMultiply`/:class:`IRDivide`, whichever of them
+            uses ``result`` as its own write-target. Empty for a plain
+            (unsubscripted) result, which every instruction produced
+            before this stage, and every instruction whose ``result``
+            names something other than a table element.
 
     Examples:
         >>> from app.ir.instructions import IRMove
@@ -152,6 +346,9 @@ class IRInstruction(IRNode):
     comment: str = field(default="")
     source_position: Position | None = field(default=None, compare=False)
     paragraph: str = field(default="", compare=False)
+    result_subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
 
     @abstractmethod
     def accept(self, visitor: Any) -> Any:
@@ -216,6 +413,12 @@ class IRAdd(IRInstruction):
 
     left: str = field(default="")
     right: str = field(default="")
+    left_subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
+    right_subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
 
     def accept(self, visitor: Any) -> Any:
         visit = getattr(visitor, "visit_add", None)
@@ -232,6 +435,12 @@ class IRSubtract(IRInstruction):
 
     left: str = field(default="")
     right: str = field(default="")
+    left_subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
+    right_subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
 
     def accept(self, visitor: Any) -> Any:
         visit = getattr(visitor, "visit_subtract", None)
@@ -248,6 +457,12 @@ class IRMultiply(IRInstruction):
 
     left: str = field(default="")
     right: str = field(default="")
+    left_subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
+    right_subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
 
     def accept(self, visitor: Any) -> Any:
         visit = getattr(visitor, "visit_multiply", None)
@@ -264,9 +479,71 @@ class IRDivide(IRInstruction):
 
     left: str = field(default="")
     right: str = field(default="")
+    left_subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
+    right_subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
 
     def accept(self, visitor: Any) -> Any:
         visit = getattr(visitor, "visit_divide", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class IRCompute(IRInstruction):
+    """
+    Assign an arbitrary arithmetic expression to a target (COBOL
+    ``COMPUTE target = expression``, task #stage35).
+
+    Unlike :class:`IRAdd`/:class:`IRSubtract`/:class:`IRMultiply`/
+    :class:`IRDivide` — each a fixed two-operand compound-assignment
+    effect (``result op= left``), because that is COMPUTE's siblings'
+    entire COBOL grammar — ``COMPUTE`` assigns a freshly evaluated
+    expression tree to ``result``, so it carries a structured
+    :data:`IRArithmeticExpression` rather than a second flat operand.
+
+    ``result``/``result_subscript`` (inherited from :class:`IRInstruction`)
+    are the target and its subscript, e.g. for
+    ``COMPUTE EXTENDED-LINE-VAL(1) = ...`` (task #stage32/33's structured
+    subscript, unchanged).
+
+    Attributes:
+        expression:
+            The right-hand-side expression tree, or ``None`` only as the
+            dataclass default (never left unset by
+            :meth:`~app.ir.builder.IRBuilder.build_compute_instruction`).
+
+    Examples:
+        >>> from app.ir.instructions import IRCompute, IRBinaryExpression, IROperandExpression
+        >>> instr = IRCompute(
+        ...     result="WS-TOTAL",
+        ...     expression=IRBinaryExpression(
+        ...         operator="+",
+        ...         left=IROperandExpression(value="WS-A"),
+        ...         right=IROperandExpression(value="WS-B"),
+        ...     ),
+        ... )
+        >>> instr.expression_text()
+        'WS-A + WS-B'
+    """
+
+    expression: IRArithmeticExpression | None = field(
+        default=None, metadata={"omit_if_empty": True}
+    )
+
+    def expression_text(self) -> str:
+        """The right-hand-side expression as text, e.g. ``"B * (C + D)"``."""
+        if self.expression is None:
+            return ""
+        return render_arithmetic_expression(self.expression)
+
+    def accept(self, visitor: Any) -> Any:
+        """Dispatch to ``visitor.visit_compute(self)``."""
+        visit = getattr(visitor, "visit_compute", None)
         if callable(visit):
             return visit(self)
         return None
@@ -284,6 +561,12 @@ class IRConditionTerm:
     parser's (and COBOL's): ``AND`` binds tighter than ``OR``. The operands
     are already lowered by ``IRBuilder.build_operand``.
 
+    ``left_subscript``/``right_subscript`` (task #stage32) mirror
+    :class:`app.parser.ast.statements.ConditionTerm`'s own subscript
+    fields — a structured subscript when ``left``/``right`` names a
+    single-dimension, literal- or identifier-subscripted table element;
+    empty otherwise.
+
     Examples:
         >>> from app.ir.instructions import IRConditionTerm
         >>> IRConditionTerm(connector="OR", left="WS-B", operator="=", right="2")
@@ -294,6 +577,18 @@ class IRConditionTerm:
     left: str = field(default="")
     operator: str = field(default="")
     right: str = field(default="")
+    left_subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
+    right_subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
+    left_expression: "IRArithmeticExpression | None" = field(
+        default=None, metadata={"omit_if_empty": True}
+    )
+    right_expression: "IRArithmeticExpression | None" = field(
+        default=None, metadata={"omit_if_empty": True}
+    )
 
 
 @dataclass(frozen=True)
@@ -342,13 +637,57 @@ class IRIf(IRInstruction):
     extra_terms: tuple[IRConditionTerm, ...] = field(
         default=(), metadata={"omit_if_empty": True}
     )
+    left_subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
+    right_subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
+    left_expression: "IRArithmeticExpression | None" = field(
+        default=None, metadata={"omit_if_empty": True}
+    )
+    right_expression: "IRArithmeticExpression | None" = field(
+        default=None, metadata={"omit_if_empty": True}
+    )
 
     def condition_text(self) -> str:
         """The whole condition as source-ordered text, e.g.
-        ``"WS-A > 5 OR WS-B = 2"`` (a plain IF gives ``"WS-A > 5"``)."""
-        parts = [f"{self.left} {self.operator} {self.right}"]
+        ``"WS-A > 5 OR WS-B = 2"`` (a plain IF gives ``"WS-A > 5"``).
+
+        An operand with a structured subscript (task #stage32) renders
+        with it, e.g. ``"WS-ITEM(WS-I) > 100"`` — this was never
+        possible before this stage (a subscripted condition operand
+        dropped the whole ``IRIf`` rather than reaching this method at
+        all), so there is no pre-existing rendering to stay compatible
+        with; every previously-representable (unsubscripted) condition
+        renders exactly as before.
+
+        An operand that is a parenthesized arithmetic expression (task
+        #stage38) renders via :func:`render_arithmetic_expression` —
+        the same precedence-aware printer :meth:`IRCompute.expression_text`
+        uses — wrapped in one outer pair of parentheses to mirror the
+        source shape, e.g. ``"(CURRENT-STOCK-QTY + SUGGESTED-ORDER-QTY)
+        > WAREHOUSE-CAPACITY"``.
+        """
+
+        def _render_side(
+            text: str,
+            subscript: tuple[IRSubscript, ...],
+            expression: "IRArithmeticExpression | None",
+        ) -> str:
+            if expression is not None:
+                return f"({render_arithmetic_expression(expression)})"
+            return _render_operand(text, subscript)
+
+        left = _render_side(self.left, self.left_subscript, self.left_expression)
+        right = _render_side(self.right, self.right_subscript, self.right_expression)
+        parts = [f"{left} {self.operator} {right}"]
         parts.extend(
-            f"{t.connector} {t.left} {t.operator} {t.right}" for t in self.extra_terms
+            f"{t.connector} "
+            f"{_render_side(t.left, t.left_subscript, t.left_expression)} "
+            f"{t.operator} "
+            f"{_render_side(t.right, t.right_subscript, t.right_expression)}"
+            for t in self.extra_terms
         )
         return " ".join(parts)
 
@@ -431,6 +770,12 @@ class IRMove(IRInstruction):
             Name of the destination operand (``target`` in COBOL terms).
         source:
             Name of the source operand.
+        source_subscript:
+            A structured subscript for ``source`` (task #stage32) when it
+            is a single-dimension, literal- or identifier-subscripted
+            table reference; empty otherwise. See
+            :attr:`IRInstruction.result_subscript` for the mirrored
+            field covering ``result`` (the MOVE target).
         comment:
             Optional annotation.
 
@@ -444,6 +789,9 @@ class IRMove(IRInstruction):
     """
 
     source: str = field(default="")
+    source_subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
 
     def accept(self, visitor: Any) -> Any:
         """Dispatch to ``visitor.visit_move(self)``."""
@@ -604,6 +952,10 @@ class IRDisplay(IRInstruction):
             Always ``""``; inherited from :class:`IRInstruction`.
         operand:
             The IR operand to display (a variable name or literal text).
+        operand_subscript:
+            A structured subscript for ``operand`` (task #stage32) when
+            it is a single-dimension, literal- or identifier-subscripted
+            table reference; empty otherwise.
         comment:
             Optional annotation.
 
@@ -620,6 +972,9 @@ class IRDisplay(IRInstruction):
     """
 
     operand: str = field(default="")
+    operand_subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
 
     def accept(self, visitor: Any) -> Any:
         """Dispatch to ``visitor.visit_display(self)``."""
@@ -683,6 +1038,66 @@ class IRPerformUntil(IRInstruction):
 
     def accept(self, visitor: Any) -> Any:
         visit = getattr(visitor, "visit_perform_until", None)
+        if callable(visit):
+            return visit(self)
+        return None
+
+
+@dataclass(frozen=True)
+class IRPerformVarying(IRInstruction):
+    """
+    Open a structured ``PERFORM VARYING ... FROM ... BY ... UNTIL ...``
+    loop block (task #stage34).
+
+    Closed by the same :class:`IREndPerform` a :class:`IRPerformUntil`
+    is -- COBOL's own ``END-PERFORM`` closes either form identically, and
+    the Java backend's depth-tracking/nesting machinery
+    (:func:`~app.backend.java.generator._collect_statements`) already
+    treats any structured-loop opener uniformly, so no second closer type
+    is introduced.
+
+    Attributes:
+        varying_variable:
+            The loop-control variable's canonicalised name (looked up in
+            the symbol table like any other identifier operand).
+        from_value:
+            The ``FROM`` operand, lowered like any other operand (an
+            identifier is canonicalised; a literal, e.g. a signed ``"-1"``,
+            is carried unchanged).
+        by_value:
+            The ``BY`` operand, lowered the same way.
+        left:
+            Left-hand operand of the ``UNTIL`` exit condition -- same
+            role as :attr:`IRPerformUntil.left`.
+        operator:
+            The ``UNTIL`` condition's comparison operator.
+        right:
+            Right-hand operand of the ``UNTIL`` exit condition.
+        left_subscript:
+            A structured subscript (task #stage32/#stage33) for
+            :attr:`left`, when it is a single-dimension, literal- or
+            identifier-subscripted table reference; empty otherwise.
+        right_subscript:
+            The mirrored field for :attr:`right`.
+        comment:
+            Optional annotation.
+    """
+
+    varying_variable: str = field(default="")
+    from_value: str = field(default="")
+    by_value: str = field(default="")
+    left: str = field(default="")
+    operator: str = field(default="")
+    right: str = field(default="")
+    left_subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
+    right_subscript: tuple[IRSubscript, ...] = field(
+        default=(), metadata={"omit_if_empty": True}
+    )
+
+    def accept(self, visitor: Any) -> Any:
+        visit = getattr(visitor, "visit_perform_varying", None)
         if callable(visit):
             return visit(self)
         return None

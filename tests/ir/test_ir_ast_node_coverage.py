@@ -69,7 +69,9 @@ from app.ir.builder import IRBuilder
 from app.ir.instructions import (
     IRAccept,
     IRAdd,
+    IRBinaryExpression,
     IRCall,
+    IRCompute,
     IRDisplay,
     IRDivide,
     IRIf,
@@ -77,7 +79,9 @@ from app.ir.instructions import (
     IRJump,
     IRMove,
     IRMultiply,
+    IROperandExpression,
     IRPerformUntil,
+    IRPerformVarying,
     IRReturn,
     IRSubtract,
 )
@@ -122,12 +126,31 @@ EXPECTED_IR_MAPPING: dict[type, tuple[type[IRInstruction], ...] | None] = {
     ast_statements.SubtractStatementNode: (IRSubtract,),
     ast_statements.MultiplyStatementNode: (IRMultiply,),
     ast_statements.DivideStatementNode: (IRDivide,),
+    ast_statements.ComputeStatementNode: (IRCompute,),  # task #stage35
     ast_statements.IfStatementNode: (IRIf,),  # + nested + IREndIf; see below
     ast_statements.PerformStatementNode: (IRCall,),
+    # task #stage37: out-of-line PERFORM target UNTIL condition; lowers to
+    # the identical IRPerformUntil/IREndPerform marker pair the inline form
+    # below produces, with a single IRCall (comment="PERFORM") standing in
+    # for the loop body -- see tests/ir/test_stage37_perform_target_until_ir.py.
+    ast_statements.PerformTargetUntilStatementNode: (IRPerformUntil, IRCall),
     ast_statements.PerformUntilStatementNode: (IRPerformUntil,),  # + IREndPerform
+    # task #stage34; + IREndPerform (shared with PerformUntilStatementNode --
+    # see tests/ir/test_stage34_perform_varying_ir.py for the full lowering
+    # coverage).
+    ast_statements.PerformVaryingStatementNode: (IRPerformVarying,),
     ast_statements.CallStatementNode: (IRCall,),
     ast_statements.StopRunStatementNode: (IRReturn,),
     ast_statements.GobackStatementNode: (IRReturn,),
+    # task #stage40: READ has no marker instruction of its own (unlike
+    # IfStatementNode's IRIf) -- build_read_statement directly emits
+    # whatever at_end_statements themselves lower to (IRMove, IRAdd, ...,
+    # arbitrary), never a fixed type. None here means "no single IR type
+    # to name", a different reason from AcceptStatementNode's None
+    # ("no real corpus source can reach this node at all") -- see
+    # tests/ir/test_stage40_read_at_end_ir.py for the actual lowering
+    # coverage.
+    ast_statements.ReadStatementNode: None,
     ast_statements.GoToStatementNode: (IRJump,),  # task #stage17; was None
 }
 
@@ -227,6 +250,29 @@ class TestArithmeticMapping:
         )
         div = next(i for i in instrs if isinstance(i, IRDivide))
         assert (div.left, div.right) == ("2", "WS-COUNT")
+
+    def test_compute(self) -> None:
+        """task #stage35: COMPUTE lowers to IRCompute with a structured
+        expression tree, not a flat operand pair -- exercised here with
+        ``B + C * D`` so the tree's shape (a nested IRBinaryExpression on
+        the right of the outer '+') is actually asserted, not just the
+        instruction type."""
+        _, instrs = _build(
+            _ID + "PROCEDURE DIVISION.\nMAIN.\n"
+            "    COMPUTE WS-A = WS-B + WS-C * WS-D.\n    STOP RUN.\n"
+        )
+        compute = next(i for i in instrs if isinstance(i, IRCompute))
+        assert compute.result == "WS-A"
+        expr = compute.expression
+        assert isinstance(expr, IRBinaryExpression)
+        assert expr.operator == "+"
+        assert isinstance(expr.left, IROperandExpression)
+        assert expr.left.value == "WS-B"
+        assert isinstance(expr.right, IRBinaryExpression)
+        assert expr.right.operator == "*"
+        assert expr.right.left.value == "WS-C"
+        assert expr.right.right.value == "WS-D"
+        assert compute.expression_text() == "WS-B + WS-C * WS-D"
 
 
 class TestConditionAndBranchMapping:

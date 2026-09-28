@@ -477,17 +477,58 @@ def _current_chip_state() -> ChipState:
 # -- top bar ------------------------------------------------------------
 
 
+def _render_search_box() -> None:
+    """Real text search across every file in the active workspace, backed
+    by ``GET /workspaces/{id}/search`` (task #stage47) -- plain substring
+    matching, not semantic search (this project's own RAG stack has no
+    real embedding provider wired in; see ``app/workspace/search.py``'s
+    own module docstring). Rendered only once a workspace is active --
+    with none, there is nothing to search, and an input that always
+    returns nothing would be as much a fake affordance as no endpoint at
+    all."""
+    workspace_id = st.session_state.workspace_id
+    if not workspace_id:
+        return
+
+    query = st.text_input(
+        "Search",
+        key="search_query_input",
+        placeholder="Search workspace files...",
+        label_visibility="collapsed",
+    )
+    if not query or not query.strip():
+        return
+
+    client = get_client()
+    try:
+        result = client.search_workspace(workspace_id, query)
+    except BackendAPIError as exc:
+        st.caption(f"Search failed: {exc}")
+        return
+
+    matches = result.get("matches") or []
+    with st.popover(
+        f"{len(matches)} result(s)"
+        + (" (more exist)" if result.get("truncated") else ""),
+        use_container_width=True,
+    ):
+        if not matches:
+            st.caption(f"No matches for {query!r}.")
+        for m in matches[:20]:
+            st.markdown(f"**{m['filename']}** &middot; line {m['line']}")
+            st.code(m["snippet"], language="cobol")
+
+
 def _render_topbar() -> None:
     """The thin header row above the workspace: filename/COBOL badge/honest
-    status on the left, a real Help popover (static product copy -- no
-    fabricated capability) and the session line on the right. No search box
-    is rendered: no backend search endpoint exists, and a non-functional
-    search input would be a fake affordance."""
+    status on the left, a real search box (task #stage47) and Help popover
+    (static product copy -- no fabricated capability) in the middle/right,
+    and the session line on the far right."""
     filename = st.session_state.filename or "No file selected"
     label, word = chip_label_and_status(_current_chip_state())
     greeting = st.session_state.engineer_name or "Guest"
 
-    left, help_col, session_col = st.columns([6, 1, 2])
+    left, search_col, help_col, session_col = st.columns([4, 2, 1, 2])
     with left:
         st.markdown(
             f'<div class="mf-topbar-left">'
@@ -498,6 +539,8 @@ def _render_topbar() -> None:
             f"</div>",
             unsafe_allow_html=True,
         )
+    with search_col:
+        _render_search_box()
     with help_col:
         with st.popover("Help", use_container_width=True):
             st.markdown("**Mainframe Modernization Assistant**")

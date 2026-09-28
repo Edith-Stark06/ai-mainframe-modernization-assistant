@@ -96,6 +96,23 @@ class JavaField:
             :attr:`~app.parser.semantic.types.AlphanumericType.length`.
             ``None`` for a non-alphanumeric field or one with no resolved
             type.
+        occurs:
+            The array size for a fixed ``OCCURS n`` elementary item (task
+            #stage33), mirroring the naming already established by
+            :attr:`~app.parser.semantic.symbols.VariableSymbol.occurs` /
+            :attr:`~app.parser.ast.data_items.ElementaryItemNode.occurs`.
+            ``None`` for a scalar field. When set, :attr:`java_type` is the
+            element type with a trailing ``"[]"`` (e.g. ``"int[]"``) and
+            :attr:`initial_value` (when present) is a Java array-creation
+            expression (e.g. ``"new int[5]"``) rather than a per-element
+            literal — see
+            :func:`~app.backend.java.generator.build_fields_from_symbols`
+            for exactly how this is derived (including from an *ancestor*
+            group's ``OCCURS``, not only the item's own). ``digits``/
+            ``decimal_places``/``signed``/``length`` above still describe
+            one *element* of the array, unaffected by this field, so
+            per-element DISPLAY formatting (task #stage31) keeps working
+            unchanged once a Stage 33 emitter has indexed into the array.
 
     Examples:
         >>> from app.backend.java.field_model import JavaField
@@ -114,6 +131,7 @@ class JavaField:
     decimal_places: int = field(default=0)
     signed: bool = field(default=False)
     length: int | None = field(default=None)
+    occurs: int | None = field(default=None)
 
     def render(self, indent: str = "    ") -> str:
         """

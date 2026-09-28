@@ -33,9 +33,9 @@ history lives in `docs/`.
 - [x] AST
 - [x] Intermediate Representation
 - [x] Fixed-format source normalization wired into the analysis pipeline (position-preserving)
-- [ ] Continuation lines (`-` in column 7)
-- [ ] Copybook (`COPY`) expansion
-- [ ] JCL parser
+- [x] Continuation lines (`-` in column 7) — nonnumeric literal splicing across a continued line (`CobolLexer._try_resume_continued_string`); unevidenced by the 45-source corpus, covered by synthetic tests
+- [x] Copybook (`COPY`) expansion — `app/parser/resolver/copybook.py`'s `CopybookExpander`: resolves `COPY member [OF|IN library] [REPLACING ==old== BY ==new== ...].` against the source file's own directory, recursively expands nested copybooks, detects circular COPY. Diagnostics inside expanded content report a flattened line number, not the copybook's own file/line (documented scope decision — see the module's own docstring). Unevidenced by the 45-source corpus, covered by synthetic tests.
+- [x] JCL parser — new `app/jcl/` package (lexer, AST, parser, `JclAnalysisService`): `JOB`/`EXEC`/`DD` statements, continuation lines, comments, in-stream data. `PROC`/`PEND`/conditional JCL captured whole as unsupported, never expanded or fabricated. No real JCL corpus in this repo to validate against; covered by synthetic tests (`tests/jcl/`) against the standard grammar.
 
 ---
 
@@ -43,7 +43,7 @@ history lives in `docs/`.
 
 - [x] Dependency Graph (COPY / CALL / PERFORM / variable read-write / condition references)
 - [x] Control Flow
-- [ ] Dedicated Call Graph and Data Flow views
+- [x] Dedicated Call Graph and Data Flow views — the call graph was already surfaced as Overview's "Critical Topology" (`app/frontend/app.py`'s `_render_critical_topology`, built from `generate_flow()`'s control/call-flow graph). New this task (#stage49): a dedicated Data Flow graph — `app/analysis/dependencies/data_flow.py`'s `build_data_flow_graph()` turns the existing per-paragraph `VARIABLE_READ`/`VARIABLE_WRITE` dependencies (previously only exposed as a flat list) into a real graph of paragraph <-> data-item nodes and `READS`/`WRITES` edges, reusing the same `Flow`/`FlowNode`/`FlowEdge` types the call graph uses rather than inventing a new representation. Wired into `/analyze` as `data_flow_graph` and rendered in the Dependencies view alongside the existing dependency graph.
 
 ---
 
@@ -68,14 +68,14 @@ history lives in `docs/`.
 - [x] Java Generation (validated with a real `javac` on the 45-program corpus)
 - [x] Java Recommendations and Modernization Strategy
 - [x] Migration Report
-- [ ] Cloud Readiness assessment
+- [x] Cloud Readiness assessment — `app/modernization/cloud/` (`CloudReadinessAnalyzer`): a four-tier categorical assessment (`CLOUD_READY` / `NEEDS_REFACTORING` / `REQUIRES_REARCHITECTURE` / `NOT_RECOMMENDED`) driven by concrete structural evidence (EXEC SQL/CICS/DLI occurrences, VSAM indicators, external CALL count, parser coverage gaps), matching this codebase's existing "no numeric score, every threshold a documented structural count" philosophy (see `ModernizationStrategyAnalyzer`'s own docstring). Every tier cites its evidence with line numbers; never fabricates a tier when signals are absent. Wired into `POST /workspaces/{id}/modernization/intelligence` as `cloud_readiness`.
 
 ---
 
 ## Phase 8 — Dashboard
 
 - [x] Streamlit UI
-- [ ] Search
+- [x] Search — `GET /workspaces/{id}/search` (`app/workspace/search.py`'s `WorkspaceSearcher`): plain, case-insensitive line-based text search across every workspace file, with a real search box wired into the topbar. Deliberately not semantic/embedding search — this project's own RAG stack has no real embedding provider wired in yet (see the module's own docstring).
 - [x] Visualization (architecture and dependency views)
 - [x] Reporting
 
@@ -89,6 +89,6 @@ history lives in `docs/`.
 
 ## Next
 
-- [ ] Consume `>>SOURCE FREE|FIXED` directives and support fixed-format continuation lines, each as its own investigated change
-- [ ] Add a continuous-integration workflow running `black --check .`, `ruff check .`, `mypy app` and `pytest`
-- [ ] Copybook expansion and JCL parsing
+- [x] Consume `>>SOURCE FREE|FIXED` directives — `CobolLexer` now skips the directive line whole (`_is_source_directive`) instead of letting it corrupt the token stream; detection itself (`FormatDetector`) was already implemented. Unevidenced by the 45-source corpus, covered by synthetic tests.
+- [x] Add a continuous-integration workflow running `black --check .`, `ruff check .`, `mypy app` and `pytest` (`.github/workflows/ci.yml`)
+- [x] Copybook expansion and JCL parsing — implemented as the two dedicated Phase 3 entries above (`CopybookExpander`, `app/jcl/`); listed here as a leftover duplicate from before those entries carried their own detail.

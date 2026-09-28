@@ -22,6 +22,11 @@ class NodeType(Enum):
     PROCESS = auto()
     EXTERNAL = auto()
 
+    # Added by task #stage49 (Data Flow graph): a plain data item
+    # (variable/field) read or written by a paragraph, as opposed to
+    # PROCESS (a paragraph itself) or FILE/DATABASE (an I/O resource).
+    DATA_ITEM = auto()
+
 
 class EdgeType(Enum):
     """Supported categories for flow edges."""

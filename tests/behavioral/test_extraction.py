@@ -87,22 +87,41 @@ def test_multiple_business_rules_are_grouped_per_paragraph(status_bundle):
 # --- executability: unsupported / unreachable / external dep -----------
 
 
-def test_stubbed_paragraph_is_non_executable_with_reason(elig_bundle):
+def test_unperformed_paragraph_is_non_executable_with_reason(elig_bundle):
+    """Renamed (task #stage36): ``eligibility_rules.cbl``'s three PERFORMed
+    paragraphs (``CHECK-ELIGIBILITY``/``CALCULATE-TOTAL``/``REVIEW-AMOUNT``)
+    used to all be ``BE009`` stubs -- COBOL PERFORM-to-paragraph had no real
+    Java body at all -- so this fixture previously demonstrated the
+    "stubbed paragraph" reason exclusively. Task #stage36 outlines every
+    PERFORM-to-local-paragraph target into a real method, so all three now
+    execute; only ``STATUS-STEP`` -- genuinely never PERFORMed by anyone in
+    this source -- remains non-executable, for the *other*, still-real
+    reason this suite always distinguished (``_represented_paragraphs`` in
+    ``app/behavioral/extraction/extractor.py``, unchanged). Measured
+    directly, not assumed."""
     suite = extract_behavioral_tests(elig_bundle)
-    assert suite.executable_tests == ()
+    assert len(suite.executable_tests) == 8
+    assert len(suite.non_executable_tests) == 2
     for t in suite.non_executable_tests:
         assert t.inconclusive_reason
-        assert (
-            "BE009" in t.inconclusive_reason
-            or "never PERFORMed" in t.inconclusive_reason
-        )
+        assert "never PERFORMed" in t.inconclusive_reason
 
 
 def test_unreachable_paragraph_is_flagged_distinctly(elig_bundle):
+    """task #stage36: only ``STATUS-STEP`` (never PERFORMed) remains
+    non-executable in this fixture now -- see the previous test's
+    docstring. The ``BE009``-stub reason is still a real, distinct code
+    path in the extractor (unchanged; still exercised directly by
+    ``tests/backend/test_java_generator.py``'s stub tests, which use a
+    hand-built IR with an unresolvable target), just no longer
+    demonstrated by *this* fixture, since none of its PERFORM targets are
+    stubs any more."""
     suite = extract_behavioral_tests(elig_bundle)
     reasons = {t.inconclusive_reason for t in suite.non_executable_tests}
-    assert any("never PERFORMed" in r for r in reasons if r)
-    assert any("BE009" in r for r in reasons if r)
+    assert reasons == {
+        "paragraph STATUS-STEP has no representation in the generated Java "
+        "(never PERFORMed from the entry paragraph)"
+    }
 
 
 def test_executable_case_has_no_inconclusive_reason(if_else_bundle):

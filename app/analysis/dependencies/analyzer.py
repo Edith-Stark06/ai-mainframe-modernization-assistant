@@ -20,6 +20,9 @@ Responsibilities:
       unchanged in shape; now source-attributed).
     - Extract VARIABLE_READ/VARIABLE_WRITE dependencies from MOVE and
       arithmetic (ADD/SUBTRACT/MULTIPLY/DIVIDE) statement operands.
+    - Extract VARIABLE_WRITE (target) and VARIABLE_READ (every operand
+      and subscript in the expression tree) dependencies from COMPUTE
+      (task #stage35).
     - Extract CONDITION dependencies from IF and PERFORM UNTIL
       condition operands.
     - Classify each operand as a literal or a variable reference before
@@ -65,13 +68,20 @@ from app.parser.ast.procedure import ProcedureDivisionNode
 from app.parser.ast.program import ProgramNode
 from app.parser.ast.statements import (
     AddStatementNode,
+    ArithmeticExpression,
     CallStatementNode,
+    ComputeStatementNode,
     DivideStatementNode,
     IfStatementNode,
     MoveStatementNode,
     MultiplyStatementNode,
+    OperandExpression,
     PerformStatementNode,
+    PerformTargetUntilStatementNode,
     PerformUntilStatementNode,
+    PerformVaryingStatementNode,
+    ReadStatementNode,
+    Subscript,
     SubtractStatementNode,
 )
 from app.parser.ast.visitor import ASTVisitor
@@ -184,6 +194,33 @@ class DependencyAnalyzer(ASTVisitor):
             return
         self._add_dependency(dep_type, operand.upper(), position)
 
+    def _maybe_add_subscript_dependency(
+        self, subscripts: tuple[Subscript, ...], position: Any
+    ) -> None:
+        """
+        Register a ``VARIABLE_READ`` dependency for each identifier
+        subscript in *subscripts* (task #stage32).
+
+        For ``WS-ITEM(WS-I)``, the index variable ``WS-I`` is read to
+        determine which element of ``WS-ITEM`` is accessed -- a
+        dependency distinct from, and in addition to, whatever
+        read/write dependency the containing statement already registers
+        for ``WS-ITEM`` itself (the base name, never a fabricated
+        combined name like ``"WS-ITEM ( WS-I )"`` -- that corruption is
+        fixed at the AST layer, by construction, not by anything in this
+        module: ``node.source``/``node.target``/etc. are already the
+        clean base name by the time they reach here).
+
+        A literal subscript (``WS-ITEM(2)``) contributes no dependency --
+        there is no variable to read, matching task #stage32's own
+        explicit requirement.
+        """
+        for sub in subscripts:
+            if sub.kind == "identifier":
+                self._add_dependency(
+                    DependencyType.VARIABLE_READ, sub.value.upper(), position
+                )
+
     # ------------------------------------------------------------------
     # Structural traversal
     # ------------------------------------------------------------------
@@ -222,6 +259,50 @@ class DependencyAnalyzer(ASTVisitor):
         self._add_dependency(DependencyType.PERFORM, node.target, node.start_position)
         return None
 
+    def visit_read_statement(self, node: ReadStatementNode) -> Any:
+        """
+        ``READ file-name [INTO ...] AT END ... [NOT AT END ...]`` (task
+        #stage40). Recurses into ``at_end_statements`` only, mirroring
+        exactly what :meth:`~app.ir.builder.IRBuilder.build_read_statement`
+        itself lowers -- this backend models every ``READ`` as always
+        reaching end-of-file (no file-reading runtime exists), so
+        ``not_at_end_statements`` is provably unreachable and contributes
+        no dependency, matching the IR precisely rather than fabricating
+        a read/write edge for code that can never run.
+
+        Neither the file name nor the ``INTO`` target is registered as a
+        dependency -- no file-content source exists to read into the
+        latter, and the former is not resolved against any ``SELECT``/
+        ``FD`` declaration by this parser (task #stage40's own scope).
+        """
+        for statement in node.at_end_statements:
+            statement.accept(self)
+        return None
+
+    def visit_perform_target_until_statement(
+        self, node: PerformTargetUntilStatementNode
+    ) -> Any:
+        """
+        Out-of-line ``PERFORM paragraph-name UNTIL condition`` (task
+        #stage37). Registers exactly the union of what
+        :meth:`visit_perform_statement` and
+        :meth:`visit_perform_until_statement` each register on their own
+        -- a ``PERFORM`` dependency on the named target (the same
+        paragraph transition a plain ``PERFORM`` records) plus a
+        ``CONDITION`` dependency on each condition operand (the same
+        read the inline form records for its own ``UNTIL``). There is no
+        loop body to recurse into here (unlike the inline form) -- see
+        :class:`PerformTargetUntilStatementNode`'s docstring for why.
+        """
+        self._add_dependency(DependencyType.PERFORM, node.target, node.start_position)
+        self._maybe_add_operand_dependency(
+            DependencyType.CONDITION, node.condition_left, node.start_position
+        )
+        self._maybe_add_operand_dependency(
+            DependencyType.CONDITION, node.condition_right, node.start_position
+        )
+        return None
+
     def visit_perform_until_statement(self, node: PerformUntilStatementNode) -> Any:
         self._maybe_add_operand_dependency(
             DependencyType.CONDITION, node.condition_left, node.start_position
@@ -233,21 +314,103 @@ class DependencyAnalyzer(ASTVisitor):
             statement.accept(self)
         return None
 
-    def visit_if_statement(self, node: IfStatementNode) -> Any:
+    def visit_perform_varying_statement(self, node: PerformVaryingStatementNode) -> Any:
+        """
+        ``PERFORM VARYING var FROM f BY b UNTIL cond ... END-PERFORM``
+        (task #stage34).
+
+        Dependencies registered, mirroring
+        :meth:`visit_perform_until_statement` plus the three things
+        ``PERFORM VARYING`` adds on top of a plain ``PERFORM UNTIL``:
+
+        * ``varying_variable`` is written -- the loop's own initialisation
+          (``FROM``) and every iteration's increment (``BY``) assign to
+          it, exactly like a MOVE target.
+        * ``from_value``/``by_value`` are read when they name a variable
+          (a literal, the shape every real corpus occurrence actually
+          uses, contributes no dependency -- same literal-filtering rule
+          every other operand dependency already applies).
+        * The ``UNTIL`` condition's operands (and any subscript index
+          variable, task #stage32) are read, exactly like
+          ``PERFORM UNTIL``/``IF``.
+        * Every body statement is visited recursively, exactly like
+          ``PERFORM UNTIL``.
+        """
+        self._maybe_add_operand_dependency(
+            DependencyType.VARIABLE_WRITE, node.varying_variable, node.start_position
+        )
+        self._maybe_add_operand_dependency(
+            DependencyType.VARIABLE_READ, node.from_value, node.start_position
+        )
+        self._maybe_add_operand_dependency(
+            DependencyType.VARIABLE_READ, node.by_value, node.start_position
+        )
         self._maybe_add_operand_dependency(
             DependencyType.CONDITION, node.condition_left, node.start_position
+        )
+        self._maybe_add_subscript_dependency(
+            node.condition_left_subscript, node.start_position
         )
         self._maybe_add_operand_dependency(
             DependencyType.CONDITION, node.condition_right, node.start_position
         )
+        self._maybe_add_subscript_dependency(
+            node.condition_right_subscript, node.start_position
+        )
+        for statement in node.statements:
+            statement.accept(self)
+        return None
+
+    def _visit_condition_operand(
+        self,
+        text: str,
+        subscript: tuple[Subscript, ...],
+        expression: "ArithmeticExpression | None",
+        position: Any,
+    ) -> None:
+        """
+        Register the dependency/dependencies for one IF-condition operand
+        (task #stage38): every identifier leaf of a parenthesized
+        arithmetic expression as a ``VARIABLE_READ`` -- reusing
+        :meth:`_visit_expression`, the exact walker
+        :meth:`visit_compute_statement` already uses, unchanged -- or,
+        for a plain operand exactly as before this stage, a
+        ``CONDITION`` dependency (plus any subscript index variable).
+        Mutually exclusive, mirroring the AST's own representation.
+        """
+        if expression is not None:
+            self._visit_expression(expression, position)
+            return
+        self._maybe_add_operand_dependency(DependencyType.CONDITION, text, position)
+        self._maybe_add_subscript_dependency(subscript, position)
+
+    def visit_if_statement(self, node: IfStatementNode) -> Any:
+        self._visit_condition_operand(
+            node.condition_left,
+            node.condition_left_subscript,
+            node.condition_left_expression,
+            node.start_position,
+        )
+        self._visit_condition_operand(
+            node.condition_right,
+            node.condition_right_subscript,
+            node.condition_right_expression,
+            node.start_position,
+        )
         # Every operand of every AND/OR-joined term is read by the
         # condition too; literals are filtered exactly as for the first term.
         for term in node.extra_conditions:
-            self._maybe_add_operand_dependency(
-                DependencyType.CONDITION, term.left, node.start_position
+            self._visit_condition_operand(
+                term.left,
+                term.left_subscript,
+                term.left_expression,
+                node.start_position,
             )
-            self._maybe_add_operand_dependency(
-                DependencyType.CONDITION, term.right, node.start_position
+            self._visit_condition_operand(
+                term.right,
+                term.right_subscript,
+                term.right_expression,
+                node.start_position,
             )
         for statement in node.then_statements:
             statement.accept(self)
@@ -261,16 +424,28 @@ class DependencyAnalyzer(ASTVisitor):
 
     def visit_move_statement(self, node: MoveStatementNode) -> Any:
         # MOVE source TO target: target is fully overwritten (write
-        # only, no read-before-write); source is read only.
+        # only, no read-before-write); source is read only. A
+        # subscripted source/target (task #stage32) additionally reads
+        # its own index variable, if any -- see
+        # _maybe_add_subscript_dependency.
         self._maybe_add_operand_dependency(
             DependencyType.VARIABLE_READ, node.source, node.start_position
         )
+        self._maybe_add_subscript_dependency(node.source_subscript, node.start_position)
         self._maybe_add_operand_dependency(
             DependencyType.VARIABLE_WRITE, node.target, node.start_position
         )
+        self._maybe_add_subscript_dependency(node.target_subscript, node.start_position)
         return None
 
-    def _visit_arithmetic(self, left: str, right: str, position: Any) -> None:
+    def _visit_arithmetic(
+        self,
+        left: str,
+        right: str,
+        position: Any,
+        left_subscript: tuple[Subscript, ...] = (),
+        right_subscript: tuple[Subscript, ...] = (),
+    ) -> None:
         """
         Shared handling for ADD/SUBTRACT/MULTIPLY/DIVIDE.
 
@@ -281,30 +456,102 @@ class DependencyAnalyzer(ASTVisitor):
         (the result replaces it). Both effects on ``right`` are
         represented, per task #111's explicit example ("For `ADD A TO
         B` capture both the read of A and read/write effect on B where
-        the model supports it").
+        the model supports it"). ``left_subscript``/``right_subscript``
+        (task #stage32) additionally read their own index variable, if
+        any, exactly once each regardless of ``right`` being both read
+        and written.
         """
         self._maybe_add_operand_dependency(DependencyType.VARIABLE_READ, left, position)
+        self._maybe_add_subscript_dependency(left_subscript, position)
         self._maybe_add_operand_dependency(
             DependencyType.VARIABLE_READ, right, position
         )
         self._maybe_add_operand_dependency(
             DependencyType.VARIABLE_WRITE, right, position
         )
+        self._maybe_add_subscript_dependency(right_subscript, position)
 
     def visit_add_statement(self, node: AddStatementNode) -> Any:
-        self._visit_arithmetic(node.left, node.right, node.start_position)
+        self._visit_arithmetic(
+            node.left,
+            node.right,
+            node.start_position,
+            node.left_subscript,
+            node.right_subscript,
+        )
         return None
 
     def visit_subtract_statement(self, node: SubtractStatementNode) -> Any:
-        self._visit_arithmetic(node.left, node.right, node.start_position)
+        self._visit_arithmetic(
+            node.left,
+            node.right,
+            node.start_position,
+            node.left_subscript,
+            node.right_subscript,
+        )
         return None
 
     def visit_multiply_statement(self, node: MultiplyStatementNode) -> Any:
-        self._visit_arithmetic(node.left, node.right, node.start_position)
+        self._visit_arithmetic(
+            node.left,
+            node.right,
+            node.start_position,
+            node.left_subscript,
+            node.right_subscript,
+        )
         return None
 
     def visit_divide_statement(self, node: DivideStatementNode) -> Any:
-        self._visit_arithmetic(node.left, node.right, node.start_position)
+        self._visit_arithmetic(
+            node.left,
+            node.right,
+            node.start_position,
+            node.left_subscript,
+            node.right_subscript,
+        )
+        return None
+
+    def _visit_expression(
+        self, expression: ArithmeticExpression, position: Any
+    ) -> None:
+        """
+        Register a ``VARIABLE_READ`` dependency for every operand leaf in
+        a COMPUTE expression tree, and for each leaf's own subscript
+        (task #stage35).
+
+        A recursive generalization of the two-operand handling
+        :meth:`_visit_arithmetic` already does for ADD/SUBTRACT/MULTIPLY/
+        DIVIDE — COMPUTE's expression is an N-ary tree rather than a
+        fixed pair, so every leaf (however deeply nested inside
+        :class:`~app.parser.ast.statements.BinaryExpression` nodes) is
+        walked and registered the same way a single flat operand already
+        is, never a flattened combined name.
+        """
+        if isinstance(expression, OperandExpression):
+            self._maybe_add_operand_dependency(
+                DependencyType.VARIABLE_READ, expression.value, position
+            )
+            self._maybe_add_subscript_dependency(expression.subscript, position)
+            return
+        self._visit_expression(expression.left, position)
+        self._visit_expression(expression.right, position)
+
+    def visit_compute_statement(self, node: ComputeStatementNode) -> Any:
+        """
+        Register the target as ``VARIABLE_WRITE`` (plus its own subscript
+        as a read, task #stage32) and every operand/subscript in the
+        expression tree as ``VARIABLE_READ`` (task #stage35).
+
+        Example: ``COMPUTE TOTAL(WS-I) = PRICE(WS-I) * QUANTITY(WS-I)``
+        registers reads on ``PRICE``, ``QUANTITY``, and ``WS-I`` (once
+        per occurrence, deduplicated by :meth:`_add_dependency`'s
+        ``(source, type, target)`` key), and a write on ``TOTAL``.
+        """
+        self._maybe_add_operand_dependency(
+            DependencyType.VARIABLE_WRITE, node.target, node.start_position
+        )
+        self._maybe_add_subscript_dependency(node.target_subscript, node.start_position)
+        self._visit_expression(node.expression, node.start_position)
         return None
 
 

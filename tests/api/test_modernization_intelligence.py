@@ -48,7 +48,11 @@ def test_intelligence_endpoint_happy_path(monkeypatch, tmp_path) -> None:
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert set(body) == {"business_rules", "risks", "strategies"}
+    # task #stage48: cloud_readiness is a new top-level key, present
+    # whenever the router can re-read the source (as it can here) --
+    # see tests/api/test_modernization_intelligence.py's own dedicated
+    # cloud-readiness test below for its content.
+    assert set(body) == {"business_rules", "risks", "strategies", "cloud_readiness"}
 
     assert len(body["business_rules"]) == 2  # then + else
     rule = body["business_rules"][0]
@@ -59,6 +63,71 @@ def test_intelligence_endpoint_happy_path(monkeypatch, tmp_path) -> None:
 
     assert any(s["is_primary"] for s in body["strategies"])
     assert sum(1 for s in body["strategies"] if s["is_primary"]) == 1
+
+
+def test_intelligence_endpoint_cloud_readiness_field(monkeypatch, tmp_path) -> None:
+    """Task #stage48: the endpoint re-reads the source file itself (the
+    router's own job, since ``AnalysisResult`` does not retain the raw
+    text) and passes it through, so ``cloud_readiness`` is populated,
+    not omitted, for an ordinary successful request."""
+    _mock_workspace(monkeypatch, tmp_path)
+    (tmp_path / "elig.cbl").write_text(_SOURCE, encoding="utf-8")
+
+    resp = client.post(
+        f"/api/v1/workspaces/{uuid.uuid4()}/modernization/intelligence",
+        json={"filename": "elig.cbl"},
+    )
+    assert resp.status_code == 200
+    cloud = resp.json()["cloud_readiness"]
+    assert cloud is not None
+    assert cloud["tier"] in {
+        "CLOUD_READY",
+        "NEEDS_REFACTORING",
+        "REQUIRES_REARCHITECTURE",
+        "NOT_RECOMMENDED",
+    }
+    assert cloud["rationale"]
+    assert cloud["evidence"]
+    assert 0.0 <= cloud["confidence"] <= 1.0
+
+    # This fixture has no EXEC SQL/CICS/DLI/VSAM at all -- the most
+    # straightforward possible tier.
+    assert cloud["tier"] == "CLOUD_READY"
+
+
+def test_intelligence_endpoint_cloud_readiness_omitted_on_reread_failure(
+    monkeypatch, tmp_path
+) -> None:
+    """Task #stage48: if the router's own second read of the source (for
+    cloud readiness -- ``AnalysisResult`` does not retain the raw text)
+    hits an OSError, the endpoint must still succeed with
+    ``cloud_readiness: null`` rather than a 500 -- the first read, inside
+    ``AnalysisService.analyze_file``, is unaffected."""
+    _mock_workspace(monkeypatch, tmp_path)
+    (tmp_path / "elig.cbl").write_text(_SOURCE, encoding="utf-8")
+
+    from pathlib import Path
+
+    real_read_text = Path.read_text
+    call_count = {"n": 0}
+
+    def flaky_read_text(self, *args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return real_read_text(self, *args, **kwargs)
+        raise OSError("simulated transient re-read failure")
+
+    monkeypatch.setattr(Path, "read_text", flaky_read_text)
+
+    resp = client.post(
+        f"/api/v1/workspaces/{uuid.uuid4()}/modernization/intelligence",
+        json={"filename": "elig.cbl"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["cloud_readiness"] is None
+    # Everything that does not depend on the raw source text is unaffected.
+    assert len(body["business_rules"]) == 2
 
 
 def test_intelligence_endpoint_is_deterministic(monkeypatch, tmp_path) -> None:

@@ -2,18 +2,22 @@
 Phase 4 Modernization Intelligence pipeline.
 
 Purpose:
-    Compose the three Phase 4 analyzers — business rule extraction
-    (#112), risk analysis (#113), and modernization strategy (#114) —
-    into a single deterministic result, reusing the Phase 1–3 outputs and
-    the CFG rather than recomputing them.
+    Compose the Phase 4 analyzers — business rule extraction (#112),
+    risk analysis (#113), modernization strategy (#114), and (task
+    #stage48) cloud readiness — into a single deterministic result,
+    reusing the Phase 1–3 outputs and the CFG rather than recomputing
+    them.
 
-    The three layers stay independently testable: this module only wires
+    The layers stay independently testable: this module only wires
     them together in the documented order
 
         AnalysisResult
             -> BusinessRuleExtractor        (#112)
             -> RiskAnalyzer                  (#113, consumes the rules)
             -> ModernizationStrategyAnalyzer (#114, consumes rules + risks)
+            -> CloudReadinessAnalyzer        (#stage48, consumes risks;
+                                              needs the raw source text
+                                              too -- see *source* below)
 
 Determinism:
     Given the same :class:`~app.analysis.models.AnalysisResult` (and,
@@ -35,6 +39,8 @@ from typing import Any
 
 from app.analysis.models import AnalysisResult
 from app.modernization.business_rules import BusinessRule, BusinessRuleExtractor
+from app.modernization.cloud.analyzer import CloudReadinessAnalyzer
+from app.modernization.cloud.models import CloudReadinessAssessment
 from app.modernization.flow.generator import generate_flow
 from app.modernization.flow.models import Flow
 from app.modernization.risk import ModernizationRisk, RiskAnalyzer
@@ -59,11 +65,17 @@ class ModernizationIntelligenceResult:
         risks: Deterministically ordered risks (#113).
         strategies: Deterministically ordered strategy recommendations,
             primary first (#114).
+        cloud_readiness: The cloud readiness assessment (task #stage48),
+            or ``None`` when :func:`analyze_modernization_intelligence`
+            was not given the raw source text needed to detect ``EXEC
+            SQL``/``EXEC CICS``/``EXEC DLI``/VSAM signals -- never
+            fabricated in that case, simply omitted.
     """
 
     business_rules: tuple[BusinessRule, ...]
     risks: tuple[ModernizationRisk, ...]
     strategies: tuple[StrategyRecommendation, ...]
+    cloud_readiness: CloudReadinessAssessment | None = None
 
     @property
     def primary_strategy(self) -> StrategyRecommendation | None:
@@ -78,12 +90,18 @@ class ModernizationIntelligenceResult:
             "business_rules": [r.to_dict() for r in self.business_rules],
             "risks": [r.to_dict() for r in self.risks],
             "strategies": [s.to_dict() for s in self.strategies],
+            "cloud_readiness": (
+                self.cloud_readiness.to_dict()
+                if self.cloud_readiness is not None
+                else None
+            ),
         }
 
 
 def analyze_modernization_intelligence(
     analysis_result: AnalysisResult,
     flow: Flow | None = None,
+    source: str | None = None,
 ) -> ModernizationIntelligenceResult:
     """
     Run the full Phase 4 pipeline over *analysis_result*.
@@ -96,6 +114,13 @@ def analyze_modernization_intelligence(
             generated from ``analysis_result`` via
             :func:`~app.modernization.flow.generator.generate_flow` — the
             same function the existing modernization pipeline uses.
+        source:
+            The raw COBOL source text, needed for the cloud readiness
+            assessment's ``EXEC SQL``/``EXEC CICS``/``EXEC DLI``/VSAM
+            detection (task #stage48) -- ``AnalysisResult`` itself does
+            not retain the original text. When ``None`` (the default),
+            ``cloud_readiness`` is omitted rather than computed from
+            nothing.
 
     Returns:
         A :class:`ModernizationIntelligenceResult`.
@@ -107,9 +132,15 @@ def analyze_modernization_intelligence(
     strategies = ModernizationStrategyAnalyzer().analyze(
         analysis_result, cfg, rules, risks
     )
+    cloud_readiness = (
+        CloudReadinessAnalyzer().analyze(source, analysis_result, risks)
+        if source is not None
+        else None
+    )
 
     return ModernizationIntelligenceResult(
         business_rules=tuple(rules),
         risks=tuple(risks),
         strategies=tuple(strategies),
+        cloud_readiness=cloud_readiness,
     )

@@ -11,6 +11,8 @@ Responsibilities:
       and return a complete file inventory.
     - Handle ``GET /workspaces/{workspace_id}/summary`` — derive and return
       aggregate project statistics.
+    - Handle ``GET /workspaces/{workspace_id}/search`` — text search every
+      file in the workspace (task #stage47).
     - Delegate all business logic to the service layer.
     - Keep route handlers thin — no business logic here.
     - Log every request at DEBUG level and completion at INFO level.
@@ -45,11 +47,13 @@ Project:
 
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from app.api.schemas.workspace import (
     InventoryResponse,
     ScannedFileSchema,
+    SearchMatchSchema,
+    SearchResponse,
     SummaryResponse,
     TypeCountSchema,
 )
@@ -57,6 +61,7 @@ from app.core.config import settings
 from app.core.exceptions import ValidationException
 from app.core.logging import logger
 from app.workspace.inventory import InventoryBuilder
+from app.workspace.search import WorkspaceSearcher
 from app.workspace.summary import SummaryGenerator
 
 # ---------------------------------------------------------------------------
@@ -74,6 +79,7 @@ router = APIRouter(
 
 _inventory_builder = InventoryBuilder()
 _summary_generator = SummaryGenerator()
+_workspace_searcher = WorkspaceSearcher()
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -232,5 +238,74 @@ async def get_summary(
         workspace_id,
         summary.total_files,
         len(type_schemas),
+    )
+    return response
+
+
+@router.get(
+    "/{workspace_id}/search",
+    response_model=SearchResponse,
+    summary="Search workspace files",
+    description=(
+        "Search every file in the workspace for a text query, "
+        "case-insensitively by default, returning matching lines with "
+        "file/line context. Plain substring/line matching, not "
+        "semantic search — see app.workspace.search's own module "
+        "docstring for why."
+    ),
+)
+async def search_workspace(
+    workspace_id: str,
+    q: str = Query(..., min_length=1, description="Text to search for."),
+) -> SearchResponse:
+    """
+    Search every file in the workspace for *q*.
+
+    Args:
+        workspace_id: UUID4 string identifying the workspace to search.
+        q: The search query (required, non-empty).
+
+    Returns:
+        :class:`~app.api.schemas.workspace.SearchResponse` with every
+        matching line found (capped; see ``truncated``).
+
+    Raises:
+        ResourceNotFoundException: Propagated when the workspace directory
+            does not exist (→ 404).
+    """
+    logger.debug(
+        "Workspace search endpoint: workspace_id='{}', query={!r}.", workspace_id, q
+    )
+
+    workspace_path = _resolve_workspace_path(workspace_id)
+    inventory = _inventory_builder.build(
+        workspace_id=workspace_id,
+        path=workspace_path,
+    )
+    result = _workspace_searcher.search(inventory, q)
+
+    match_schemas = [
+        SearchMatchSchema(
+            filename=m.filename, path=m.path, line=m.line, snippet=m.snippet
+        )
+        for m in result.matches
+    ]
+
+    response = SearchResponse(
+        workspace_id=workspace_id,
+        query=result.query,
+        matches=match_schemas,
+        files_searched=result.files_searched,
+        files_matched=result.files_matched,
+        truncated=result.truncated,
+    )
+
+    logger.info(
+        "Workspace search endpoint: completed — workspace='{}', query={!r}, "
+        "matches={}, files_matched={}.",
+        workspace_id,
+        q,
+        len(match_schemas),
+        result.files_matched,
     )
     return response

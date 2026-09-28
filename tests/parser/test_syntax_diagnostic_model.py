@@ -183,32 +183,47 @@ class TestDiagnosticClassification:
         assert target.code == "SYN100"
 
     def test_if_subscripted_operand_is_classified_syntax_error(self) -> None:
-        """IF A(1) = B: malformed grammar (a subscripted operand -- this
-        grammar's comparison operand check has never accepted one) ->
-        SYNTAX_ERROR / ERROR.
+        """IF A(1, 2) = B: malformed grammar (a two-dimensional subscripted
+        operand -- this grammar's comparison operand check has never
+        accepted one) -> SYNTAX_ERROR / ERROR.
 
         This was originally ``IF A NOT = B``; task #stage25
         (docs/MMIM_NEGATED_COMPARISON_FIX.md) made that example parse
         cleanly, so it no longer illustrates a syntax error at all (0
-        diagnostics, not 1). Swapped for a different, still-genuinely-
-        malformed example that exercises the same classification path."""
-        diags = _diagnostics_for(_ID + '    IF A(1) = B DISPLAY "x" END-IF.\n')
+        diagnostics, not 1). It was then swapped for ``IF A(1) = B``, a
+        single-dimension subscripted operand; task #stage32
+        (docs/...) made *that* example parse cleanly too (a structured
+        subscripted reference, in scope for that stage), so it no longer
+        illustrates a syntax error either. Swapped again for a
+        two-dimensional subscript, which task #stage32 explicitly leaves
+        unsupported (falls back to the pre-existing flat-operand read,
+        which still fails on the un-consumed ``(`` exactly as before) --
+        still a genuinely malformed example exercising the same
+        classification path."""
+        diags = _diagnostics_for(_ID + '    IF A(1, 2) = B DISPLAY "x" END-IF.\n')
         assert len(diags) == 1
         target = diags[0]
 
         assert target.category is SyntaxCategory.SYNTAX_ERROR
         assert target.severity is SyntaxSeverity.ERROR
 
-    def test_comp_3_is_classified_unmodelled(self) -> None:
-        """COMP-3: parsed and understood, but the AST has no field for it."""
+    def test_sign_clause_is_classified_unmodelled(self) -> None:
+        """``SIGN``: parsed and understood, but the AST has no field for
+        it. Uses ``SIGN`` rather than the originally-written ``COMP-3``:
+        task #stage41 gave ``USAGE``/``COMP*`` a real parser/AST field
+        (:attr:`~app.parser.ast.data_items.ElementaryItemNode.usage`), so
+        it is no longer an example of an *unmodelled* clause -- ``SIGN``
+        still is, and this test's own purpose (an UNMODELLED-category
+        clause reports ``SYN200``/``WARNING``) is unaffected by the
+        substitution."""
         source = (
             _ID.replace("PROCEDURE DIVISION.\nMAIN.\n", "")
             + "DATA DIVISION.\nWORKING-STORAGE SECTION.\n"
-            "01 WS-AMOUNT PIC S9(7)V99 COMP-3.\n"
+            "01 WS-AMOUNT PIC S9(7)V99 SIGN IS TRAILING.\n"
             "PROCEDURE DIVISION.\nMAIN.\n    STOP RUN.\n"
         )
         diags = _diagnostics_for(source)
-        target = next(d for d in diags if "COMP-3" in d.message)
+        target = next(d for d in diags if "SIGN" in d.message)
 
         assert target.category is SyntaxCategory.UNMODELLED
         assert target.severity is SyntaxSeverity.WARNING
@@ -217,7 +232,7 @@ class TestDiagnosticClassification:
     def test_categories_are_distinguishable_without_reading_message(self) -> None:
         """The three cases above must land in three different categories."""
         open_diags = _diagnostics_for(_ID + "    OPEN INPUT F1.\n    STOP RUN.\n")
-        if_diags = _diagnostics_for(_ID + '    IF A(1) = B DISPLAY "x" END-IF.\n')
+        if_diags = _diagnostics_for(_ID + '    IF A(1, 2) = B DISPLAY "x" END-IF.\n')
 
         open_cat = next(d for d in open_diags if "OPEN" in d.message).category
         if_cat = if_diags[0].category

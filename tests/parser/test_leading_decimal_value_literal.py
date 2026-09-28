@@ -373,8 +373,11 @@ def _field_lines(java: str) -> dict[str, str]:
 
 
 def test_symbol_table_carries_the_leading_decimal_value(result) -> None:
-    # only the (unrelated, expected) SYN200 for the skipped COMP-3 clause
-    assert set(_codes(result)) == {"SYN200"}
+    # task #stage41: WS-BAL's COMP-3 clause now has a real parser/AST
+    # field (ElementaryItemNode.usage) and no longer produces a
+    # diagnostic -- this fixture's own decimal-literal fields were never
+    # the source of any diagnostic either, so the set is now empty.
+    assert set(_codes(result)) == set()
     by_name = {
         s.name: s
         for s in SemanticAnalyzer().analyse(result.ast).symbol_table.all_symbols()

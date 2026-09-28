@@ -81,6 +81,43 @@ def test_get_inventory_success(monkeypatch):
     assert result["files"][0]["filename"] == "MAIN.cbl"
 
 
+def test_search_workspace_success(monkeypatch):
+    captured = {}
+
+    def fake_request(self, method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
+        captured["params"] = kwargs.get("params")
+        return _json_response(
+            200,
+            {
+                "workspace_id": "ws-1",
+                "query": "CUSTOMER-BALANCE",
+                "matches": [
+                    {
+                        "filename": "MAIN.cbl",
+                        "path": "/ws/MAIN.cbl",
+                        "line": 5,
+                        "snippet": "MOVE CUSTOMER-BALANCE TO WS-X.",
+                    }
+                ],
+                "files_searched": 1,
+                "files_matched": 1,
+                "truncated": False,
+            },
+        )
+
+    monkeypatch.setattr(httpx.Client, "request", fake_request)
+
+    client = BackendClient()
+    result = client.search_workspace("ws-1", "CUSTOMER-BALANCE")
+
+    assert captured["method"] == "GET"
+    assert captured["url"] == "/workspaces/ws-1/search"
+    assert captured["params"] == {"q": "CUSTOMER-BALANCE"}
+    assert result["matches"][0]["filename"] == "MAIN.cbl"
+
+
 def test_analyze_modernization_success(monkeypatch):
     captured = {}
 
