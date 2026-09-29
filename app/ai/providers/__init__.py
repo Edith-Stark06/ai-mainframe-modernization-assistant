@@ -10,6 +10,7 @@ from app.ai.providers.errors import (
 )
 from app.ai.providers.fake import FakeLLMProvider
 from app.ai.providers.models import LLMRequest, LLMResponse
+from app.ai.providers.ollama import OllamaProvider
 
 __all__ = [
     "LLMProvider",
@@ -19,4 +20,5 @@ __all__ = [
     "LLMProviderUnavailableError",
     "LLMConfigurationError",
     "FakeLLMProvider",
+    "OllamaProvider",
 ]

@@ -60,7 +60,15 @@ class Settings(BaseSettings):
     # AI
     # ==========================
 
+    #: "none" (default -- no LLM configured, matching every existing
+    #: "provider not configured" test/behavior) or "ollama" (use a
+    #: real, locally-hosted Ollama server as the production LLM
+    #: provider; see app.api.dependencies.ai.get_llm_provider). Never
+    #: assumed on: an operator must explicitly opt in, since Ollama may
+    #: not be installed/running in every deployment.
+    llm_provider: str = "none"
     ollama_model: str = "llama3"
+    ollama_host: str = "http://localhost:11434"
 
 
 @lru_cache
