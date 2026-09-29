@@ -35,6 +35,7 @@ Project:
     AI-Powered Mainframe Modernization Assistant
 """
 
+import threading
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -51,6 +52,27 @@ from app.core.middleware import RequestIDMiddleware
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
+
+
+def _warm_embedding_provider() -> None:
+    """
+    Load the production embedding provider once, ahead of any request.
+
+    Runs in a background thread (see :func:`lifespan`), so it never
+    delays startup or health checks. A failure is logged and swallowed:
+    the first real request will retry the load and surface the error
+    through the normal chat error handling, rather than a warm-up
+    problem preventing the whole API from serving unrelated endpoints.
+    """
+    # Module attribute access (not a from-import) so the provider that
+    # is actually cached is the one requests will use.
+    from app.api.dependencies import rag
+
+    try:
+        rag.get_embedding_provider()
+        logger.info("Embedding provider warmed up.")
+    except Exception as exc:  # noqa: BLE001 - warm-up must never crash startup
+        logger.error("Embedding provider warm-up failed: {}", exc)
 
 
 @asynccontextmanager
@@ -74,6 +96,12 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         settings.app_version,
     )
     logger.info("API docs available at /docs")
+    if settings.warm_embeddings:
+        threading.Thread(
+            target=_warm_embedding_provider,
+            name="embedding-warmup",
+            daemon=True,
+        ).start()
     yield
     logger.info("Shutting down {}.", settings.app_name)
 

@@ -49,14 +49,27 @@ Project:
 
 from __future__ import annotations
 
+import threading
 from functools import lru_cache
 
 from app.rag.embeddings.provider import EmbeddingProvider, SentenceTransformerProvider
 
 __all__ = ["get_embedding_provider"]
 
+# functools.lru_cache keeps its cache consistent across threads but does
+# NOT stop two threads that both miss from each computing the value. With
+# the startup warm-up (app.main) running in a background thread, a
+# request arriving mid-warm-up would otherwise start a second, parallel
+# multi-second model load (double the memory, slower for both). The lock
+# makes concurrent callers wait for the one in-flight load instead.
+_load_lock = threading.Lock()
+
 
 @lru_cache
+def _load_embedding_provider() -> EmbeddingProvider:
+    return SentenceTransformerProvider()
+
+
 def get_embedding_provider() -> EmbeddingProvider:
     """
     Return the production embedding provider, loaded once per process.
@@ -64,10 +77,12 @@ def get_embedding_provider() -> EmbeddingProvider:
     Returns:
         A :class:`~app.rag.embeddings.provider.SentenceTransformerProvider`
         (384-dimensional, matching every ``ChromaIndex`` this codebase
-        constructs). Cached via ``lru_cache`` since loading the model
-        is expensive and the provider is stateless/thread-safe to reuse
-        across requests -- the same pattern
-        :func:`app.core.config.get_settings` already uses for its own
-        process-wide singleton.
+        constructs). Cached since loading the model is expensive and the
+        provider is stateless/thread-safe to reuse across requests -- the
+        same process-wide-singleton idea
+        :func:`app.core.config.get_settings` uses. Safe to call from
+        several threads at once: exactly one performs the load and the
+        rest wait for its result.
     """
-    return SentenceTransformerProvider()
+    with _load_lock:
+        return _load_embedding_provider()
