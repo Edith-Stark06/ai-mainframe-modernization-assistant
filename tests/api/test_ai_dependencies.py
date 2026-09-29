@@ -18,16 +18,17 @@ Project:
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from app.api.dependencies.ai import get_ai_orchestrator, get_llm_provider
 from app.ai.providers.ollama import OllamaProvider
 from app.core import config as cfg_mod
 
-_TEST_MODEL = os.environ.get("OLLAMA_TEST_MODEL", "qwen2.5:0.5b")
-_TEST_HOST = os.environ.get("OLLAMA_TEST_HOST", "http://localhost:11434")
+from tests.ollama_support import (
+    OLLAMA_TEST_HOST as _TEST_HOST,
+    OLLAMA_TEST_MODEL as _TEST_MODEL,
+    requires_ollama_model,
+)
 
 
 def test_default_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -69,6 +70,7 @@ def test_get_ai_orchestrator_is_none_when_provider_is_none() -> None:
 
 
 @pytest.mark.slow
+@requires_ollama_model
 def test_ollama_provider_end_to_end_via_ai_orchestrator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
