@@ -338,3 +338,48 @@ def test_build_documentation_prompt_unsupported_object_fallback() -> None:
 
     # 2. prompt construction succeeds and repeated calls return identical prompts
     assert prompt1 == prompt2
+
+
+# ---------------------------------------------------------------------------
+# allow_unstructured: chat accepts a reply that ignores the requested format
+# ---------------------------------------------------------------------------
+
+
+def test_documentation_unstructured_reply_is_rejected_by_default() -> None:
+    service = DocumentationGenerationService(
+        FakeLLMProvider(response_text="Sure, here you go.")
+    )
+
+    with pytest.raises(ValueError, match="missing required"):
+        service.generate_documentation("DISPLAY 'HELLO'")
+
+
+def test_documentation_unstructured_reply_is_returned_verbatim_when_allowed() -> None:
+    reply = "Sure, here you go."
+    service = DocumentationGenerationService(FakeLLMProvider(response_text=reply))
+
+    result = service.generate_documentation("DISPLAY 'HELLO'", allow_unstructured=True)
+
+    assert result.structured is False
+    assert result.overview == reply
+    assert str(result) == reply
+
+
+def test_documentation_empty_reply_is_still_an_error_when_allowed() -> None:
+    service = DocumentationGenerationService(FakeLLMProvider(response_text=" "))
+
+    with pytest.raises(ValueError, match="empty or whitespace-only"):
+        service.generate_documentation("DISPLAY 'HELLO'", allow_unstructured=True)
+
+
+def test_str_of_structured_documentation_is_readable_not_a_repr() -> None:
+    doc = Documentation(
+        title="Payroll",
+        overview="Computes pay.",
+        sections=(DocumentationSection("Inputs", "Hours and rate."),),
+    )
+
+    text = str(doc)
+
+    assert text == "Payroll\n\nComputes pay.\n\nInputs\nHours and rate."
+    assert "Documentation(" not in text

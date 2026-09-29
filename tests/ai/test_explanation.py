@@ -209,3 +209,65 @@ def test_service_provider_failure() -> None:
 
     with pytest.raises(LLMProviderUnavailableError, match="Simulated provider failure"):
         service.explain_code("MOVE A TO B.")
+
+
+# ---------------------------------------------------------------------------
+# allow_unstructured: chat accepts a reply that ignores the requested format
+# ---------------------------------------------------------------------------
+
+
+def test_unstructured_reply_is_rejected_by_default() -> None:
+    provider = FakeLLMProvider(response_text="Hello! How can I help you today?")
+    service = CodeExplanationService(provider=provider)
+
+    with pytest.raises(ValueError, match="missing required"):
+        service.explain_code("DISPLAY 'HELLO'")
+
+
+def test_unstructured_reply_is_returned_verbatim_when_allowed() -> None:
+    reply = "Hello! How can I help you today?"
+    service = CodeExplanationService(provider=FakeLLMProvider(response_text=reply))
+
+    result = service.explain_code("DISPLAY 'HELLO'", allow_unstructured=True)
+
+    assert result.structured is False
+    assert result.explanation == reply
+    # What the user sees is the model's own words -- no placeholder label.
+    assert str(result) == reply
+
+
+def test_empty_reply_is_still_an_error_when_unstructured_is_allowed() -> None:
+    service = CodeExplanationService(provider=FakeLLMProvider(response_text="   "))
+
+    with pytest.raises(ValueError, match="empty or whitespace-only"):
+        service.explain_code("DISPLAY 'HELLO'", allow_unstructured=True)
+
+
+def test_well_formed_reply_stays_structured_even_when_allowed() -> None:
+    provider = FakeLLMProvider(
+        response_text="Summary: Says hi.\nExplanation: It DISPLAYs."
+    )
+    service = CodeExplanationService(provider=provider)
+
+    result = service.explain_code("DISPLAY 'HELLO'", allow_unstructured=True)
+
+    assert result.structured is True
+    assert result.summary == "Says hi."
+    assert result.explanation == "It DISPLAYs."
+
+
+def test_str_of_a_structured_explanation_is_readable_not_a_repr() -> None:
+    text = str(CodeExplanation(summary="Checks age.", explanation="Compares to 18."))
+
+    assert text == "Summary: Checks age.\n\nExplanation: Compares to 18."
+    assert "CodeExplanation(" not in text
+
+
+def test_provider_failure_is_not_swallowed_when_unstructured_is_allowed() -> None:
+    """Only a badly-formatted reply is tolerated; a provider that is down
+    must still surface as an error."""
+    provider = FakeLLMProvider(simulate_failure=True)
+    service = CodeExplanationService(provider=provider)
+
+    with pytest.raises(LLMProviderUnavailableError):
+        service.explain_code("DISPLAY 'HELLO'", allow_unstructured=True)

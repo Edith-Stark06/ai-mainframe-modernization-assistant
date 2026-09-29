@@ -74,10 +74,15 @@ class RAGOrchestrator:
             if request.modernization_context is not None:
                 ai_context["modernization_data"] = request.modernization_context
 
+            # Chat is conversational: a small or general model routinely
+            # answers "hi" in plain prose rather than the rigid
+            # Summary:/Explanation: format. Accept that reply (marked
+            # unstructured) rather than failing the whole request.
             ai_result = self.ai_orchestrator.analyze(
                 source=source,
                 capabilities=set(request.ai_capabilities),
                 context=ai_context,
+                allow_unstructured=True,
             )
 
             return RAGResult(request=request, context=context, ai_result=ai_result)

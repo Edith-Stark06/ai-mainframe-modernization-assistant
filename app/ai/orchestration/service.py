@@ -35,6 +35,8 @@ class AIAnalysisOrchestrator:
         source: str,
         capabilities: set[AICapability],
         context: dict[str, Any] | None = None,
+        *,
+        allow_unstructured: bool = False,
     ) -> AIAnalysisResult:
         """
         Run the requested AI capabilities for the provided source and context.
@@ -43,6 +45,10 @@ class AIAnalysisOrchestrator:
             source: The COBOL source code.
             capabilities: A set of AICapability to execute.
             context: The Phase-1 analysis context (e.g. dependencies, business rules).
+            allow_unstructured: Passed to each capability service -- accept
+                a non-empty reply that ignores the requested format,
+                marked ``structured=False``, instead of failing. Used by
+                chat; off by default so callers keep the strict contract.
 
         Returns:
             AIAnalysisResult: The combined results of the executed capabilities.
@@ -73,11 +79,15 @@ class AIAnalysisOrchestrator:
 
             if capability == AICapability.EXPLANATION:
                 explanation = self._explanation_service.explain_code(
-                    source, context=copied_context
+                    source,
+                    context=copied_context,
+                    allow_unstructured=allow_unstructured,
                 )
             elif capability == AICapability.DOCUMENTATION:
                 documentation = self._documentation_service.generate_documentation(
-                    source, context=copied_context
+                    source,
+                    context=copied_context,
+                    allow_unstructured=allow_unstructured,
                 )
 
         return AIAnalysisResult(

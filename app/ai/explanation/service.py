@@ -10,6 +10,11 @@ from app.ai.explanation.models import CodeExplanation
 from app.ai.explanation.prompts import build_explanation_prompt
 from app.ai.providers import LLMProvider, LLMRequest
 
+#: Placeholder ``summary`` for a reply the model did not structure. Never
+#: shown to users (CodeExplanation.__str__ prints the reply alone when
+#: structured is False); it only satisfies the model's non-empty rule.
+_UNSTRUCTURED_LABEL = "Unstructured model response"
+
 
 class CodeExplanationService:
     """
@@ -23,7 +28,11 @@ class CodeExplanationService:
         self._provider = provider
 
     def explain_code(
-        self, source: str, context: Optional[dict[str, Any]] = None
+        self,
+        source: str,
+        context: Optional[dict[str, Any]] = None,
+        *,
+        allow_unstructured: bool = False,
     ) -> CodeExplanation:
         """
         Explain the given COBOL source code.
@@ -31,6 +40,15 @@ class CodeExplanationService:
         Args:
             source: The COBOL source code.
             context: Optional structured analysis context (e.g. dependencies).
+            allow_unstructured: By default a reply that does not follow
+                the requested ``Summary:``/``Explanation:`` format is
+                rejected with ``ValueError``. When ``True`` (chat, where
+                a small or conversational model routinely answers in
+                plain prose), such a non-empty reply is instead returned
+                as-is with ``structured=False`` -- the model's real
+                words, clearly marked as unstructured, never
+                reconstructed or invented. An empty reply is still an
+                error.
 
         Returns:
             A structured explanation containing a summary and detailed explanation.
@@ -52,7 +70,15 @@ class CodeExplanationService:
 
         response = self._provider.generate(request)
 
-        return self._parse_explanation_result(response.text)
+        try:
+            return self._parse_explanation_result(response.text)
+        except ValueError:
+            text = response.text.strip()
+            if not allow_unstructured or not text:
+                raise
+            return CodeExplanation(
+                summary=_UNSTRUCTURED_LABEL, explanation=text, structured=False
+            )
 
     def _parse_explanation_result(self, raw_text: str) -> CodeExplanation:
         """Parse the raw text from the LLM into the CodeExplanation model.
