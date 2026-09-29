@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3"
     ollama_host: str = "http://localhost:11434"
 
+    #: Load the embedding model in a background thread at startup, so
+    #: the first /chat or /chat/index request does not pay the
+    #: torch-import + model-load cost (about a minute in a fresh
+    #: container -- longer than the Streamlit client's 30s timeout).
+    #: Off by default: tests and local development should not each pay a
+    #: real model load just to start the app.
+    warm_embeddings: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:
