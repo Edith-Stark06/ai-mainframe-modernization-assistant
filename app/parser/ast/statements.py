@@ -181,6 +181,14 @@ class DisplayStatementNode(StatementNode):
             Source position of the terminating period.
         operand:
             The raw operand text (e.g. ``'"HELLO"'``, ``'WS-COUNT'``).
+            For a multi-operand ``DISPLAY`` this is the operands joined
+            by single spaces, exactly as it always was.
+        operands:
+            Each operand as its own string, populated only when the
+            statement has two or more (``DISPLAY 'TOTAL: ' WS-TOTAL``
+            gives ``("'TOTAL: '", "WS-TOTAL")``); empty otherwise. Kept
+            separately because the joined ``operand`` cannot tell where
+            one operand ends and the next begins.
 
     Examples:
         >>> from app.parser.lexer.position import Position
@@ -196,6 +204,19 @@ class DisplayStatementNode(StatementNode):
     operand_subscript: tuple[Subscript, ...] = field(
         default=(), metadata={"omit_if_empty": True}
     )
+    operands: tuple[str, ...] = field(default=(), metadata={"omit_if_empty": True})
+
+    @property
+    def display_operands(self) -> tuple[str, ...]:
+        """
+        Every operand this ``DISPLAY`` writes, in source order.
+
+        ``operands`` when the statement has two or more operands
+        (``DISPLAY 'TOTAL: ' WS-TOTAL``); otherwise the single
+        ``operand`` -- so a consumer can iterate one uniform list
+        without caring which shape the parser produced.
+        """
+        return self.operands or (self.operand,)
 
     def accept(self, visitor: object) -> object:
         """

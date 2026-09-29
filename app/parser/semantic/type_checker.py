@@ -378,8 +378,13 @@ class TypeCheckerVisitor(SemanticVisitor):
         Args:
             node: The ``DISPLAY`` statement node.
         """
-        operand_raw = node.operand.strip()
+        for operand in node.display_operands:
+            self._check_display_operand(node, operand.strip())
 
+    def _check_display_operand(
+        self, node: DisplayStatementNode, operand_raw: str
+    ) -> None:
+        """Validate one operand of a ``DISPLAY`` (see :meth:`visit_display_statement`)."""
         logger.debug(
             "TypeCheckerVisitor: DISPLAY {} at {}:{}.",
             operand_raw,

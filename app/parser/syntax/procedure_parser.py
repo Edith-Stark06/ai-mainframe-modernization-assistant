@@ -438,6 +438,14 @@ _CONDITION_NAME_TRUE_OPERATOR = "IS-TRUE"
 _CONDITION_NAME_FALSE_OPERATOR = "IS-FALSE"
 
 
+#: Words that begin a ``DISPLAY`` clause this parser does not model
+#: (``DISPLAY x UPON CONSOLE``, ``DISPLAY x WITH NO ADVANCING``). A
+#: statement containing one keeps the pre-existing single joined operand
+#: rather than being split into per-operand pieces that would then
+#: include the clause words as if they were data.
+_DISPLAY_CLAUSE_WORDS: frozenset[str] = frozenset({"UPON", "WITH", "NO", "ADVANCING"})
+
+
 def _at_operand_boundary(token: Token) -> bool:
     """
     Return ``True`` if *token* ends the operand list of a statement.
@@ -1280,6 +1288,59 @@ class ProcedureDivisionParser:
     # Individual statement parsers
     # ------------------------------------------------------------------
 
+    def _read_display_operands(
+        self, state: ParserState
+    ) -> tuple[str, tuple[Subscript, ...], tuple[str, ...]]:
+        """
+        Read a ``DISPLAY`` statement's operand list.
+
+        Returns ``(operand, subscripts, operands)``:
+
+        * A lone subscripted reference keeps its structural form
+          (``subscripts`` populated, ``operands`` empty) -- unchanged.
+        * One operand: ``operand`` is its text, ``operands`` is empty --
+          exactly the pre-existing shape.
+        * Two or more operands (``DISPLAY 'TOTAL: ' WS-TOTAL``):
+          ``operand`` is still the space-joined text so nothing that
+          already reads it changes, and ``operands`` additionally holds
+          each operand separately. A parenthesised subscript stays
+          attached to the name it follows, as one flattened operand.
+        * A statement using ``UPON`` / ``WITH NO ADVANCING`` is left as
+          the single joined operand it always was (see
+          :data:`_DISPLAY_CLAUSE_WORDS`).
+        """
+        stream = state.stream
+
+        subscripted = self._try_read_subscripted_reference(state, _at_operand_boundary)
+        if subscripted is not None:
+            return subscripted[0], subscripted[1], ()
+
+        pieces: list[str] = []
+        while not stream.eof():
+            tok = stream.current()
+            if _at_operand_boundary(tok):
+                break
+            piece = [tok.lexeme]
+            stream.advance()
+            if not stream.eof() and stream.current().lexeme == "(":
+                depth = 0
+                while not stream.eof():
+                    inner = stream.current()
+                    piece.append(inner.lexeme)
+                    stream.advance()
+                    if inner.lexeme == "(":
+                        depth += 1
+                    elif inner.lexeme == ")":
+                        depth -= 1
+                        if depth == 0:
+                            break
+            pieces.append(" ".join(piece))
+
+        joined = " ".join(pieces)
+        if len(pieces) < 2 or any(p.upper() in _DISPLAY_CLAUSE_WORDS for p in pieces):
+            return joined, (), ()
+        return joined, (), tuple(pieces)
+
     def _parse_display(self, state: ParserState) -> DisplayStatementNode:
         """
         Parse a ``DISPLAY`` statement.
@@ -1305,7 +1366,7 @@ class ProcedureDivisionParser:
 
         stream.advance()  # consume DISPLAY
 
-        operand, operand_subscript = self._read_operand(state)
+        operand, operand_subscript, operands = self._read_display_operands(state)
 
         if not operand:
             tok = stream.current()
@@ -1324,6 +1385,7 @@ class ProcedureDivisionParser:
             end_position=end,
             operand=operand,
             operand_subscript=operand_subscript,
+            operands=operands,
         )
 
     def _parse_move(self, state: ParserState) -> MoveStatementNode:

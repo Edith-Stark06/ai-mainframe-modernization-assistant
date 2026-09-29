@@ -872,7 +872,12 @@ class IRBuilder:
             stmt.operand,
             ir_operand,
         )
-        return IRDisplay(operand=ir_operand, operand_subscript=ir_operand_subscript)
+        ir_operands = tuple(self.build_operand(o) for o in stmt.operands)
+        return IRDisplay(
+            operand=ir_operand,
+            operand_subscript=ir_operand_subscript,
+            operands=ir_operands,
+        )
 
     def build_accept_instruction(self, stmt: AcceptStatementNode) -> IRAccept:
         """

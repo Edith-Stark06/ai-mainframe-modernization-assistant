@@ -748,12 +748,19 @@ def _build_action(node: StatementNode) -> RuleAction | None:
         )
 
     if isinstance(node, DisplayStatementNode):
-        kind_d, val_d = _operand_bucket(node.operand)
+        display_sources: list[str] = []
+        display_literals: list[str] = []
+        for display_operand in node.display_operands:
+            kind_d, val_d = _operand_bucket(display_operand)
+            if kind_d == "variable" and val_d:
+                display_sources.append(val_d)
+            elif kind_d == "literal" and val_d:
+                display_literals.append(val_d)
         return RuleAction(
             kind=RuleActionKind.DISPLAY,
             target="",
-            sources=(val_d,) if kind_d == "variable" and val_d else (),
-            literals=(val_d,) if kind_d == "literal" and val_d else (),
+            sources=tuple(display_sources),
+            literals=tuple(display_literals),
             raw=f"DISPLAY {node.operand}".strip(),
             source_location=node.start_position,
         )

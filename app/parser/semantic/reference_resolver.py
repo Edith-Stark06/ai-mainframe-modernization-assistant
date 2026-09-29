@@ -274,7 +274,8 @@ class ReferenceResolverVisitor(SemanticVisitor):
             node.start_position.filename,
             node.start_position.line,
         )
-        self._resolve_variable_operand(node.operand, node.start_position)
+        for operand in node.display_operands:
+            self._resolve_variable_operand(operand, node.start_position)
 
     # ------------------------------------------------------------------
     # Internal resolution helpers

@@ -956,6 +956,10 @@ class IRDisplay(IRInstruction):
             A structured subscript for ``operand`` (task #stage32) when
             it is a single-dimension, literal- or identifier-subscripted
             table reference; empty otherwise.
+        operands:
+            Each operand separately when the ``DISPLAY`` has two or more
+            (``DISPLAY 'TOTAL: ' WS-TOTAL``); empty otherwise. ``operand``
+            still holds the space-joined text.
         comment:
             Optional annotation.
 
@@ -975,6 +979,13 @@ class IRDisplay(IRInstruction):
     operand_subscript: tuple[IRSubscript, ...] = field(
         default=(), metadata={"omit_if_empty": True}
     )
+    operands: tuple[str, ...] = field(default=(), metadata={"omit_if_empty": True})
+
+    @property
+    def display_operands(self) -> tuple[str, ...]:
+        """Every operand written, in order: ``operands`` when there are
+        two or more, otherwise the single ``operand``."""
+        return self.operands or (self.operand,)
 
     def accept(self, visitor: Any) -> Any:
         """Dispatch to ``visitor.visit_display(self)``."""
