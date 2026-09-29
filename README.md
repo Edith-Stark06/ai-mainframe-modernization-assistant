@@ -379,6 +379,38 @@ Run the Streamlit UI (in a second terminal; set `API_BASE_URL` if the API is not
 streamlit run app/frontend/app.py
 ```
 
+## Running with Docker
+
+Both services (API and Streamlit UI) can run in containers instead, via the included `Dockerfile` and `docker-compose.yml`:
+
+```bash
+docker compose up --build
+```
+
+The API is available at `http://localhost:8000` and the UI at `http://localhost:8501`, wired together automatically (the frontend container talks to the API container over the Docker network). Uploaded workspace files persist in a named volume (`workspace-data`) across restarts.
+
+Deployment notes:
+
+- **CPU-only image.** `torch`'s default wheel bundles over 1GB of NVIDIA CUDA libraries a container without a GPU can never use, so the `Dockerfile` installs the CPU-only wheel first (the image is a fraction of the size, and the build is far less likely to fail on a slow link).
+- **No internet needed at runtime.** The embedding model (`all-MiniLM-L6-v2`, ~90MB) is downloaded once, at build time, into the image, and the container runs with `HF_HUB_OFFLINE=1`. Without this, the first chat request in every fresh container spent minutes downloading it.
+- **Startup warm-up.** Loading the model takes a couple of minutes in a fresh container. With `WARM_EMBEDDINGS=true` (set in `docker-compose.yml`) it loads in a background thread at startup: the API answers health checks immediately, and by the time you send a first chat request it takes seconds rather than failing the UI's 30-second timeout. It defaults to `false` outside Docker so tests and local development don't each pay a model load.
+
+To use a local Ollama LLM backend from inside the container, run Ollama on the host and start the stack with, for example:
+
+```bash
+LLM_PROVIDER=ollama OLLAMA_MODEL=llama3 docker compose up -d
+```
+
+The `api` container reaches the host's Ollama at `http://host.docker.internal:11434` (the default `OLLAMA_HOST` in `docker-compose.yml`). This was verified end to end on Docker Desktop for Windows (index a file, retrieve, and get a generated answer from a real model); it has **not** been tested on native Linux Docker, where Ollama must additionally be started bound to an address the container can reach (`OLLAMA_HOST=0.0.0.0 ollama serve`). Answer quality depends entirely on the model: a very small model (e.g. `qwen2.5:0.5b`) exercises the plumbing but can explain COBOL incorrectly — use a larger one for real work, and treat the deterministic parser output, not the LLM's prose, as the source of truth.
+
+## Optional: a real local LLM backend (Ollama)
+
+By default `LLM_PROVIDER=none` and no LLM is configured — AI-dependent features (chat, code explanation) report `LLM_PROVIDER_NOT_CONFIGURED` rather than fabricating a response. To enable a real, local model:
+
+1. Install [Ollama](https://ollama.com) and start it (`ollama serve`, or the desktop app).
+2. Pull a model: `ollama pull llama3` (or a smaller one, e.g. `qwen2.5:0.5b`, for a lighter footprint).
+3. Set `LLM_PROVIDER=ollama` and `OLLAMA_MODEL=<model tag>` in `.env` (see `.env.example`).
+
 ---
 
 # 🔬 Compiler Driver

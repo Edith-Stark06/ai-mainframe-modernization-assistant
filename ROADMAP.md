@@ -56,10 +56,10 @@ history lives in `docs/`.
 
 ## Phase 6 — AI
 
-- [x] Embeddings
+- [x] Embeddings — `app/rag/embeddings/provider.py`'s `SentenceTransformerProvider` (`all-MiniLM-L6-v2`, 384-dim, runs entirely on-device): the production default via `app/api/dependencies/rag.py`'s `get_embedding_provider`, replacing the previously-always-used `DeterministicFakeProvider`. Verified against real semantic similarity (related sentences embed closer together than unrelated ones), not just "does not crash" — see `tests/rag/test_sentence_transformer_provider.py`.
 - [x] ChromaDB
-- [x] RAG
-- [x] Chat (requires a configured LLM backend for generative answers)
+- [x] RAG — closed the loop that left `/chat` always querying an empty index regardless of embedding quality: `POST /chat/index` (`app/api/routers/chat.py`) runs the existing, previously-unwired `KnowledgeIngestor` (task #122) over a real analyzed file, bridges its chunks into the RAG layer's own chunk shape (`app/rag/knowledge_bridge.py` — the two `KnowledgeChunk` classes in `app.knowledge.chunk`/`app.rag.models` have incompatible fields, which is exactly why this was never wired before), embeds them for real, and writes them to the same `ChromaIndex` retrieval reads from. Verified with a real index-then-chat round trip (`tests/api/test_chat_index.py`), not two independently-mocked halves.
+- [x] Chat — real LLM backend: `app/ai/providers/ollama.py`'s `OllamaProvider`, an opt-in production `LLMProvider` (`LLM_PROVIDER=ollama` in `.env`; defaults to `none`, since Ollama may not be installed/running in every deployment — never assumed on). Verified against a real, locally-running Ollama server and a real pulled model (`tests/ai/test_ollama_provider.py`, `tests/api/test_ai_dependencies.py`), including real generation, `max_tokens` truncation, usage stats, and the unreachable-server/unknown-model error paths mapping to the correct provider-neutral exception.
 
 ---
 
@@ -92,4 +92,5 @@ history lives in `docs/`.
 
 - [x] Consume `>>SOURCE FREE|FIXED` directives — `CobolLexer` now skips the directive line whole (`_is_source_directive`) instead of letting it corrupt the token stream; detection itself (`FormatDetector`) was already implemented. Unevidenced by the 45-source corpus, covered by synthetic tests.
 - [x] Add a continuous-integration workflow running `black --check .`, `ruff check .`, `mypy app` and `pytest` (`.github/workflows/ci.yml`)
+- [x] Container deployment — `Dockerfile`, `docker-compose.yml`, `.dockerignore`: API and Streamlit UI as two services from one image, workspace data in a named volume, health-gated startup. Verified by actually running it (not just building it): both services healthy, frontend reaches the API over the Docker network, and a full upload → analyze → index → retrieve → real-LLM-answer loop works inside the containers. The verification found and fixed real problems a passing build would have hidden: torch's default wheel pulled ~1GB of unusable CUDA libraries (image now uses the CPU wheel); the embedding model was downloaded at runtime (3m 26s on the first request, repeated on every container recreation, and impossible without internet) — now baked into the image and run offline; the remaining load time exceeded the UI's 30s timeout, so an opt-in `WARM_EMBEDDINGS` background warm-up brings the first request to ~9s; and `lru_cache` alone let a request during warm-up start a duplicate model load (8 concurrent callers built 8 copies), now serialized with a lock. Not tested on native Linux Docker (see README).
 - [x] Copybook expansion and JCL parsing — implemented as the two dedicated Phase 3 entries above (`CopybookExpander`, `app/jcl/`); listed here as a leftover duplicate from before those entries carried their own detail.
