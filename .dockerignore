@@ -1,0 +1,42 @@
+# Version control / IDE
+.git
+.github
+.vscode
+.idea
+.kilo
+
+# Python
+.venv
+venv
+__pycache__
+*.py[cod]
+*.egg-info
+
+# Test / lint / type-check caches
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# Runtime data (created fresh inside the container, not baked in)
+workspace
+
+# Training data/pipeline -- large, and only used by the offline
+# training pipeline (app/dataset, app/training), not the deployed
+# API/frontend this image runs.
+data
+reports
+
+# Local env files -- pass real config via `docker compose`/`docker run -e`
+.env
+.env.example
+
+# Test suite -- not needed to run the deployed app; CI runs it from a
+# real checkout, not this image.
+tests
+
+# Docs / scratch
+docs
+*.md
+!README.md

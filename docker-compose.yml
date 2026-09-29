@@ -1,0 +1,43 @@
+services:
+  api:
+    build: .
+    image: mainframe-modernization-assistant:latest
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8000"
+      WORKSPACE_DIR: /app/workspace
+      LOG_LEVEL: INFO
+      WARM_EMBEDDINGS: "true"
+      LLM_PROVIDER: ${LLM_PROVIDER:-none}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+    # Lets the container reach an Ollama server running on the host by
+    # name. Docker Desktop provides host.docker.internal itself; this
+    # entry does the same on native Linux Docker.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - workspace-data:/app/workspace
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build: .
+    image: mainframe-modernization-assistant:latest
+    command: ["streamlit", "run", "app/frontend/app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+    ports:
+      - "8501:8501"
+    environment:
+      API_BASE_URL: http://api:8000/api/v1
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  workspace-data:
