@@ -62,6 +62,34 @@ def _render_answer(chat_res: Dict[str, Any]) -> str:
     return answer
 
 
+def _ensure_indexed(
+    client: BackendClient, workspace_id: str, filename: Optional[str]
+) -> None:
+    """
+    Index *filename* for chat retrieval, once per browser session.
+
+    Chat only retrieves content that has been indexed; without this the
+    backend searches an empty index and can only answer "not enough
+    evidence". A failure is shown as a warning and does not stop the
+    question from being asked -- chat then reports the missing evidence
+    honestly rather than the UI dying on an indexing problem. A file
+    that failed to index is retried on the next question.
+    """
+    if not filename:
+        return
+    indexed = st.session_state.setdefault("chat_indexed", set())
+    key = (workspace_id, filename)
+    if key in indexed:
+        return
+    with st.spinner("Indexing this file for chat (first question only)..."):
+        try:
+            client.index_for_chat(workspace_id, filename)
+        except BackendAPIError as e:
+            st.warning(f"Could not index this file for chat: {e.message}")
+            return
+    indexed.add(key)
+
+
 def _render_context_stats(report: Dict[str, Any]) -> None:
     coverage = report.get("coverage")
     stat_row(
@@ -110,6 +138,7 @@ def render_chat(
         st.write(prompt)
 
     with st.chat_message("assistant"):
+        _ensure_indexed(client, workspace_id, filename)
         with st.spinner("Thinking..."):
             try:
                 chat_res = client.send_chat_message(
