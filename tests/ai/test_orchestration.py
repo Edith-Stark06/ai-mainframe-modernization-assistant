@@ -229,3 +229,20 @@ def test_orchestration_execution_order() -> None:
     assert len(calls) == 2
     assert calls[0][0] == "explain"
     assert calls[1][0] == "document"
+
+
+def test_orchestrator_passes_allow_unstructured_to_both_services() -> None:
+    """A plain-prose reply fails the strict default but is accepted, marked
+    unstructured, when the caller opts in -- for both capabilities."""
+    exp = CodeExplanationService(FakeLLMProvider(response_text="Just plain prose."))
+    doc = DocumentationGenerationService(FakeLLMProvider(response_text="More prose."))
+    orchestrator = AIAnalysisOrchestrator(exp, doc)
+    both = {AICapability.EXPLANATION, AICapability.DOCUMENTATION}
+
+    with pytest.raises(ValueError, match="missing required"):
+        orchestrator.analyze("DISPLAY 'X'", both)
+
+    result = orchestrator.analyze("DISPLAY 'X'", both, allow_unstructured=True)
+
+    assert result.explanation is not None and result.explanation.structured is False
+    assert result.documentation is not None and result.documentation.structured is False

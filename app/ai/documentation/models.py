@@ -40,11 +40,17 @@ class Documentation:
         title: The title of the documentation.
         overview: A high-level overview.
         sections: A list of documentation sections.
+        structured: ``True`` when the model replied in the requested
+            ``Title:``/``Overview:`` format. ``False`` when it did not
+            and the reply is carried as-is in ``overview`` (see
+            ``DocumentationGenerationService.generate_documentation``'s
+            ``allow_unstructured``); ``title`` is then only a label.
     """
 
     title: str
     overview: str
     sections: tuple[DocumentationSection, ...] = field(default_factory=tuple)
+    structured: bool = True
 
     def __post_init__(self) -> None:
         if not self.title or not self.title.strip():
@@ -53,3 +59,13 @@ class Documentation:
             raise ValueError(
                 "Documentation overview cannot be empty or whitespace-only."
             )
+
+    def __str__(self) -> str:
+        """Human-readable text, not the dataclass repr -- this is what
+        chat shows the user."""
+        if not self.structured:
+            return self.overview
+        parts = [self.title, "", self.overview]
+        for section in self.sections:
+            parts += ["", f"{section.heading}", section.content]
+        return "\n".join(parts)

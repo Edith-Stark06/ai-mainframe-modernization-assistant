@@ -28,16 +28,20 @@ class DummyAIOrchestrator:
     def __init__(self, should_fail: bool = False):
         self.should_fail = should_fail
         self.last_source = ""
+        self.last_allow_unstructured: bool | None = None
 
     def analyze(
         self,
         source: str,
         capabilities: set[AICapability],
         context: dict[str, Any] | None = None,
+        *,
+        allow_unstructured: bool = False,
     ) -> AIAnalysisResult:
         if self.should_fail:
             raise RuntimeError("AI failed")
         self.last_source = source
+        self.last_allow_unstructured = allow_unstructured
         return AIAnalysisResult(
             explanation=(
                 CodeExplanation(summary="sum", explanation="det")
@@ -225,6 +229,8 @@ def test_orchestration_modernization_context_propagates_to_ai() -> None:
             source: str,
             capabilities: set[AICapability],
             context: dict[str, Any] | None = None,
+            *,
+            allow_unstructured: bool = False,
         ) -> AIAnalysisResult:
             self.last_context = context
             return AIAnalysisResult(
@@ -319,3 +325,18 @@ def test_orchestration_modernization_context_reaches_generated_prompt() -> None:
     sent_prompt = exp_provider.last_request.prompt
     assert "What does field X control?" in sent_prompt
     assert "High Complexity Detected" in sent_prompt
+
+
+def test_orchestration_opts_in_to_unstructured_replies() -> None:
+    """Chat is conversational -- the RAG orchestrator must ask the AI layer
+    to accept a reply that ignores the rigid Summary:/Explanation: format,
+    otherwise a plain 'hi' fails the whole request."""
+    retrieval = DummyRetrievalService([_make_retrieval_result("c1", "content 1")])
+    ai_orch = DummyAIOrchestrator()
+    orchestrator = RAGOrchestrator(retrieval, ai_orch)
+
+    orchestrator.orchestrate(
+        RAGRequest(query="hi", ai_capabilities=frozenset([AICapability.EXPLANATION]))
+    )
+
+    assert ai_orch.last_allow_unstructured is True

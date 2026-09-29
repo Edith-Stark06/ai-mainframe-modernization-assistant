@@ -10,6 +10,11 @@ from app.ai.documentation.models import Documentation, DocumentationSection
 from app.ai.documentation.prompts import build_documentation_prompt
 from app.ai.providers import LLMProvider, LLMRequest
 
+#: Placeholder ``title`` for a reply the model did not structure. Never
+#: shown to users (Documentation.__str__ prints the reply alone when
+#: structured is False); it only satisfies the model's non-empty rule.
+_UNSTRUCTURED_LABEL = "Unstructured model response"
+
 
 class DocumentationGenerationService:
     """
@@ -23,7 +28,11 @@ class DocumentationGenerationService:
         self._provider = provider
 
     def generate_documentation(
-        self, source: str, context: Optional[dict[str, Any]] = None
+        self,
+        source: str,
+        context: Optional[dict[str, Any]] = None,
+        *,
+        allow_unstructured: bool = False,
     ) -> Documentation:
         """
         Generate documentation for the given COBOL source code.
@@ -31,6 +40,13 @@ class DocumentationGenerationService:
         Args:
             source: The COBOL source code.
             context: Optional structured analysis context (e.g. dependencies).
+            allow_unstructured: By default a reply that does not follow
+                the requested ``Title:``/``Overview:`` format is rejected
+                with ``ValueError``. When ``True`` (chat), such a
+                non-empty reply is returned as-is with
+                ``structured=False`` instead -- the model's real words,
+                clearly marked, never reconstructed. An empty reply is
+                still an error.
 
         Returns:
             A structured Documentation result.
@@ -52,7 +68,15 @@ class DocumentationGenerationService:
 
         response = self._provider.generate(request)
 
-        return self._parse_documentation_result(response.text)
+        try:
+            return self._parse_documentation_result(response.text)
+        except ValueError:
+            text = response.text.strip()
+            if not allow_unstructured or not text:
+                raise
+            return Documentation(
+                title=_UNSTRUCTURED_LABEL, overview=text, structured=False
+            )
 
     def _parse_documentation_result(self, raw_text: str) -> Documentation:
         """Parse the raw text from the LLM into the Documentation model.

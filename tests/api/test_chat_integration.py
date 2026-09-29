@@ -238,3 +238,65 @@ def test_chat_provider_unavailable_real_components_provider_raises(
     assert data["error_code"] == "LLM_PROVIDER_UNAVAILABLE"
     assert "temporarily unavailable" in data["error"]
     assert "Simulated provider failure" not in data["error"]
+
+
+def _override_ai_with_reply(reply: str):
+    def _override():
+        provider = FakeLLMProvider(response_text=reply)
+        return AIAnalysisOrchestrator(
+            explanation_service=CodeExplanationService(provider),
+            documentation_service=DocumentationGenerationService(provider),
+        )
+
+    app.dependency_overrides[get_ai_orchestrator] = _override
+
+
+def _ask(workspace_id: str, query: str) -> dict:
+    client = TestClient(app)
+    try:
+        resp = client.post(
+            "/api/v1/chat/", json={"query": query, "workspace_id": workspace_id}
+        )
+    finally:
+        app.dependency_overrides.pop(get_ai_orchestrator, None)
+    assert resp.status_code == 200
+    return resp.json()
+
+
+def test_chat_answer_is_readable_text_not_a_python_repr(
+    isolated_chat_index: Path, tmp_path: Path
+) -> None:
+    """Regression: the answer used to be str(CodeExplanation(...)), i.e.
+    "CodeExplanation(summary='...', explanation='...')" shown to the user."""
+    query = "What does WS-FLAG control in this program?"
+    workspace_id = str(uuid.uuid4())
+    _seed_chat_index(tmp_path, query, workspace_id=workspace_id, filename="")
+    _override_ai_with_reply(
+        "Summary: It gates processing.\nExplanation: WS-FLAG is checked first."
+    )
+
+    data = _ask(workspace_id, query)
+
+    assert data["error"] is None, data
+    assert "CodeExplanation(" not in data["answer"]
+    assert data["answer"].startswith("Summary: It gates processing.")
+    assert "Explanation: WS-FLAG is checked first." in data["answer"]
+
+
+def test_chat_plain_prose_reply_is_shown_instead_of_failing(
+    isolated_chat_index: Path, tmp_path: Path
+) -> None:
+    """Regression: a model that answers in plain prose (e.g. to "hi") used
+    to fail the whole request with LLM_GENERATION_FAILED because the reply
+    lacked 'Summary:'/'Explanation:' headings."""
+    query = "hi"
+    workspace_id = str(uuid.uuid4())
+    _seed_chat_index(tmp_path, query, workspace_id=workspace_id, filename="")
+    reply = "Hello! How can I help with this program?"
+    _override_ai_with_reply(reply)
+
+    data = _ask(workspace_id, query)
+
+    assert data["error"] is None, data
+    assert data["error_code"] is None
+    assert data["answer"] == reply
