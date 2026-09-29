@@ -321,3 +321,47 @@ def test_network_error_maps_to_safe_message(monkeypatch):
     assert exc_info.value.status_code is None
     assert "10.0.0.5" not in exc_info.value.message
     assert "connection" in exc_info.value.message.lower()
+
+
+def test_send_chat_message_uses_the_long_ai_timeout(monkeypatch):
+    """A locally-hosted LLM can take over a minute to answer; the default
+    30s client timeout would report failure while the backend is still
+    working."""
+    captured = {}
+
+    def fake_request(self, method, url, **kwargs):
+        captured["timeout"] = kwargs.get("timeout")
+        return _json_response(
+            200, {"query": "hi", "answer": "ok", "context": [], "error": None}
+        )
+
+    monkeypatch.setattr(httpx.Client, "request", fake_request)
+
+    BackendClient().send_chat_message(workspace_id="ws-1", query="hi")
+
+    assert captured["timeout"] is not None
+    assert captured["timeout"] >= 120.0
+
+
+def test_index_for_chat_posts_workspace_and_filename(monkeypatch):
+    captured = {}
+
+    def fake_request(self, method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
+        captured["json"] = kwargs.get("json")
+        captured["timeout"] = kwargs.get("timeout")
+        return _json_response(
+            200, {"chunks_indexed": 18, "chunks_rejected": 0, "chunk_types": {}}
+        )
+
+    monkeypatch.setattr(httpx.Client, "request", fake_request)
+
+    result = BackendClient().index_for_chat("ws-1", "MAIN.cbl")
+
+    assert captured["method"] == "POST"
+    assert captured["url"] == "/chat/index"
+    assert captured["json"] == {"workspace_id": "ws-1", "filename": "MAIN.cbl"}
+    # First call in a fresh backend can include loading the embedding model.
+    assert captured["timeout"] >= 120.0
+    assert result["chunks_indexed"] == 18

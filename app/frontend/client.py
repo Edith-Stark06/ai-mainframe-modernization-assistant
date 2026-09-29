@@ -84,6 +84,15 @@ class BackendAPIError(Exception):
         self.status_code = status_code
 
 
+#: Seconds to wait for calls that involve a real language model or
+#: embedding model. The default 30s is right for the deterministic
+#: analysis endpoints, but a locally-hosted LLM on CPU legitimately
+#: takes a minute or more to answer (measured: 64s for one chat reply),
+#: and a client-side timeout would report failure while the backend is
+#: still working.
+_SLOW_AI_TIMEOUT = 300.0
+
+
 class BackendClient:
     """Thin, typed HTTP client for the Modernization Intelligence backend API."""
 
@@ -247,4 +256,21 @@ class BackendClient:
         }
         if filename:
             payload["filename"] = filename
-        return self._request("POST", "/chat/", json=payload)
+        return self._request("POST", "/chat/", json=payload, timeout=_SLOW_AI_TIMEOUT)
+
+    def index_for_chat(self, workspace_id: str, filename: str) -> Dict[str, Any]:
+        """
+        Index one workspace file so chat can retrieve from it.
+
+        Chat retrieval only finds content that has been indexed; without
+        this call ``/chat`` queries an empty index and can only answer
+        "not enough evidence". Uses the long AI timeout because the
+        first call in a fresh backend can include loading the embedding
+        model.
+        """
+        return self._request(
+            "POST",
+            "/chat/index",
+            json={"workspace_id": workspace_id, "filename": filename},
+            timeout=_SLOW_AI_TIMEOUT,
+        )

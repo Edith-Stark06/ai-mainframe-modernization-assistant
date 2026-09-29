@@ -291,6 +291,27 @@ def _make_app(*, enter_workspace: bool = True) -> AppTest:
     return at
 
 
+@pytest.fixture(autouse=True)
+def index_calls(monkeypatch):
+    """Stub BackendClient.index_for_chat for every test in this module.
+
+    The chat view indexes the selected file before the first question.
+    Without this stub the pre-existing chat tests -- which only stub
+    send_chat_message -- would make a real HTTP call to whatever is
+    listening on localhost:8000 (including a developer's running API,
+    creating real index entries). Returns the recorded calls so tests
+    can assert on them.
+    """
+    calls = []
+
+    def fake_index(self, workspace_id, filename):
+        calls.append((workspace_id, filename))
+        return {"chunks_indexed": 1, "chunks_rejected": 0, "chunk_types": {}}
+
+    monkeypatch.setattr(BackendClient, "index_for_chat", fake_index)
+    return calls
+
+
 def _load_workspace(at: AppTest, workspace_id: str = "ws-1") -> AppTest:
     at.text_input(key="manual_ws_input").set_value(workspace_id).run()
     at.button(key="load_workspace_button").click().run()
@@ -527,6 +548,96 @@ def test_chat_api_failure_shows_safe_error(monkeypatch):
 
     assert not at.exception
     assert any("server encountered an error" in e.value for e in at.error)
+
+
+# ---------------------------------------------------------------------------
+# Chat indexing: chat only retrieves what has been indexed, so the view must
+# index the selected file (once) before the first question.
+# ---------------------------------------------------------------------------
+
+
+def _fake_chat_ok(
+    self,
+    workspace_id,
+    query,
+    filename=None,
+    include_modernization_context=False,
+    top_k=5,
+):
+    return {
+        "query": query,
+        "answer": "An answer.",
+        "context": [],
+        "error": None,
+        "modernization_data": None,
+    }
+
+
+def test_chat_indexes_the_selected_file_once_per_session(monkeypatch, index_calls):
+    monkeypatch.setattr(
+        BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_TWO_FILES
+    )
+    monkeypatch.setattr(BackendClient, "send_chat_message", _fake_chat_ok)
+
+    at = _make_app()
+    _load_workspace(at)
+    _open_view(at, "Modernization Chat")
+    at.chat_input(key="chat_input").set_value("first question").run()
+    at.chat_input(key="chat_input").set_value("second question").run()
+
+    assert not at.exception
+    assert index_calls == [("ws-1", "MAIN.cbl")]
+
+
+def test_chat_index_failure_warns_but_still_asks_the_question(monkeypatch):
+    """An indexing problem must not stop the question being asked: chat
+    then reports missing evidence honestly instead of the UI dying."""
+
+    def failing_index(self, workspace_id, filename):
+        raise BackendAPIError("The server encountered an error.", 500)
+
+    monkeypatch.setattr(
+        BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_TWO_FILES
+    )
+    monkeypatch.setattr(BackendClient, "index_for_chat", failing_index)
+    monkeypatch.setattr(BackendClient, "send_chat_message", _fake_chat_ok)
+
+    at = _make_app()
+    _load_workspace(at)
+    _open_view(at, "Modernization Chat")
+    at.chat_input(key="chat_input").set_value("hello").run()
+
+    assert not at.exception
+    assert any("Could not index this file for chat" in w.value for w in at.warning)
+    assert any(
+        "An answer." in msg.markdown[0].value for msg in at.chat_message if msg.markdown
+    )
+
+
+def test_failed_index_is_retried_on_the_next_question(monkeypatch):
+    attempts = []
+
+    def flaky_index(self, workspace_id, filename):
+        attempts.append((workspace_id, filename))
+        if len(attempts) == 1:
+            raise BackendAPIError("The server encountered an error.", 500)
+        return {"chunks_indexed": 1, "chunks_rejected": 0, "chunk_types": {}}
+
+    monkeypatch.setattr(
+        BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_TWO_FILES
+    )
+    monkeypatch.setattr(BackendClient, "index_for_chat", flaky_index)
+    monkeypatch.setattr(BackendClient, "send_chat_message", _fake_chat_ok)
+
+    at = _make_app()
+    _load_workspace(at)
+    _open_view(at, "Modernization Chat")
+    at.chat_input(key="chat_input").set_value("one").run()
+    at.chat_input(key="chat_input").set_value("two").run()
+    at.chat_input(key="chat_input").set_value("three").run()
+
+    # Failed once, retried and succeeded, then not attempted again.
+    assert len(attempts) == 2
 
 
 def test_empty_workspace_id_cannot_be_submitted():
