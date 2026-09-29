@@ -29,6 +29,7 @@ from app.ai.explanation.service import CodeExplanationService
 from app.ai.orchestration.service import AIAnalysisOrchestrator
 from app.ai.providers.fake import FakeLLMProvider
 from app.api.dependencies.ai import get_ai_orchestrator
+from app.api.dependencies.rag import get_embedding_provider
 from app.api.routers.chat import get_analysis_service, get_workspace_manager
 from app.core import config as cfg_mod
 from app.main import app
@@ -43,10 +44,21 @@ def isolated_chat_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
     Point the real get_rag_orchestrator dependency's ChromaIndex at an
     isolated temp directory, so this test never touches (or is polluted by)
     the shared workspace/ directory used across the rest of the test suite
-    and the running application.
+    and the running application. Also overrides the embedding provider
+    with the fast, deterministic fake -- this file exercises real
+    retrieval/orchestration wiring (the multi-key Chroma filter, the
+    ImmutableDict deepcopy path, ...), not embedding quality, which
+    app/rag/embeddings/provider.py's SentenceTransformerProvider has
+    its own dedicated, slower test for
+    (tests/rag/test_sentence_transformer_provider.py). Seeding and
+    querying must stay in the same embedding space either way.
     """
     monkeypatch.setattr(cfg_mod.settings, "workspace_dir", str(tmp_path))
-    return tmp_path
+    app.dependency_overrides[get_embedding_provider] = (
+        lambda: DeterministicFakeProvider(dimension=384)
+    )
+    yield tmp_path
+    app.dependency_overrides.pop(get_embedding_provider, None)
 
 
 @pytest.fixture

@@ -61,3 +61,31 @@ class ChatResponse(BaseModel):
     error: Optional[str] = None
     error_code: Optional[ChatErrorCode] = None
     modernization_data: Optional[Dict[str, Any]] = None
+
+
+class ChatIndexRequest(BaseModel):
+    """Request to index one workspace file for chat retrieval."""
+
+    workspace_id: uuid.UUID
+    filename: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class ChatIndexResponse(BaseModel):
+    """
+    Result of indexing one file for chat retrieval.
+
+    Attributes:
+        chunks_indexed: How many knowledge chunks were embedded and
+            written to the chat vector index.
+        chunks_rejected: How many candidate chunks
+            ``KnowledgeIngestor`` itself rejected before indexing (see
+            ``app.knowledge.ingest.IngestionResult.rejected`` -- never
+            silently dropped, always counted).
+        chunk_types: How many indexed chunks came from each chunk
+            type (e.g. ``cobol_source``, ``business_rule``), for a
+            quick sanity check on what was actually indexed.
+    """
+
+    chunks_indexed: int
+    chunks_rejected: int
+    chunk_types: Dict[str, int]

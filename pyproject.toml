@@ -62,3 +62,6 @@ line-length = 88
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+markers = [
+    "slow: tests that download/load a real model or otherwise take noticeably longer than the rest of the suite",
+]

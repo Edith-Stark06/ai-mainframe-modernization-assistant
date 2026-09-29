@@ -8,7 +8,9 @@ from app.api.routers.chat import (
     get_workspace_manager,
     get_analysis_service,
 )
+from app.api.dependencies.rag import get_embedding_provider
 from app.ai.orchestration.models import AIAnalysisResult
+from app.rag.embeddings.provider import DeterministicFakeProvider
 
 client = TestClient(app)
 
@@ -161,8 +163,17 @@ def test_chat_endpoint_provider_not_configured_end_to_end():
     LLM_PROVIDER_NOT_CONFIGURED code -- never a generic internal-error
     message. This is the exact "give me an error log in this code" bug
     scenario, end-to-end, through the real (non-test-overridden)
-    dependency chain."""
+    dependency chain. get_embedding_provider is overridden with the
+    fast fake regardless -- this test's concern is the LLM provider
+    layer, not embedding quality (see
+    tests/rag/test_sentence_transformer_provider.py for that), and the
+    real SentenceTransformerProvider would otherwise load for real
+    here (a real ~30s model load) for no reason relevant to what this
+    test actually verifies."""
     app.dependency_overrides.pop(get_rag_orchestrator, None)
+    app.dependency_overrides[get_embedding_provider] = (
+        lambda: DeterministicFakeProvider(dimension=384)
+    )
     try:
         resp = client.post(
             "/api/v1/chat/",
@@ -173,6 +184,7 @@ def test_chat_endpoint_provider_not_configured_end_to_end():
         )
     finally:
         app.dependency_overrides[get_rag_orchestrator] = override_get_rag
+        app.dependency_overrides.pop(get_embedding_provider, None)
 
     assert resp.status_code == 200
     data = resp.json()
