@@ -478,11 +478,59 @@ def emit_display(
         )
         return []
 
+    if len(instruction.operands) > 1:
+        return _emit_multi_operand_display(instruction, diagnostics, context)
+
     java_operand = _translate_operand(operand, instruction.operand_subscript)
     java_operand = _format_display_operand(
         operand, java_operand, context, bool(instruction.operand_subscript)
     )
     return [f"System.out.println({java_operand});"]
+
+
+def _emit_multi_operand_display(
+    instruction: IRDisplay,
+    diagnostics: list[BackendDiagnostic],
+    context: ConditionContext | None,
+) -> list[str]:
+    """
+    Translate ``DISPLAY a b c`` into one ``System.out.println(a + b + c)``.
+
+    COBOL writes the operands' display forms back to back with no
+    separator, so each operand goes through the same translation and
+    PICTURE-aware formatting a single-operand DISPLAY gets, and the
+    results are concatenated. The expression starts from a String
+    (``"" + ...`` unless the first piece already is a string literal) so
+    Java performs string concatenation even when the first two operands
+    are numeric -- ``wsA + wsB`` alone would add them.
+
+    A subscripted operand inside a multi-operand list is carried by the
+    parser as flattened text, which cannot be lowered to an array index
+    here. Rather than emit Java that does not compile, the statement is
+    skipped with a ``BE015`` WARNING.
+    """
+    pieces: list[str] = []
+    for operand in instruction.operands:
+        if "(" in operand:
+            diagnostics.append(
+                BackendDiagnostic(
+                    severity=BackendSeverity.WARNING,
+                    message=(
+                        f"DISPLAY operand {operand!r} is a subscripted "
+                        "reference inside a multi-operand DISPLAY, which is "
+                        "not supported; statement skipped."
+                    ),
+                    code="BE015",
+                )
+            )
+            return []
+        java_operand = _translate_operand(operand)
+        pieces.append(_format_display_operand(operand, java_operand, context))
+
+    expression = " + ".join(pieces)
+    if not pieces[0].startswith('"'):
+        expression = '"" + ' + expression
+    return [f"System.out.println({expression});"]
 
 
 # ---------------------------------------------------------------------------

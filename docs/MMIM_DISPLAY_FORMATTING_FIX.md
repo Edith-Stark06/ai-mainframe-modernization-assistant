@@ -231,7 +231,7 @@ source text, only generated-Java ground truth.
   pre-existing, confirmed unaffected by this stage).
 * Numeric overflow/truncation (a value wider than its declared PICTURE prints wider than declared, not
   truncated — Java's `int`/`double` impose no COBOL-style storage ceiling).
-* Multi-operand `DISPLAY`.
+* Multi-operand `DISPLAY` (since addressed: see `docs/MMIM_MULTI_OPERAND_DISPLAY_FIX.md`).
 * `OCCURS`/subscripted item `DISPLAY`.
 * The pre-existing gap in §7 (6 sources whose in-scope `DISPLAY` never reaches generated Java because its
   paragraph is emitted as an empty stub) — unrelated to this stage, not investigated further.
