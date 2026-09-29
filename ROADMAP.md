@@ -78,6 +78,7 @@ history lives in `docs/`.
 - [x] Search — `GET /workspaces/{id}/search` (`app/workspace/search.py`'s `WorkspaceSearcher`): plain, case-insensitive line-based text search across every workspace file, with a real search box wired into the topbar. Deliberately not semantic/embedding search — this project's own RAG stack has no real embedding provider wired in yet (see the module's own docstring).
 - [x] Visualization (architecture and dependency views)
 - [x] Reporting
+- [x] Graphviz DOT export — `GET /workspaces/{id}/export/graph.dot` (`app/analysis/graphviz_export.py`'s `to_dot()`): renders the dependency graph, control/call-flow graph, or data flow graph as standard Graphviz DOT source text, for any Graphviz-compatible viewer/tool. Emits DOT text only (no `graphviz` PyPI dependency, no shelling out to the `dot` binary, which this environment does not have installed) — AGENTS.md's other three Future-stack items (IBM Z Open Tools, Zowe CLI, Neo4j) were left out: the first two need real z/OS/z/OSMF connectivity this environment cannot reach (and could not honestly test), and Neo4j needs a running instance to verify integration code against, which none of this session's other work has ever shipped without.
 
 ---
 

@@ -44,6 +44,7 @@ from app.api.routers.validation import router as validation_router
 from app.api.routers.report import router as report_router
 from app.api.routers.java_workspace import router as java_workspace_router
 from app.api.routers.jcl import router as jcl_router
+from app.api.routers.export import router as export_router
 
 # ---------------------------------------------------------------------------
 # Versioned API router
@@ -64,3 +65,4 @@ api_router.include_router(validation_router)
 api_router.include_router(report_router)
 api_router.include_router(java_workspace_router)
 api_router.include_router(jcl_router)
+api_router.include_router(export_router)
