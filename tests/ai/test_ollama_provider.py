@@ -20,16 +20,17 @@ Project:
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from app.ai.providers.errors import LLMConfigurationError, LLMProviderUnavailableError
 from app.ai.providers.models import LLMRequest
 from app.ai.providers.ollama import OllamaProvider
-
-_TEST_HOST = os.environ.get("OLLAMA_TEST_HOST", "http://localhost:11434")
-_TEST_MODEL = os.environ.get("OLLAMA_TEST_MODEL", "qwen2.5:0.5b")
+from tests.ollama_support import (
+    OLLAMA_TEST_HOST as _TEST_HOST,
+    OLLAMA_TEST_MODEL as _TEST_MODEL,
+    requires_ollama_model,
+    requires_ollama_server,
+)
 
 
 def test_unreachable_server_raises_provider_unavailable() -> None:
@@ -45,6 +46,7 @@ def test_unreachable_server_error_message_names_host() -> None:
 
 
 @pytest.mark.slow
+@requires_ollama_server
 def test_unknown_model_against_real_server_raises_configuration_error() -> None:
     """A 404 'model not found' from a real, reachable server is a
     configuration mistake (wrong model name), not an outage."""
@@ -56,6 +58,7 @@ def test_unknown_model_against_real_server_raises_configuration_error() -> None:
 
 
 @pytest.mark.slow
+@requires_ollama_model
 def test_real_generation_against_real_ollama_server() -> None:
     """The actual point of this provider: a real prompt to a real,
     locally-running model produces a real, non-empty response."""
@@ -68,6 +71,7 @@ def test_real_generation_against_real_ollama_server() -> None:
 
 
 @pytest.mark.slow
+@requires_ollama_model
 def test_real_generation_respects_max_tokens() -> None:
     provider = OllamaProvider(model=_TEST_MODEL, host=_TEST_HOST)
     response = provider.generate(
@@ -80,6 +84,7 @@ def test_real_generation_respects_max_tokens() -> None:
 
 
 @pytest.mark.slow
+@requires_ollama_model
 def test_real_generation_reports_usage() -> None:
     provider = OllamaProvider(model=_TEST_MODEL, host=_TEST_HOST)
     response = provider.generate(LLMRequest(prompt="Say hi.", max_tokens=10))
