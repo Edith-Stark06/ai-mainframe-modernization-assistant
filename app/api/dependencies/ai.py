@@ -40,7 +40,11 @@ def get_llm_provider() -> LLMProvider | None:
     """
     settings = get_settings()
     if settings.llm_provider == "ollama":
-        return OllamaProvider(model=settings.ollama_model, host=settings.ollama_host)
+        return OllamaProvider(
+            model=settings.ollama_model,
+            host=settings.ollama_host,
+            default_temperature=settings.llm_temperature,
+        )
     if settings.llm_provider == "nvidia":
         nvidia_key = (
             settings.nvidia_api_key.get_secret_value().strip()
@@ -58,6 +62,7 @@ def get_llm_provider() -> LLMProvider | None:
             api_key=nvidia_key,
             base_url=settings.nvidia_base_url.strip(),
             timeout_s=settings.nvidia_timeout_s,
+            default_temperature=settings.llm_temperature,
         )
     if settings.llm_provider == "anthropic":
         api_key = (

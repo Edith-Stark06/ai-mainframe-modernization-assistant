@@ -124,7 +124,8 @@ def test_orchestration_ai_success() -> None:
     assert not res.ai_unavailable
     assert res.ai_result is not None
     assert res.ai_result.explanation is not None
-    assert ai_orch.last_source == "content 1\n\ncontent 2"
+    # chunks are labelled with their ids so an answer can cite them
+    assert ai_orch.last_source == "[c1]\ncontent 1\n\n[c2]\ncontent 2"
     assert len(res.context.results) == 2
 
 

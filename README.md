@@ -411,6 +411,10 @@ By default `LLM_PROVIDER=none` and no LLM is configured — AI-dependent feature
 2. Pull a model: `ollama pull llama3` (or a smaller one, e.g. `qwen2.5:0.5b`, for a lighter footprint).
 3. Set `LLM_PROVIDER=ollama` and `OLLAMA_MODEL=<model tag>` in `.env` (see `.env.example`).
 
+## Chat answer quality
+
+Chat retrieves with a hybrid of vector and exact-word search over each part of your question, tells the model to answer only from the retrieved context (parser-derived business rules take precedence), runs at temperature 0 (`LLM_TEMPERATURE`), and flags any figure in an answer that is not in the retrieved context. `python -m app.rag.evaluation` measures retrieval without a model and `scripts/evaluate_chat.py` checks answers against the live LLM. Details, measured results and limits: [docs/MMIM_CHAT_QUALITY.md](docs/MMIM_CHAT_QUALITY.md).
+
 ## Optional: NVIDIA NIM hosted models
 
 The platform can also use any model hosted on [build.nvidia.com](https://build.nvidia.com) through NVIDIA's OpenAI-compatible API (default model: `deepseek-ai/deepseek-v4.1-flash`):

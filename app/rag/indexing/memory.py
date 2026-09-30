@@ -97,3 +97,47 @@ class InMemoryIndex(VectorIndex):
         results.sort(key=lambda r: (r.score, r.document_id, r.chunk_index, r.chunk_id))
 
         return results[:top_k]
+
+    def _matches(
+        self,
+        chunk: KnowledgeChunk,
+        filter_metadata: dict[str, str | int | float | bool] | None,
+    ) -> bool:
+        return not filter_metadata or all(
+            chunk.metadata.get(k) == v for k, v in filter_metadata.items()
+        )
+
+    def list_chunks(
+        self,
+        filter_metadata: dict[str, str | int | float | bool] | None = None,
+    ) -> list[RetrievalResult]:
+        results = [
+            RetrievalResult(
+                chunk_id=c.id,
+                document_id=c.document_id,
+                content=c.content,
+                chunk_index=c.chunk_index,
+                metadata=c.metadata,
+                score=0.0,
+            )
+            for c in self._chunks.values()
+            if c.id in self._storage and self._matches(c, filter_metadata)
+        ]
+        results.sort(key=lambda r: (r.document_id, r.chunk_index, r.chunk_id))
+        return results
+
+    def delete(
+        self,
+        filter_metadata: dict[str, str | int | float | bool],
+    ) -> int:
+        if not filter_metadata:
+            raise ValueError("delete requires a non-empty metadata filter")
+        doomed = [
+            cid
+            for cid, chunk in self._chunks.items()
+            if self._matches(chunk, filter_metadata)
+        ]
+        for cid in doomed:
+            self._chunks.pop(cid, None)
+            self._storage.pop(cid, None)
+        return len(doomed)

@@ -1,0 +1,14 @@
+{
+  "program": "eligibility.cbl",
+  "held_out": true,
+  "cases": [
+    {"id": "minimum_age", "question": "What is the minimum age to be eligible?", "evidence": ["WS-AGE >= 18"]},
+    {"id": "denied_condition", "question": "Under what condition is the result set to DENIED?", "evidence": ["MOVE 'DENIED' TO WS-RESULT"]},
+    {"id": "review_threshold", "question": "When is an amount flagged for review?", "evidence": ["WS-AMOUNT > 50000"]},
+    {"id": "two_part_error_flag_and_fee", "question": "What happens to the error flag when the amount is large, and what fee is added when the status is A?", "evidence": ["WS-AMOUNT > 50000", "ADD WS-FEE TO WS-TOTAL"]},
+    {"id": "status_transition", "question": "Which paragraph moves the status from P to A?", "evidence": ["MOVE 'A' TO WS-STATUS"]},
+    {"id": "initial_age", "question": "What is the initial value of the age field?", "evidence": ["WS-AGE PIC 9(3) VALUE 0"]},
+    {"id": "paragraph_order", "question": "In what order are the paragraphs performed?", "evidence": ["PERFORM CHECK-ELIGIBILITY", "PERFORM REVIEW-AMOUNT"]},
+    {"id": "valid_result", "question": "When is the result set to VALID?", "evidence": ["WS-STATUS = 'A'"]}
+  ]
+}

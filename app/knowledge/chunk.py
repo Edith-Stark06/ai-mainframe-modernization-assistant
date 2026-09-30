@@ -26,6 +26,7 @@ __all__ = ["ChunkType", "KnowledgeChunk"]
 class ChunkType(str, Enum):
     COBOL_DIVISION = "cobol_division"
     COBOL_PARAGRAPH = "cobol_paragraph"
+    DATA_ITEM = "data_item"
     COBOL_SOURCE = "cobol_source"
     COPYBOOK = "copybook"
     JCL_STEP = "jcl_step"

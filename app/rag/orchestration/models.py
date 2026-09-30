@@ -92,6 +92,9 @@ class RAGResult:
     #: LLMProviderUnavailableError from other generation failures without
     #: RAGOrchestrator itself making that classification decision.
     ai_error_type: str | None = None
+    #: Figures in the AI answer that appear in neither the retrieved context
+    #: nor the question (see app.rag.grounding) -- empty when all are grounded.
+    ungrounded_figures: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         result_dict: dict[str, Any] = {
@@ -100,6 +103,7 @@ class RAGResult:
             "ai_unavailable": self.ai_unavailable,
             "ai_error": self.ai_error,
             "ai_error_type": self.ai_error_type,
+            "ungrounded_figures": list(self.ungrounded_figures),
         }
 
         if self.ai_result is not None:

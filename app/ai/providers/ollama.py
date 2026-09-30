@@ -68,13 +68,19 @@ class OllamaProvider(LLMProvider):
         model: The default Ollama model tag (e.g. ``"llama3.2:1b"``),
             used when a request does not specify its own ``model``.
         host: The Ollama server's base URL.
+        default_temperature: Temperature used when a request does not set one
+            (``None`` leaves Ollama's own default).
     """
 
     def __init__(
-        self, model: str = "llama3", host: str = "http://localhost:11434"
+        self,
+        model: str = "llama3",
+        host: str = "http://localhost:11434",
+        default_temperature: float | None = None,
     ) -> None:
         self.model = model
         self.host = host
+        self._default_temperature = default_temperature
         self._client = ollama.Client(host=host)
 
     def generate(self, request: LLMRequest) -> LLMResponse:
@@ -94,8 +100,13 @@ class OllamaProvider(LLMProvider):
                 Ollama rejects as invalid.
         """
         options: dict[str, float | int] = {}
-        if request.temperature is not None:
-            options["temperature"] = request.temperature
+        temperature = (
+            request.temperature
+            if request.temperature is not None
+            else self._default_temperature
+        )
+        if temperature is not None:
+            options["temperature"] = temperature
         if request.max_tokens is not None:
             options["num_predict"] = request.max_tokens
 

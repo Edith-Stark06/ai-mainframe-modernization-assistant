@@ -9,7 +9,9 @@ import uuid
 class ChatRequest(BaseModel):
     query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     workspace_id: uuid.UUID
-    top_k: int = Field(default=5, ge=1, le=100)
+    #: 8, not 5: measured on the bundled evaluation set, 8 chunks retrieve all
+    #: the evidence for every question where 5 still missed a fact.
+    top_k: int = Field(default=8, ge=1, le=100)
     filename: Optional[
         Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     ] = None
@@ -61,6 +63,9 @@ class ChatResponse(BaseModel):
     error: Optional[str] = None
     error_code: Optional[ChatErrorCode] = None
     modernization_data: Optional[Dict[str, Any]] = None
+    #: Figures in the answer not found in the retrieved context (also flagged
+    #: in the answer text itself).
+    ungrounded_figures: List[str] = Field(default_factory=list)
 
 
 class ChatIndexRequest(BaseModel):
@@ -84,8 +89,11 @@ class ChatIndexResponse(BaseModel):
         chunk_types: How many indexed chunks came from each chunk
             type (e.g. ``cobol_source``, ``business_rule``), for a
             quick sanity check on what was actually indexed.
+        chunks_replaced: How many stale chunks from an earlier indexing
+            of the same file were removed first (0 on a first index).
     """
 
     chunks_indexed: int
     chunks_rejected: int
     chunk_types: Dict[str, int]
+    chunks_replaced: int = 0

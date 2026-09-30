@@ -70,6 +70,13 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3"
     ollama_host: str = "http://localhost:11434"
 
+    #: Sampling temperature used when a request does not set its own
+    #: (Ollama and NVIDIA/OpenAI-compatible providers; Anthropic's API takes no
+    #: sampling parameters). Low by default: questions about code should get the
+    #: same answer each time, and a warmer model is more inclined to fill a gap
+    #: with an invented detail.
+    llm_temperature: float = 0.0
+
     #: Hosted Claude models, selected with ``LLM_PROVIDER=anthropic``. The
     #: credentials come only from the environment (or an untracked ``.env``)
     #: and are held as ``SecretStr`` so they never appear in a repr or log.
