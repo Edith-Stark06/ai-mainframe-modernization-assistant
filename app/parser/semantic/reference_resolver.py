@@ -80,7 +80,11 @@ from __future__ import annotations
 
 from loguru import logger
 
-from app.parser.ast.statements import DisplayStatementNode, MoveStatementNode
+from app.parser.ast.statements import (
+    AcceptStatementNode,
+    DisplayStatementNode,
+    MoveStatementNode,
+)
 from app.parser.semantic.context import SymbolTable
 from app.parser.semantic.diagnostics import SemanticDiagnostic, SemanticSeverity
 from app.parser.semantic.symbols import SymbolKind
@@ -255,6 +259,18 @@ class ReferenceResolverVisitor(SemanticVisitor):
             node.start_position.line,
         )
         self._resolve_variable_operand(node.source, node.start_position)
+        self._resolve_variable_operand(node.target, node.start_position)
+
+    def visit_accept_statement(self, node: AcceptStatementNode) -> None:
+        """
+        Resolve the target of an ``ACCEPT`` statement.
+
+        A target that cannot be found in the symbol table produces a
+        ``"SEM003"`` diagnostic.
+
+        Args:
+            node: The ``ACCEPT`` statement node.
+        """
         self._resolve_variable_operand(node.target, node.start_position)
 
     def visit_display_statement(self, node: DisplayStatementNode) -> None:

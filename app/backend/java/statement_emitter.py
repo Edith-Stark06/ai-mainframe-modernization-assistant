@@ -164,7 +164,11 @@ from __future__ import annotations
 
 import re
 
-from app.backend.java.condition_context import ConditionContext, operand_java_type
+from app.backend.java.condition_context import (
+    COBOL_ACCEPT,
+    ConditionContext,
+    operand_java_type,
+)
 from app.backend.java.control_flow_emitter import (
     emit_else,
     emit_end_if,
@@ -176,6 +180,7 @@ from app.backend.java.control_flow_emitter import (
 from app.backend.java.generator import BackendDiagnostic, BackendSeverity
 from app.backend.java.naming import to_java_field_name
 from app.ir.instructions import (
+    IRAccept,
     IRAdd,
     IRArithmeticExpression,
     IRCall,
@@ -235,6 +240,7 @@ def emit_statement(
 
     * :class:`~app.ir.instructions.IRMove`     → Java assignment (``=``).
     * :class:`~app.ir.instructions.IRDisplay`  → ``System.out.println()``.
+    * :class:`~app.ir.instructions.IRAccept`   → assignment from a console-read helper.
     * :class:`~app.ir.instructions.IRAdd`      → ``+=`` compound assignment.
     * :class:`~app.ir.instructions.IRSubtract` → ``-=`` compound assignment.
     * :class:`~app.ir.instructions.IRMultiply` → ``*=`` compound assignment.
@@ -305,6 +311,9 @@ def emit_statement(
 
     if isinstance(instruction, IRDisplay):
         return emit_display(instruction, diagnostics, context)
+
+    if isinstance(instruction, IRAccept):
+        return emit_accept(instruction, diagnostics, context)
 
     if isinstance(instruction, IRAdd):
         return emit_add(instruction, diagnostics)
@@ -486,6 +495,66 @@ def emit_display(
         operand, java_operand, context, bool(instruction.operand_subscript)
     )
     return [f"System.out.println({java_operand});"]
+
+
+def emit_accept(
+    instruction: IRAccept,
+    diagnostics: list[BackendDiagnostic],
+    context: ConditionContext | None = None,
+) -> list[str]:
+    """
+    Translate an :class:`~app.ir.instructions.IRAccept` into an assignment
+    from a console-read helper chosen by the target's declared Java type.
+
+    ``String`` targets receive the raw line, ``int`` and ``double``
+    targets the parsed number (zero when the text is not numeric). The
+    helpers are emitted once per class by the generator (see
+    :data:`~app.backend.java.condition_context.COBOL_ACCEPT_HELPER`).
+
+    An empty target raises ``BE004``; a target whose Java type is unknown
+    or is not one of the three above raises ``BE016``. Either way the
+    statement is skipped rather than guessed.
+
+    Args:
+        instruction: The ``ACCEPT`` to lower.
+        diagnostics: Mutable list; diagnostics are appended here.
+        context: Supplies the target's declared Java type. Without it the
+            type is unknown and the statement is skipped with ``BE016``.
+
+    Returns:
+        A one-element list holding the assignment, or ``[]`` when skipped.
+    """
+    target = instruction.result.strip()
+    if not target:
+        diagnostics.append(
+            BackendDiagnostic(
+                severity=BackendSeverity.WARNING,
+                message="IRAccept has empty target; skipping.",
+                code="BE004",
+            )
+        )
+        return []
+
+    java_target = _translate_operand(target)
+    java_type = context.field_types.get(java_target) if context else None
+    helper = {
+        "String": f"{COBOL_ACCEPT}Line",
+        "int": f"{COBOL_ACCEPT}Int",
+        "double": f"{COBOL_ACCEPT}Double",
+    }.get(java_type or "")
+    if helper is None:
+        diagnostics.append(
+            BackendDiagnostic(
+                severity=BackendSeverity.WARNING,
+                message=(
+                    f"ACCEPT target {target!r} has Java type {java_type!r}, "
+                    "which has no console-read mapping; statement skipped."
+                ),
+                code="BE016",
+            )
+        )
+        return []
+    return [f"{java_target} = {helper}();"]
 
 
 def _emit_multi_operand_display(

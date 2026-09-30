@@ -31,18 +31,10 @@ table below for specifics):
         see ``docs/MMIM_GO_TO_FIX.md`` and
         ``tests/parser/test_go_to_parsing_fix.py``.)
 
-    Supported by the IR builder, but still unreachable from real COBOL
-    source:
-        ACCEPT. ``build_accept_instruction`` correctly lowers an
-        ``AcceptStatementNode`` to ``IRAccept`` (proven below by
-        constructing the AST node directly), but the parser deliberately
-        classifies ``ACCEPT`` (task #108 -- to fix the
-        phantom-paragraph/syntax-error bug at ``_parse_statement``'s
-        fallback -- see #108's PR) as an unsupported statement, so no
-        real COBOL source can produce that AST node today. This is a
-        confirmed parser limitation, not an IR gap, and is deliberately
-        NOT touched by task #stage17 (its own scope is GO TO only) -- see
-        ``docs/MMIM_GO_TO_FIX.md`` §13.
+    ACCEPT: a plain ``ACCEPT identifier`` is parsed and lowered to
+    ``IRAccept`` (task #108 had classified it unsupported; see
+    ``docs/MMIM_ACCEPT_FIX.md``). ``ACCEPT ... FROM DATE``/``TIME``/``DAY``
+    remains unsupported and diagnosed.
 
     Unsupported/unmodelled (no AST representation to translate):
         EVALUATE, OPEN, CLOSE, READ, WRITE, COMPUTE, STRING, and every
@@ -415,15 +407,11 @@ class TestDisplayAcceptMapping:
     """
     DISPLAY: represented in IR from real source.
 
-    ACCEPT: the IR mapping (``build_accept_instruction`` -> ``IRAccept``)
-    exists and works (verified directly in ``TestAcceptUnreachableFromParser``
-    below -- GO TO shared this same "IR-ready, parser-unreachable" status
-    until task #stage17 fixed it) but is no longer reachable from real
-    COBOL source: task #108 deliberately moved ``ACCEPT`` into the
-    parser's unsupported-statement set to fix
-    a phantom-paragraph/syntax-error bug, which means the parser can no
-    longer construct an ``AcceptStatementNode`` at all. This is
-    confirmed below and must not be mistaken for a #109 IR gap.
+    ACCEPT: a plain ``ACCEPT identifier`` is parsed into an
+    ``AcceptStatementNode`` and lowered to ``IRAccept``. Task #108 had moved
+    ``ACCEPT`` into the unsupported-statement set; it was implemented later
+    (see ``docs/MMIM_ACCEPT_FIX.md``). The forms that read a system value
+    (``FROM DATE``/``TIME``/``DAY``) remain unsupported and diagnosed.
     """
 
     def test_display_is_represented(self) -> None:
@@ -432,15 +420,30 @@ class TestDisplayAcceptMapping:
         )
         assert any(isinstance(i, IRDisplay) and i.operand == '"HELLO"' for i in instrs)
 
-    def test_accept_is_explicitly_diagnosed_not_silently_lost(self) -> None:
-        """
-        Real ACCEPT syntax produces an explicit UNSUPPORTED diagnostic
-        (task #108, SYN100) rather than either a syntax error or a
-        silently-dropped statement -- confirming the parser-side half
-        of ACCEPT's status is exactly as documented.
-        """
+    def test_plain_accept_is_represented(self) -> None:
+        """A plain ``ACCEPT identifier`` is parsed and lowered to ``IRAccept``."""
         program, instrs = _build(
             _ID + "PROCEDURE DIVISION.\nMAIN.\n    ACCEPT WS-INPUT.\n    STOP RUN.\n"
+        )
+        assert [i.result for i in instrs if isinstance(i, IRAccept)] == ["WS-INPUT"]
+        paragraph = program.procedure_division.paragraphs[0]
+        assert any(
+            isinstance(s, ast_statements.AcceptStatementNode)
+            for s in paragraph.statements
+        )
+
+    def test_unmodelled_accept_form_is_explicitly_diagnosed_not_silently_lost(
+        self,
+    ) -> None:
+        """
+        ``ACCEPT x FROM DATE`` reads a system value, not the console, and is
+        not modelled: it produces an explicit UNSUPPORTED diagnostic (SYN100)
+        rather than a syntax error, a silently-dropped statement, or a
+        mistranslated console read.
+        """
+        program, instrs = _build(
+            _ID
+            + "PROCEDURE DIVISION.\nMAIN.\n    ACCEPT WS-INPUT FROM DATE.\n    STOP RUN.\n"
         )
         assert not any(isinstance(i, IRAccept) for i in instrs)
         paragraph = program.procedure_division.paragraphs[0]
@@ -506,11 +509,8 @@ class TestGoToLowersDirectlyAndAcceptStillUnreachable:
     #stage17 gave the parser a dispatch path for ``GO TO``, from real
     source too (``test_parser_now_produces_goto_from_real_source``).
 
-    ACCEPT: still unreachable from real source (task #108's deliberate,
-    untouched decision) -- proven here by direct AST construction only;
-    the parser-side proof is
-    ``TestDisplayAcceptMapping.test_accept_is_explicitly_diagnosed_not_silently_lost``
-    above.
+    ACCEPT: proven here by direct AST construction; the real-source proof
+    is ``TestDisplayAcceptMapping.test_plain_accept_is_represented`` above.
     """
 
     def test_goto_ast_node_lowers_to_ir_jump_directly(self) -> None:
