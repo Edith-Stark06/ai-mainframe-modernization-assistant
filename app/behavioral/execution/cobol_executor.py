@@ -126,6 +126,7 @@ class CobolExecutor:
         try:
             rp = subprocess.run(
                 [str(exe_path)],
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=self._run_timeout,
