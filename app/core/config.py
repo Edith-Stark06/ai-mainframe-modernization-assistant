@@ -63,7 +63,7 @@ class Settings(BaseSettings):
 
     #: "none" (default -- no LLM configured, matching every existing
     #: "provider not configured" test/behavior), "ollama" (a real,
-    #: locally-hosted Ollama server) or "anthropic" (hosted Claude models;
+    #: locally-hosted Ollama server), "nvidia" (NVIDIA NIM) or "anthropic" (hosted Claude models;
     #: see app.api.dependencies.ai.get_llm_provider). Never assumed on: an
     #: operator must explicitly opt in.
     llm_provider: str = "none"
@@ -80,6 +80,15 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr | None = None
     anthropic_auth_token: SecretStr | None = None
     anthropic_base_url: str = ""
+
+    #: NVIDIA NIM (``LLM_PROVIDER=nvidia``): an OpenAI-compatible hosted
+    #: endpoint. ``NVIDIA_API_KEY`` comes from the environment / untracked
+    #: ``.env``. The timeout is long because reasoning models on the shared
+    #: endpoint can take minutes to answer.
+    nvidia_api_key: SecretStr | None = None
+    nvidia_model: str = "deepseek-ai/deepseek-v4.1-flash"
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    nvidia_timeout_s: float = 600.0
 
     #: Load the embedding model in a background thread at startup, so
     #: the first /chat or /chat/index request does not pay the

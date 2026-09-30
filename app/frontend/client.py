@@ -89,8 +89,10 @@ class BackendAPIError(Exception):
 #: analysis endpoints, but a locally-hosted LLM on CPU legitimately
 #: takes a minute or more to answer (measured: 64s for one chat reply),
 #: and a client-side timeout would report failure while the backend is
-#: still working.
-_SLOW_AI_TIMEOUT = 300.0
+#: still working. A hosted reasoning model on a shared endpoint has been
+#: measured at 3+ minutes for a trivial prompt, and the hosted providers
+#: wait up to 600s, so this stays just above that.
+_SLOW_AI_TIMEOUT = 660.0
 
 
 class BackendClient:

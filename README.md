@@ -411,6 +411,16 @@ By default `LLM_PROVIDER=none` and no LLM is configured — AI-dependent feature
 2. Pull a model: `ollama pull llama3` (or a smaller one, e.g. `qwen2.5:0.5b`, for a lighter footprint).
 3. Set `LLM_PROVIDER=ollama` and `OLLAMA_MODEL=<model tag>` in `.env` (see `.env.example`).
 
+## Optional: NVIDIA NIM hosted models
+
+The platform can also use any model hosted on [build.nvidia.com](https://build.nvidia.com) through NVIDIA's OpenAI-compatible API (default model: `deepseek-ai/deepseek-v4.1-flash`):
+
+1. Create an API key on build.nvidia.com.
+2. In `.env` (git-ignored) set `LLM_PROVIDER=nvidia` and `NVIDIA_API_KEY=<key>`. Optionally set `NVIDIA_MODEL`, `NVIDIA_BASE_URL` and `NVIDIA_TIMEOUT_S`.
+3. Restart the API. `docker compose` passes the same variables to the `api` container.
+
+Without a key the API reports `LLM_PROVIDER_NOT_CONFIGURED`. **Latency:** in testing, a trivial prompt to the shared `deepseek-v4.1-flash` endpoint took 3+ minutes (the wait is server-side queueing, not a fault here), so the API waits up to 10 minutes and the UI up to 11. A reasoning model's hidden reasoning counts against `max_tokens`; only the final answer is returned. Model availability changes: NVIDIA retired several models (a retired one answers HTTP 410, reported as a configuration error). Your COBOL-derived prompts are sent to NVIDIA.
+
 ## Optional: hosted Claude models (Anthropic)
 
 Instead of a local model, the platform can use Claude through the Anthropic API:
