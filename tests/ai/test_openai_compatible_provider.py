@@ -172,6 +172,13 @@ def test_error_detail_is_surfaced_without_the_key() -> None:
     assert "nvapi-secret" not in str(info.value)
 
 
+def test_gateway_timeout_with_an_empty_body_still_says_what_happened() -> None:
+    with pytest.raises(LLMProviderUnavailableError, match=r"\(504\): Gateway Timeout"):
+        _provider(lambda r: httpx.Response(504, content=b"")).generate(
+            LLMRequest(prompt="hi")
+        )
+
+
 def test_end_of_life_model_message_is_surfaced() -> None:
     body = {"title": "Gone", "status": 410, "detail": "reached its end of life"}
     with pytest.raises(LLMConfigurationError, match="end of life"):
