@@ -25,7 +25,17 @@ Project:
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core import config as _cfg
 from app.main import app
+
+
+@pytest.fixture(autouse=True)
+def _no_real_llm_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep every test hermetic: a developer's ``.env`` may select a real,
+    hosted LLM (``LLM_PROVIDER=nvidia`` with a key), which must never be
+    reached -- or billed -- by the test suite. A test that wants a provider
+    sets ``settings.llm_provider`` itself, after this runs."""
+    monkeypatch.setattr(_cfg.settings, "llm_provider", "none")
 
 
 @pytest.fixture

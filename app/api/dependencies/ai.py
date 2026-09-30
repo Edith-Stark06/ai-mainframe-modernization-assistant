@@ -12,6 +12,7 @@ from app.ai.explanation.service import CodeExplanationService
 from app.ai.orchestration.service import AIAnalysisOrchestrator
 from app.ai.providers.anthropic import AnthropicProvider
 from app.ai.providers.base import LLMProvider
+from app.ai.providers.openai_compatible import OpenAICompatibleProvider
 from app.ai.providers.ollama import OllamaProvider
 from app.core.config import get_settings
 
@@ -21,8 +22,8 @@ def get_llm_provider() -> LLMProvider | None:
     Returns the configured production LLM provider.
 
     Returns ``None`` (no provider configured) unless
-    ``settings.llm_provider`` is explicitly set to ``"ollama"`` or
-    ``"anthropic"`` -- an operator must opt in; this endpoint must never
+    ``settings.llm_provider`` is explicitly set to ``"ollama"``,
+    ``"nvidia"`` or ``"anthropic"`` -- an operator must opt in; this endpoint must never
     silently assume a model is available. ``"anthropic"`` without any
     credential is also "not configured" (``None``), never a provider that
     would fail on every call. When ``"ollama"`` is enabled, returns a real
@@ -40,6 +41,24 @@ def get_llm_provider() -> LLMProvider | None:
     settings = get_settings()
     if settings.llm_provider == "ollama":
         return OllamaProvider(model=settings.ollama_model, host=settings.ollama_host)
+    if settings.llm_provider == "nvidia":
+        nvidia_key = (
+            settings.nvidia_api_key.get_secret_value().strip()
+            if settings.nvidia_api_key
+            else ""
+        )
+        if not nvidia_key:
+            logger.warning(
+                "LLM_PROVIDER=nvidia but NVIDIA_API_KEY is not set; treating "
+                "the LLM as not configured."
+            )
+            return None
+        return OpenAICompatibleProvider(
+            model=settings.nvidia_model,
+            api_key=nvidia_key,
+            base_url=settings.nvidia_base_url.strip(),
+            timeout_s=settings.nvidia_timeout_s,
+        )
     if settings.llm_provider == "anthropic":
         api_key = (
             settings.anthropic_api_key.get_secret_value().strip()
