@@ -14,6 +14,12 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-none}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      # Hosted Claude (LLM_PROVIDER=anthropic). Passed through from the host
+      # environment / .env; blank when unset. Never baked into the image.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5-5}
     # Lets the container reach an Ollama server running on the host by
     # name. Docker Desktop provides host.docker.internal itself; this
     # entry does the same on native Linux Docker.
