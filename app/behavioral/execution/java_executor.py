@@ -92,6 +92,7 @@ class JavaExecutor:
         try:
             proc = subprocess.run(
                 command,
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=self._run_timeout,

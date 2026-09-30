@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from app.dataset.analysis_bundle import AnalysisBundle
@@ -99,6 +100,120 @@ def _collect_condition_name_values(
         if name and raw_values:
             out[name] = tuple(strip_string_literal(str(v)) for v in raw_values)
     return out
+
+
+#: Statement node type -> the AST attribute naming the field(s) it writes.
+_ASSIGNED_FIELD_ATTRIBUTES: dict[str, str] = {
+    "MoveStatementNode": "target",
+    "AcceptStatementNode": "target",
+    "ComputeStatementNode": "target",
+    "AddStatementNode": "right",
+    "SubtractStatementNode": "right",
+    "MultiplyStatementNode": "right",
+    "DivideStatementNode": "right",
+}
+
+
+@dataclass(frozen=True)
+class _Assignments:
+    """Where the program itself writes its fields.
+
+    ``accepted``: every field an ``ACCEPT`` reads, anywhere.
+    ``by_paragraph``: ``{PARAGRAPH: {FIELD: first source line that assigns it}}``.
+    """
+
+    accepted: frozenset[str]
+    by_paragraph: dict[str, dict[str, int]]
+
+
+def _collect_assignments(ast: dict[str, Any] | None) -> _Assignments:
+    """Walk the serialized AST (statements may nest inside ``IF`` /
+    ``PERFORM`` bodies) and record which fields each paragraph assigns."""
+    accepted: set[str] = set()
+    by_paragraph: dict[str, dict[str, int]] = {}
+
+    def walk(node: Any, paragraph: str) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "ParagraphNode":
+                paragraph = str(node.get("name", "")).upper()
+            node_type = str(node.get("type", ""))
+            attribute = _ASSIGNED_FIELD_ATTRIBUTES.get(node_type)
+            if attribute:
+                line = int((node.get("start_position") or {}).get("line") or 0)
+                for raw in str(node.get(attribute, "")).replace("(", " ").split():
+                    name = raw.strip().upper()
+                    if node_type == "AcceptStatementNode":
+                        accepted.add(name)
+                    first = by_paragraph.setdefault(paragraph, {})
+                    first[name] = min(first.get(name, line), line) if line else 0
+            for child in node.values():
+                walk(child, paragraph)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child, paragraph)
+
+    walk(ast, "")
+    return _Assignments(frozenset(accepted), by_paragraph)
+
+
+def _downgrade_overwritten_inputs(
+    tests: list[BehavioralTestCase], assignments: _Assignments
+) -> list[BehavioralTestCase]:
+    """Mark a test non-executable when an injected input is a field the
+    program itself assigns before the condition under test is evaluated.
+
+    The Java harness presets each input field and then runs the *whole*
+    program, so a preset survives only if the program does not overwrite it
+    first. Two cases are provable from the AST and are downgraded:
+
+    * the field is read by an ``ACCEPT`` anywhere in the program;
+    * the field is assigned (``COMPUTE``/``MOVE``/``ADD``/...) earlier, in
+      source order, in the same paragraph as the condition.
+
+    The test would otherwise observe the program's own value and fail for a
+    reason unrelated to the translation. Rather than report that as a
+    defect, the test is kept with its reason. Assignments in *other*
+    paragraphs are not considered: whether they run before the condition
+    depends on control flow this check does not model.
+    """
+    out: list[BehavioralTestCase] = []
+    for test in tests:
+        reason = _overwrite_reason(test, assignments) if test.executable else None
+        out.append(
+            test.model_copy(update={"executable": False, "inconclusive_reason": reason})
+            if reason
+            else test
+        )
+    return out
+
+
+def _overwrite_reason(
+    test: BehavioralTestCase, assignments: _Assignments
+) -> str | None:
+    """Why *test*'s injected inputs cannot be trusted, or ``None``."""
+    names = {i.name.upper() for i in test.inputs}
+    accepted = sorted(names & assignments.accepted)
+    if accepted:
+        return (
+            f"input field(s) {', '.join(accepted)} are read by an ACCEPT "
+            "statement, which would overwrite the injected value; feeding "
+            "console input to the test is not modelled"
+        )
+    for ref in test.source_refs:
+        if not ref.paragraph or not ref.line_start:
+            continue
+        assigned_here = assignments.by_paragraph.get(ref.paragraph.upper(), {})
+        earlier = sorted(
+            n for n in names if 0 < assigned_here.get(n, 0) < ref.line_start
+        )
+        if earlier:
+            return (
+                f"input field(s) {', '.join(earlier)} are assigned earlier in "
+                f"paragraph {ref.paragraph} than the condition under test, "
+                "which would overwrite the injected value; paragraph-level "
+                "input injection is not modelled"
+            )
+    return None
 
 
 def _collect_condition_name_parents(ast: dict[str, Any] | None) -> dict[str, str]:
@@ -581,6 +696,7 @@ def extract_behavioral_tests(bundle: AnalysisBundle) -> BehavioralSuite:
     loop_tests, skipped_loops = extract_loop_tests(bundle)
     tests.extend(loop_tests)
 
+    tests = _downgrade_overwritten_inputs(tests, _collect_assignments(bundle.ast))
     tests.sort(key=lambda t: t.test_id)
     return BehavioralSuite(
         source_id=sid,

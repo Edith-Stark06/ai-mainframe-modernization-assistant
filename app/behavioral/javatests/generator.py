@@ -74,6 +74,8 @@ public class {main_class}{HARNESS_SUFFIX} {{
                     f.setInt(target, Integer.parseInt(e.getValue()));
                 }} else if (f.getType() == long.class) {{
                     f.setLong(target, Long.parseLong(e.getValue()));
+                }} else if (f.getType() == double.class) {{
+                    f.setDouble(target, Double.parseDouble(e.getValue()));
                 }} else {{
                     f.set(target, e.getValue());
                 }}
@@ -120,13 +122,25 @@ public class {main_class}{HARNESS_SUFFIX} {{
                 actual = "<no-such-field>";
             }}
             System.out.println("##FIELD## " + e.getKey() + "=" + actual);
-            if (!actual.equals(e.getValue())) {{
+            if (!sameValue(actual, e.getValue())) {{
                 allPass = false;
                 failed.append(e.getKey()).append(' ');
             }}
         }}
         System.out.println(allPass ? "##ASSERT## PASS" : "##ASSERT## FAIL " + failed);
         System.exit(allPass ? 0 : 1);
+    }}
+
+    /** Numbers compare by value ("50000.0" equals "50000"); everything else exactly. */
+    private static boolean sameValue(String actual, String expected) {{
+        if (actual.equals(expected)) {{
+            return true;
+        }}
+        try {{
+            return new java.math.BigDecimal(actual).compareTo(new java.math.BigDecimal(expected)) == 0;
+        }} catch (NumberFormatException ex) {{
+            return false;
+        }}
     }}
 }}
 """
