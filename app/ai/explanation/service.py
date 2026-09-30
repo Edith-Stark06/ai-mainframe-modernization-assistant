@@ -4,6 +4,7 @@ Code Explanation Service
 Provider-agnostic service for explaining COBOL source code.
 """
 
+import re
 from typing import Any, Optional
 
 from app.ai.explanation.models import CodeExplanation
@@ -14,6 +15,22 @@ from app.ai.providers import LLMProvider, LLMRequest
 #: shown to users (CodeExplanation.__str__ prints the reply alone when
 #: structured is False); it only satisfies the model's non-empty rule.
 _UNSTRUCTURED_LABEL = "Unstructured model response"
+
+#: A markdown bold marker the model left dangling around a section label
+#: ("Summary: **" / a lone "**" closing the section). Only a marker set off by
+#: whitespace is removed, so real emphasis such as "**bold** text" is kept.
+_ORPHAN_LEADING = re.compile(r"^\*{2,}\s+")
+_ORPHAN_TRAILING = re.compile(r"\s+\*{2,}$")
+
+
+def _strip_orphan_markers(text: str) -> str:
+    """Remove dangling ``**`` markers from the ends of a parsed section."""
+    text = text.strip()
+    if not text.strip("* " + chr(9) + chr(10) + chr(13)):
+        return ""  # nothing but markers: the section is empty
+    text = _ORPHAN_LEADING.sub("", text)
+    text = _ORPHAN_TRAILING.sub("", text)
+    return text.strip()
 
 
 class CodeExplanationService:
@@ -97,8 +114,8 @@ class CodeExplanationService:
             )
 
         parts = text.split("Explanation:", 1)
-        summary_part = parts[0].split("Summary:", 1)[-1].strip()
-        explanation_part = parts[1].strip()
+        summary_part = _strip_orphan_markers(parts[0].split("Summary:", 1)[-1])
+        explanation_part = _strip_orphan_markers(parts[1])
 
         if not summary_part:
             raise ValueError("Parsed summary section is empty.")
