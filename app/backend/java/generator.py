@@ -85,6 +85,8 @@ from loguru import logger
 
 from app.backend.java.condition_context import (
     COBOL_EQUALS,
+    COBOL_ACCEPT,
+    COBOL_ACCEPT_HELPER,
     COBOL_EQUALS_HELPER,
     ConditionContext,
     ConditionName,
@@ -746,6 +748,8 @@ def generate_with_diagnostics(
         if any(f"{COBOL_EQUALS}(" in statement for statement in all_statement_lines)
         else []
     )
+    if any(COBOL_ACCEPT in statement for statement in all_statement_lines):
+        helpers = [*helpers, *([""] if helpers else []), *COBOL_ACCEPT_HELPER]
     source = _render_class(
         class_name,
         effective_fields,

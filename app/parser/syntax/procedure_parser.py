@@ -89,6 +89,7 @@ from loguru import logger
 from app.parser.ast.paragraphs import ParagraphNode
 from app.parser.ast.procedure import ProcedureDivisionNode
 from app.parser.ast.statements import (
+    AcceptStatementNode,
     ArithmeticExpression,
     BinaryExpression,
     ConditionTerm,
@@ -154,6 +155,7 @@ _STATEMENT_LEXEMES: frozenset[str] = frozenset(
         "PERFORM",
         "GO",
         "READ",
+        "ACCEPT",
     }
 )
 
@@ -211,15 +213,10 @@ _UNSUPPORTED_STATEMENT_LEXEMES: frozenset[str] = frozenset(
         # "GO TO A B C DEPENDING ON X" form remains unimplemented (not
         # present anywhere in the real corpus); see that method's
         # docstring and docs/MMIM_GO_TO_FIX.md.
-        # ACCEPT already has an AST node (AcceptStatementNode) and an IR
-        # builder (build_accept_instruction), but no parser dispatch
-        # path.  Task #108 explicitly asks that it be reported as
-        # unsupported rather than implemented, so it moved here from
-        # _STATEMENT_LEXEMES: routing it through the same
-        # _skip_unsupported_statement mechanism as OPEN/READ/etc. gives
-        # it a SYN100 "unsupported" diagnostic instead of the syntax-error
-        # path _parse_statement's fallback used to raise (#108-10).
-        "ACCEPT",
+        # ACCEPT moved out of this set: a plain "ACCEPT identifier" is now
+        # parsed (_parse_accept). Any other form (FROM DATE/TIME/...,
+        # ON EXCEPTION, a subscripted target) is still routed here via
+        # _is_unsupported_form, so it keeps its SYN100 diagnostic.
         # CONTINUE and EXIT are valid no-op statements this parser does
         # not model.  Both are almost always written as a single bare
         # word before the period ("CONTINUE." / "EXIT."), which is
@@ -828,7 +825,7 @@ class ProcedureDivisionParser:
                 # SYN100 skip every other unsupported verb gets, uniformly
                 # regardless of nesting -- never a ParserError, even though
                 # this particular loop could otherwise recover from one.
-                if upper == "COMPUTE" and not self._compute_has_supported_syntax(state):
+                if self._is_unsupported_form(state, upper):
                     self._skip_unsupported_statement_auto(state)
                     continue
 
@@ -1144,6 +1141,8 @@ class ProcedureDivisionParser:
             return self._parse_go_to_statement(state)
         if upper == "READ":
             return self._parse_read_statement(state)
+        if upper == "ACCEPT":
+            return self._parse_accept(state)
 
         raise ParserError(
             f"unsupported statement keyword {upper!r}",
@@ -1739,6 +1738,74 @@ class ProcedureDivisionParser:
     # ------------------------------------------------------------------
     # COMPUTE (task #stage35)
     # ------------------------------------------------------------------
+
+    def _is_unsupported_form(self, state: ParserState, upper: str) -> bool:
+        """
+        ``True`` if the statement at the cursor is a verb this parser
+        implements *only in part* and uses a form outside that part, so
+        it must take the graceful ``SYN100`` skip instead of a parse
+        that would raise partway through.
+
+        Covers ``COMPUTE ROUNDED`` / ``COMPUTE ... FUNCTION`` and every
+        ``ACCEPT`` other than the plain ``ACCEPT identifier``. Pure
+        lookahead: nothing is consumed.
+
+        Args:
+            state: Active parser state, positioned on the statement verb.
+            upper: The upper-cased verb lexeme.
+
+        Returns:
+            ``True`` when the statement must be skipped as unsupported.
+        """
+        if upper == "COMPUTE":
+            return not self._compute_has_supported_syntax(state)
+        if upper == "ACCEPT":
+            return not self._accept_has_supported_syntax(state)
+        return False
+
+    def _accept_has_supported_syntax(self, state: ParserState) -> bool:
+        """
+        ``True`` if the ``ACCEPT`` at the cursor is exactly
+        ``ACCEPT identifier`` followed by the end of the statement.
+
+        ``ACCEPT x FROM DATE`` / ``FROM TIME`` / ``FROM DAY`` read a
+        system value rather than the console and ``ON EXCEPTION`` adds a
+        handler; neither is modelled, so they are reported as unsupported
+        instead of being mistranslated as a console read. Pure lookahead.
+        """
+        stream = state.stream
+        target = stream.peek(1)
+        if target.type is not TokenType.IDENTIFIER:
+            return False
+        return _at_operand_boundary(stream.peek(2))
+
+    def _parse_accept(self, state: ParserState) -> AcceptStatementNode:
+        """
+        Parse ``ACCEPT identifier``.
+
+        Grammar rule::
+
+            accept-statement ::= ACCEPT identifier PERIOD
+
+        The caller has already confirmed the plain shape with
+        :meth:`_accept_has_supported_syntax`.
+
+        Args:
+            state: Active parser state; cursor on ``ACCEPT``.
+
+        Returns:
+            An immutable :class:`~app.parser.ast.statements.AcceptStatementNode`.
+        """
+        stream = state.stream
+        start: Position = stream.current().position
+        stream.advance()  # consume ACCEPT
+        target = stream.current().lexeme
+        stream.advance()
+        end: Position = stream.current().position
+        self._consume_optional_period(state)
+        return AcceptStatementNode(
+            start_position=start, end_position=end, target=target
+        )
 
     def _compute_has_supported_syntax(self, state: ParserState) -> bool:
         """
@@ -2413,7 +2480,7 @@ class ProcedureDivisionParser:
             if tok.lexeme.upper() in ("ELSE", "END-IF"):
                 break
             upper = tok.lexeme.upper()
-            if upper == "COMPUTE" and not self._compute_has_supported_syntax(state):
+            if self._is_unsupported_form(state, upper):
                 self._skip_unsupported_statement_auto(state)
             elif upper in _STATEMENT_LEXEMES:
                 then_statements.append(self._parse_statement(state))
@@ -2435,7 +2502,7 @@ class ProcedureDivisionParser:
                 if tok.lexeme.upper() == "END-IF":
                     break
                 upper = tok.lexeme.upper()
-                if upper == "COMPUTE" and not self._compute_has_supported_syntax(state):
+                if self._is_unsupported_form(state, upper):
                     self._skip_unsupported_statement_auto(state)
                 elif upper in _STATEMENT_LEXEMES:
                     else_statements.append(self._parse_statement(state))
@@ -2527,7 +2594,7 @@ class ProcedureDivisionParser:
             if tok.lexeme.upper() == "END-PERFORM":
                 break
             upper = tok.lexeme.upper()
-            if upper == "COMPUTE" and not self._compute_has_supported_syntax(state):
+            if self._is_unsupported_form(state, upper):
                 self._skip_unsupported_statement_auto(state)
             elif upper in _STATEMENT_LEXEMES:
                 statements.append(self._parse_statement(state))
@@ -3127,7 +3194,7 @@ class ProcedureDivisionParser:
                 and stream.peek().lexeme.upper() == "DIVISION"
             ):
                 break
-            if upper == "COMPUTE" and not self._compute_has_supported_syntax(state):
+            if self._is_unsupported_form(state, upper):
                 self._skip_unsupported_statement_auto(state)
             elif upper in _STATEMENT_LEXEMES:
                 statements.append(self._parse_statement(state))

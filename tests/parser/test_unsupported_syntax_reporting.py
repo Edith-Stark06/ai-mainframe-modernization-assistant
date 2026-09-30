@@ -171,10 +171,18 @@ class TestContinueExitNextSentenceReporting:
 
 
 class TestAcceptReporting:
-    """#108-10: ACCEPT must be UNSUPPORTED, not a syntax error, and recover."""
+    """
+    #108-10: an ACCEPT form the parser does not model must be UNSUPPORTED,
+    not a syntax error, and recover. A plain ``ACCEPT identifier`` is now
+    parsed (see ``tests/parser/test_accept_statement.py``); the forms that
+    read a system value (``FROM DATE``/``TIME``/``DAY``) still are not.
+    """
 
     def test_accept_is_classified_unsupported_not_syntax_error(self) -> None:
-        source = _ID + "PROCEDURE DIVISION.\nMAIN.\n    ACCEPT WS-X.\n    STOP RUN.\n"
+        source = (
+            _ID
+            + "PROCEDURE DIVISION.\nMAIN.\n    ACCEPT WS-X FROM DATE.\n    STOP RUN.\n"
+        )
         _, state = _parse(source)
 
         diag = next(d for d in state.diagnostics if "ACCEPT" in d.message)
@@ -183,7 +191,10 @@ class TestAcceptReporting:
 
     def test_accept_recovery_preserves_following_statement(self) -> None:
         """Recovery must not discard STOP RUN (the pre-#108 behaviour did)."""
-        source = _ID + "PROCEDURE DIVISION.\nMAIN.\n    ACCEPT WS-X.\n    STOP RUN.\n"
+        source = (
+            _ID
+            + "PROCEDURE DIVISION.\nMAIN.\n    ACCEPT WS-X FROM DATE.\n    STOP RUN.\n"
+        )
         program, _ = _parse(source)
 
         assert _names(program) == ["StopRun"]

@@ -104,6 +104,8 @@ from app.backend.java.value_initializer import (
 
 __all__ = [
     "COBOL_EQUALS",
+    "COBOL_ACCEPT",
+    "COBOL_ACCEPT_HELPER",
     "COBOL_EQUALS_HELPER",
     "ConditionContext",
     "ConditionName",
@@ -140,6 +142,45 @@ COBOL_EQUALS_HELPER: tuple[str, ...] = (
     "            n--;",
     "        }",
     "        return x.substring(0, m).equals(y.substring(0, n));",
+    "    }",
+)
+
+#: Name prefix of the console-input helpers (see :data:`COBOL_ACCEPT_HELPER`).
+COBOL_ACCEPT = "_cobolAccept"
+
+#: Console-read helpers, emitted (once, after ``run()``) only by a class that
+#: contains an ``ACCEPT``. Package-private for the same reason as
+#: :data:`COBOL_EQUALS_HELPER`. Standard input is read a line at a time; end of
+#: input yields an empty line, and a numeric field given non-numeric text
+#: receives zero rather than aborting the program.
+COBOL_ACCEPT_HELPER: tuple[str, ...] = (
+    "    // COBOL ACCEPT: one console line per statement.",
+    "    private static final java.io.BufferedReader _cobolStdin =",
+    "        new java.io.BufferedReader(new java.io.InputStreamReader(System.in));",
+    "",
+    f"    static String {COBOL_ACCEPT}Line() {{",
+    "        try {",
+    "            String line = _cobolStdin.readLine();",
+    '            return line == null ? "" : line;',
+    "        } catch (java.io.IOException e) {",
+    '            return "";',
+    "        }",
+    "    }",
+    "",
+    f"    static int {COBOL_ACCEPT}Int() {{",
+    "        try {",
+    f"            return Integer.parseInt({COBOL_ACCEPT}Line().trim());",
+    "        } catch (NumberFormatException e) {",
+    "            return 0;",
+    "        }",
+    "    }",
+    "",
+    f"    static double {COBOL_ACCEPT}Double() {{",
+    "        try {",
+    f"            return Double.parseDouble({COBOL_ACCEPT}Line().trim());",
+    "        } catch (NumberFormatException e) {",
+    "            return 0.0;",
+    "        }",
     "    }",
 )
 

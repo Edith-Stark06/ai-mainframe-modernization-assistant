@@ -88,6 +88,7 @@ if TYPE_CHECKING:
     from app.parser.ast.procedure import ProcedureDivisionNode
     from app.parser.ast.program import ProgramNode
     from app.parser.ast.statements import (
+        AcceptStatementNode,
         DisplayStatementNode,
         GobackStatementNode,
         MoveStatementNode,
@@ -283,6 +284,18 @@ class SemanticVisitor(ASTVisitor):
 
         Args:
             node: The statement node.
+
+        Returns:
+            ``None`` by default.
+        """
+        return None
+
+    def visit_accept_statement(self, node: AcceptStatementNode) -> Any:
+        """
+        Visit a :class:`~app.parser.ast.statements.AcceptStatementNode`.
+
+        Args:
+            node: The ``ACCEPT`` statement node.
 
         Returns:
             ``None`` by default.
