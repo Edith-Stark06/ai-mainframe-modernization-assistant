@@ -24,10 +24,8 @@ from app.rag.orchestration.service import RAGOrchestrator
 from app.api.dependencies.ai import get_ai_orchestrator
 from app.api.dependencies.workspace import resolve_workspace_source
 from app.ai.orchestration.service import AIAnalysisOrchestrator
-from app.knowledge.ingest import KnowledgeIngestor
-from app.rag.embeddings.service import EmbeddingService
-from app.rag.knowledge_bridge import to_rag_chunks
-from app.rag.retrieval.service import RetrievalService
+from app.rag.ingestion import index_program
+from app.rag.retrieval.hybrid import HybridRetrievalService
 from app.rag.indexing.chroma import ChromaIndex
 from app.rag.embeddings.provider import EmbeddingProvider
 from app.api.dependencies.rag import get_embedding_provider
@@ -56,7 +54,7 @@ def get_rag_orchestrator(
     ai_orchestrator: AIAnalysisOrchestrator = Depends(get_ai_orchestrator),
     embedding_provider: EmbeddingProvider = Depends(get_embedding_provider),
 ) -> RAGOrchestrator:
-    retrieval_service = RetrievalService(embedding_provider, _build_chat_index())
+    retrieval_service = HybridRetrievalService(embedding_provider, _build_chat_index())
     return RAGOrchestrator(
         retrieval_service=retrieval_service, ai_orchestrator=ai_orchestrator
     )
@@ -210,6 +208,13 @@ def chat_endpoint(
         ):
             answer = str(rag_result.ai_result.documentation)
 
+    ungrounded = list(rag_result.ungrounded_figures) if answer else []
+    if ungrounded:
+        answer += (
+            "\n\n⚠ Figures not found in the retrieved context (verify before "
+            "relying on them): " + ", ".join(ungrounded)
+        )
+
     context = [
         {"id": r.chunk_id, "content": r.content} for r in rag_result.context.results
     ]
@@ -221,6 +226,7 @@ def chat_endpoint(
         error=error,
         error_code=error_code,
         modernization_data=modernization_data,
+        ungrounded_figures=ungrounded,
     )
 
 
@@ -273,36 +279,37 @@ def index_workspace_file(
         raise HTTPException(status_code=500, detail="Could not read source file")
 
     source_id = source_path.stem.upper()
+    identity: dict[str, str | int | float | bool] = {
+        "workspace_id": str(request.workspace_id),
+        "filename": request.filename,
+    }
     try:
-        ingestion_result = KnowledgeIngestor().ingest_program(
-            source_id, source_text, source_path=request.filename
+        summary = index_program(
+            source_id=source_id,
+            source_text=source_text,
+            source_path=request.filename,
+            extra_metadata=identity,
+            embedding_provider=embedding_provider,
+            index=_build_chat_index(),
+            replace_filter=identity,
         )
     except Exception as e:
         logger.error(f"Knowledge ingestion failed for {source_path}: {e}")
         raise HTTPException(status_code=500, detail="Knowledge ingestion failed")
 
-    rag_chunks = to_rag_chunks(
-        ingestion_result,
-        extra_metadata={
-            "workspace_id": str(request.workspace_id),
-            "filename": request.filename,
-        },
-    )
-
-    if rag_chunks:
-        embeddings = EmbeddingService(embedding_provider).embed_chunks(rag_chunks)
-        _build_chat_index().add(embeddings, rag_chunks)
-
     logger.info(
-        "Indexed {} chunk(s) for chat ({} rejected) -- workspace='{}', file='{}'.",
-        len(rag_chunks),
-        len(ingestion_result.rejected),
+        "Indexed {} chunk(s) for chat ({} rejected, {} stale replaced) -- "
+        "workspace='{}', file='{}'.",
+        summary.chunks_indexed,
+        summary.chunks_rejected,
+        summary.chunks_replaced,
         request.workspace_id,
         request.filename,
     )
 
     return ChatIndexResponse(
-        chunks_indexed=len(rag_chunks),
-        chunks_rejected=len(ingestion_result.rejected),
-        chunk_types=ingestion_result.by_type(),
+        chunks_indexed=summary.chunks_indexed,
+        chunks_rejected=summary.chunks_rejected,
+        chunk_types=summary.chunk_types,
+        chunks_replaced=summary.chunks_replaced,
     )

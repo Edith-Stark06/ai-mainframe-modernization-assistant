@@ -4,10 +4,18 @@ RAG Orchestration Service.
 Coordinates RAG requests with RetrievalService and AIAnalysisOrchestrator.
 """
 
+import json
 from typing import Any
 from app.ai.orchestration.service import AIAnalysisOrchestrator
+from app.rag.grounding import find_ungrounded_figures
 from app.rag.orchestration.models import RAGRequest, RAGResult, RetrievedContext
 from app.rag.retrieval.service import RetrievalService
+from app.rag.retrieval.models import RetrievalResult
+
+
+def _labelled(result: RetrievalResult) -> str:
+    """A chunk's text preceded by its id, so an answer can cite it."""
+    return f"[{result.chunk_id}]\n{result.content}"
 
 
 class RAGOrchestrator:
@@ -65,11 +73,23 @@ class RAGOrchestrator:
 
         # 5. Execute AI Orchestration
         try:
-            # Combine the chunks into a unified source block for the AI.
-            source = "\n\n".join(r.content for r in retrieval_results)
-
             # Pass the query as part of the context for the AI.
             ai_context: dict[str, Any] = {"rag_query": request.query}
+
+            # Chunks are labelled with their ids so the answer can cite them.
+            # Parser-derived business rules are passed separately: the prompt
+            # presents them as authoritative facts that outrank any paraphrase.
+            rules = [
+                r
+                for r in retrieval_results
+                if r.metadata.get("chunk_type") == "business_rule"
+            ]
+            others = [r for r in retrieval_results if r not in rules]
+            if others and rules:
+                ai_context["business_rules"] = [_labelled(r) for r in rules]
+                source = "\n\n".join(_labelled(r) for r in others)
+            else:
+                source = "\n\n".join(_labelled(r) for r in retrieval_results)
 
             if request.modernization_context is not None:
                 ai_context["modernization_data"] = request.modernization_context
@@ -85,7 +105,28 @@ class RAGOrchestrator:
                 allow_unstructured=True,
             )
 
-            return RAGResult(request=request, context=context, ai_result=ai_result)
+            # Deterministic check that the answer's figures come from the
+            # context: an invented threshold is the costly failure here.
+            answer_text = "\n".join(
+                str(part)
+                for part in (ai_result.explanation, ai_result.documentation)
+                if part
+            )
+            grounding_texts = [r.content for r in retrieval_results]
+            if request.modernization_context is not None:
+                grounding_texts.append(
+                    json.dumps(dict(request.modernization_context), default=str)
+                )
+            ungrounded = find_ungrounded_figures(
+                answer_text, grounding_texts, request.query
+            )
+
+            return RAGResult(
+                request=request,
+                context=context,
+                ai_result=ai_result,
+                ungrounded_figures=tuple(ungrounded),
+            )
 
         except Exception as e:
             # Preserve context but record the AI failure. ai_error_type

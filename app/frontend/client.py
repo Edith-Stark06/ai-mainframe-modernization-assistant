@@ -247,7 +247,7 @@ class BackendClient:
         query: str,
         filename: Optional[str] = None,
         include_modernization_context: bool = False,
-        top_k: int = 5,
+        top_k: int = 8,
     ) -> Dict[str, Any]:
         """Send a chat query, optionally enriched with modernization context."""
         payload: Dict[str, Any] = {

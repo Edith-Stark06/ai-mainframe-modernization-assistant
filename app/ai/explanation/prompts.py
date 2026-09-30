@@ -7,6 +7,7 @@ Deterministic prompt builders for COBOL code explanation.
 from typing import Any, Optional
 
 from app.ai.context_formatting import format_modernization_context
+from app.ai.grounding import GROUNDING_RULES, RULES_HEADING
 
 
 def build_explanation_prompt(
@@ -42,6 +43,7 @@ def build_explanation_prompt(
         prompt_parts.append(
             "- Directly and specifically answer the user's question supplied below"
         )
+        prompt_parts.extend(GROUNDING_RULES)
 
     prompt_parts.append("\n=== COBOL SOURCE ===")
     prompt_parts.append(source.strip())
@@ -63,7 +65,9 @@ def build_explanation_prompt(
         prompt_parts.append("====================\n")
 
     if "business_rules" in ctx:
-        prompt_parts.append("=== BUSINESS RULES ===")
+        prompt_parts.append(
+            RULES_HEADING if ctx.get("rag_query") else "=== BUSINESS RULES ==="
+        )
         for rule in ctx["business_rules"]:
             prompt_parts.append(str(rule))
         prompt_parts.append("====================\n")

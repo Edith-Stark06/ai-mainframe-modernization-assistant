@@ -101,6 +101,61 @@ class ChromaIndex(VectorIndex):
 
         self._collection.upsert(**kwargs)
 
+    @staticmethod
+    def _where(
+        filter_metadata: dict[str, str | int | float | bool],
+    ) -> dict[str, Any]:
+        """ChromaDB needs exactly one top-level operator in a ``where``."""
+        if len(filter_metadata) == 1:
+            return dict(filter_metadata)
+        return {"$and": [{k: v} for k, v in filter_metadata.items()]}
+
+    def list_chunks(
+        self,
+        filter_metadata: dict[str, str | int | float | bool] | None = None,
+    ) -> list[RetrievalResult]:
+        kwargs: dict[str, Any] = {"include": ["documents", "metadatas"]}
+        if filter_metadata:
+            kwargs["where"] = self._where(filter_metadata)
+        result = self._collection.get(**kwargs)
+
+        ids = result.get("ids") or []
+        documents = result.get("documents") or []
+        metadatas = result.get("metadatas") or []
+        chunks: list[RetrievalResult] = []
+        for chunk_id, content, meta in zip(ids, documents, metadatas):
+            if not content or not str(content).strip():
+                continue
+            meta = meta or {}
+            idx_raw = meta.get("chunk_index", 0)
+            chunks.append(
+                RetrievalResult(
+                    chunk_id=chunk_id,
+                    document_id=str(meta.get("document_id", "")) or "unknown",
+                    content=str(content),
+                    chunk_index=(
+                        int(idx_raw) if isinstance(idx_raw, (int, float, str)) else 0
+                    ),
+                    metadata=meta,
+                    score=0.0,
+                )
+            )
+        chunks.sort(key=lambda r: (r.document_id, r.chunk_index, r.chunk_id))
+        return chunks
+
+    def delete(
+        self,
+        filter_metadata: dict[str, str | int | float | bool],
+    ) -> int:
+        if not filter_metadata:
+            raise ValueError("delete requires a non-empty metadata filter")
+        where = self._where(filter_metadata)
+        found = self._collection.get(where=where, include=[])
+        ids = found.get("ids") or []
+        if ids:
+            self._collection.delete(ids=ids)
+        return len(ids)
+
     def contains(self, chunk_id: str) -> bool:
         result = self._collection.get(ids=[chunk_id], include=[])
         return len(result["ids"]) > 0

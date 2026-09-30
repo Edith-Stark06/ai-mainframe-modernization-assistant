@@ -67,6 +67,38 @@ def _paragraph_spans(
     return spans
 
 
+_DATA_ITEM_RE = re.compile(r"^\s*(\d{1,2})\s+([A-Za-z0-9][A-Za-z0-9-]*)(?=[\s.]|$)")
+
+
+def _data_items(
+    lines: list[str], first: int, last: int
+) -> list[tuple[str, str, int, int, str]]:
+    """``(name, level, start line, end line, declaration text)`` for each
+    data-description entry (level 01-49, 66, 77, 88) in ``lines[first-1:last]``.
+
+    An entry runs until the line that ends with a period, so a declaration
+    continued over several lines stays in one chunk. ``FILLER`` is skipped
+    (it has no name to ask about).
+    """
+    items: list[tuple[str, str, int, int, str]] = []
+    i = first
+    while i <= last:
+        match = _DATA_ITEM_RE.match(lines[i - 1])
+        if not match or match.group(2).upper() == "FILLER":
+            i += 1
+            continue
+        start = i
+        parts = [lines[i - 1].strip()]
+        while not parts[-1].rstrip().endswith(".") and i < last:
+            i += 1
+            parts.append(lines[i - 1].strip())
+        items.append(
+            (match.group(2).upper(), match.group(1), start, i, " ".join(parts))
+        )
+        i += 1
+    return items
+
+
 def chunk_cobol_source(
     source_id: str,
     source: str,
@@ -108,6 +140,38 @@ def chunk_cobol_source(
                 location_key=f"div:{name}:{start}-{end}",
             )
         )
+
+    # one chunk per data item: a field's PICTURE and initial VALUE are exactly
+    # what a question about "the tax rate" needs, and inside a whole-division
+    # chunk they are diluted by every other field.
+    data_ranges = [
+        (
+            start,
+            div_headers[idx + 1][1] - 1 if idx + 1 < len(div_headers) else len(lines),
+        )
+        for idx, (name, start) in enumerate(div_headers)
+        if name == "DATA"
+    ]
+    for d_start, d_end in data_ranges:
+        for name, level, start, end, text in _data_items(lines, d_start, d_end):
+            prov = Provenance(
+                source_id=source_id,
+                source_type=source_type,
+                source_path=path,
+                program_source_id=source_id,
+                line_start=start,
+                line_end=end,
+                section="DATA DIVISION",
+                artifact_version=_artifact_version(),
+            )
+            chunks.append(
+                KnowledgeChunk.create(
+                    chunk_type=ChunkType.DATA_ITEM,
+                    content=f"Data item {name} (level {level}, line {start}): {text}",
+                    provenance=prov,
+                    location_key=f"data:{name}:{start}-{end}",
+                )
+            )
 
     # one chunk per paragraph
     for name, start, end in _paragraph_spans(source, paragraph_names or []):

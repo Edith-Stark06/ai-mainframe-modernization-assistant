@@ -1,0 +1,194 @@
+{
+  "program": "sales_report.cbl",
+  "cases": [
+    {
+      "id": "high_value_threshold",
+      "question": "At what order total does the status become HIGH VALUE?",
+      "evidence": [
+        "WS-TOTAL >= 50000"
+      ],
+      "answer": [
+        [
+          "50000",
+          "50,000",
+          "50 000"
+        ]
+      ]
+    },
+    {
+      "id": "discount_type_r",
+      "question": "What discount rate is applied to customer type R?",
+      "evidence": [
+        "WS-CUSTOMER-TYPE = 'R'",
+        "0.10"
+      ],
+      "answer": [
+        [
+          "10%",
+          "0.10",
+          "0.1",
+          "10 %"
+        ]
+      ]
+    },
+    {
+      "id": "discount_type_b",
+      "question": "What discount does a business customer (type B) get?",
+      "evidence": [
+        "0.15"
+      ],
+      "answer": [
+        [
+          "15%",
+          "0.15",
+          "15 %"
+        ]
+      ]
+    },
+    {
+      "id": "two_part_high_value_and_discount",
+      "question": "At what order total does the status become HIGH VALUE, and what happens to the customer's discount rate for type R?",
+      "evidence": [
+        "WS-TOTAL >= 50000",
+        "WS-CUSTOMER-TYPE = 'R'"
+      ],
+      "answer": [
+        [
+          "50000",
+          "50,000",
+          "50 000"
+        ],
+        [
+          "10%",
+          "0.10",
+          "0.1",
+          "10 %"
+        ]
+      ]
+    },
+    {
+      "id": "premium_category",
+      "question": "When is an order classified as PREMIUM?",
+      "evidence": [
+        "WS-SUBTOTAL > 10000"
+      ],
+      "answer": [
+        [
+          "10000",
+          "10,000",
+          "10 000"
+        ]
+      ]
+    },
+    {
+      "id": "tax_rate",
+      "question": "What tax rate does the program use?",
+      "evidence": [
+        "0.18"
+      ],
+      "answer": [
+        [
+          "18%",
+          "0.18",
+          "18 %"
+        ]
+      ]
+    },
+    {
+      "id": "order_limit",
+      "question": "What happens when the order count reaches the limit?",
+      "evidence": [
+        "WS-ORDER-COUNT >= 10"
+      ],
+      "answer": [
+        [
+          "ORDER LIMIT REACHED",
+          "10"
+        ]
+      ]
+    },
+    {
+      "id": "zero_order_warning",
+      "question": "When is the zero value order warning shown?",
+      "evidence": [
+        "WS-TOTAL = 0"
+      ],
+      "answer": [
+        [
+          "ZERO VALUE ORDER",
+          "WS-TOTAL = 0",
+          "zero"
+        ]
+      ]
+    },
+    {
+      "id": "console_input",
+      "question": "Which values does the program read from the user?",
+      "evidence": [
+        "ACCEPT WS-CUSTOMER-NAME",
+        "ACCEPT WS-UNIT-PRICE"
+      ],
+      "answer": [
+        [
+          "ACCEPT",
+          "customer name",
+          "WS-CUSTOMER-NAME"
+        ],
+        [
+          "quantity",
+          "WS-QUANTITY"
+        ]
+      ]
+    },
+    {
+      "id": "two_part_subtotal_and_grand_total",
+      "question": "How is the subtotal calculated, and where is the grand total accumulated?",
+      "evidence": [
+        "WS-QUANTITY * WS-UNIT-PRICE",
+        "ADD WS-TOTAL TO WS-GRAND-TOTAL"
+      ],
+      "answer": [
+        [
+          "quantity",
+          "WS-QUANTITY"
+        ],
+        [
+          "grand total",
+          "WS-GRAND-TOTAL"
+        ]
+      ]
+    },
+    {
+      "id": "three_part",
+      "question": "What is the tax rate, when is the order flagged PREMIUM, and what is shown at the end of processing?",
+      "evidence": [
+        "0.18",
+        "WS-SUBTOTAL > 10000",
+        "SALES PROCESSING SUMMARY"
+      ]
+    },
+    {
+      "id": "main_call_order",
+      "question": "In what order does the main paragraph call the others?",
+      "evidence": [
+        "PERFORM INITIALIZE-DATA",
+        "PERFORM DISPLAY-SUMMARY"
+      ]
+    },
+    {
+      "id": "final_status",
+      "question": "What status is shown at the very end of the run?",
+      "evidence": [
+        "MOVE 'COMPLETE' TO WS-STATUS"
+      ]
+    },
+    {
+      "id": "discount_logic_overview",
+      "question": "Explain the discount logic",
+      "evidence": [
+        "0.10",
+        "0.15"
+      ]
+    }
+  ]
+}

@@ -74,6 +74,8 @@ class OpenAICompatibleProvider(LLMProvider):
             ``https://integrate.api.nvidia.com/v1``.
         timeout_s: Seconds to wait for one completion.
         transport: Optional ``httpx`` transport, for tests.
+        default_temperature: Temperature sent when a request does not set one
+            (``None`` leaves the service's own default).
 
     Raises:
         LLMConfigurationError: *api_key* or *base_url* is empty.
@@ -86,6 +88,7 @@ class OpenAICompatibleProvider(LLMProvider):
         base_url: str,
         timeout_s: float = DEFAULT_TIMEOUT_S,
         transport: httpx.BaseTransport | None = None,
+        default_temperature: float | None = None,
     ) -> None:
         if not api_key:
             raise LLMConfigurationError("An API key is required.")
@@ -93,6 +96,7 @@ class OpenAICompatibleProvider(LLMProvider):
             raise LLMConfigurationError("A base URL is required.")
         self.model = model
         self.base_url = base_url.rstrip("/")
+        self._default_temperature = default_temperature
         self._client = httpx.Client(
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=httpx.Timeout(timeout_s, connect=15.0),
@@ -125,8 +129,13 @@ class OpenAICompatibleProvider(LLMProvider):
         }
         if request.max_tokens is not None:
             body["max_tokens"] = request.max_tokens
-        if request.temperature is not None:
-            body["temperature"] = request.temperature
+        temperature = (
+            request.temperature
+            if request.temperature is not None
+            else self._default_temperature
+        )
+        if temperature is not None:
+            body["temperature"] = temperature
 
         try:
             response = self._client.post(f"{self.base_url}/chat/completions", json=body)
