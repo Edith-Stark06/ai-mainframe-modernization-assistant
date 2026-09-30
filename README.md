@@ -411,6 +411,16 @@ By default `LLM_PROVIDER=none` and no LLM is configured — AI-dependent feature
 2. Pull a model: `ollama pull llama3` (or a smaller one, e.g. `qwen2.5:0.5b`, for a lighter footprint).
 3. Set `LLM_PROVIDER=ollama` and `OLLAMA_MODEL=<model tag>` in `.env` (see `.env.example`).
 
+## Optional: hosted Claude models (Anthropic)
+
+Instead of a local model, the platform can use Claude through the Anthropic API:
+
+1. Get an API key (or a bearer token if you go through a gateway).
+2. In `.env` (git-ignored), set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY=<key>`. Optionally set `ANTHROPIC_MODEL` (default `claude-sonnet-5-5`), `ANTHROPIC_AUTH_TOKEN`, and `ANTHROPIC_BASE_URL` for a proxy/gateway.
+3. Restart the API. With `docker compose`, the same variables are passed through to the `api` container.
+
+If `LLM_PROVIDER=anthropic` is set but no key or token is, the API reports `LLM_PROVIDER_NOT_CONFIGURED` (and logs a warning) rather than failing on every request. A rejected key or model surfaces as a configuration error; rate limits, outages and network failures as "provider unavailable". Keys are held as secrets and never logged. Note that **your COBOL-derived prompts are sent to the provider** — use the local Ollama backend if source code must stay on your machine. The `temperature` field of a request is accepted but not sent, because the current Messages API takes no sampling parameters. This provider is tested against the real SDK with a mocked HTTP layer; it has not been exercised against the live API in this repository's CI.
+
 ---
 
 # 🔬 Compiler Driver

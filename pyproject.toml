@@ -37,7 +37,8 @@ dependencies = [
     "aiofiles==25.1.0",
     "loguru==0.7.3",
     "chardet==7.6.0",
-    "httpx==0.28.1"
+    "httpx==0.28.1",
+    "anthropic==1.9.0"
 ]
 
 [project.optional-dependencies]

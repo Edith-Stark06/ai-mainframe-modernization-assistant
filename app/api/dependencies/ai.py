@@ -5,10 +5,12 @@ Provides dependencies for injecting configured AI orchestrators and providers.
 """
 
 from fastapi import Depends
+from loguru import logger
 
 from app.ai.documentation.service import DocumentationGenerationService
 from app.ai.explanation.service import CodeExplanationService
 from app.ai.orchestration.service import AIAnalysisOrchestrator
+from app.ai.providers.anthropic import AnthropicProvider
 from app.ai.providers.base import LLMProvider
 from app.ai.providers.ollama import OllamaProvider
 from app.core.config import get_settings
@@ -19,10 +21,11 @@ def get_llm_provider() -> LLMProvider | None:
     Returns the configured production LLM provider.
 
     Returns ``None`` (no provider configured) unless
-    ``settings.llm_provider`` is explicitly set to ``"ollama"`` -- an
-    operator must opt in, since Ollama may not be installed or running
-    in every deployment; this endpoint must never silently assume a
-    local model is available. When enabled, returns a real
+    ``settings.llm_provider`` is explicitly set to ``"ollama"`` or
+    ``"anthropic"`` -- an operator must opt in; this endpoint must never
+    silently assume a model is available. ``"anthropic"`` without any
+    credential is also "not configured" (``None``), never a provider that
+    would fail on every call. When ``"ollama"`` is enabled, returns a real
     :class:`~app.ai.providers.ollama.OllamaProvider` (constructing it
     does not itself contact the server -- a genuine outage still
     surfaces as ``LLMProviderUnavailableError`` on the first real
@@ -35,9 +38,32 @@ def get_llm_provider() -> LLMProvider | None:
     Tests override this dependency to inject fake providers.
     """
     settings = get_settings()
-    if settings.llm_provider != "ollama":
-        return None
-    return OllamaProvider(model=settings.ollama_model, host=settings.ollama_host)
+    if settings.llm_provider == "ollama":
+        return OllamaProvider(model=settings.ollama_model, host=settings.ollama_host)
+    if settings.llm_provider == "anthropic":
+        api_key = (
+            settings.anthropic_api_key.get_secret_value().strip()
+            if settings.anthropic_api_key
+            else ""
+        )
+        auth_token = (
+            settings.anthropic_auth_token.get_secret_value().strip()
+            if settings.anthropic_auth_token
+            else ""
+        )
+        if not api_key and not auth_token:
+            logger.warning(
+                "LLM_PROVIDER=anthropic but neither ANTHROPIC_API_KEY nor "
+                "ANTHROPIC_AUTH_TOKEN is set; treating the LLM as not configured."
+            )
+            return None
+        return AnthropicProvider(
+            model=settings.anthropic_model,
+            api_key=api_key or None,
+            auth_token=auth_token or None,
+            base_url=settings.anthropic_base_url.strip() or None,
+        )
+    return None
 
 
 def get_ai_orchestrator(
