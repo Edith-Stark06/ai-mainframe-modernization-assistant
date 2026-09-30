@@ -141,7 +141,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
         status = response.status_code
         if status >= 400:
-            detail = _error_detail(response)
+            detail = _error_detail(response) or response.reason_phrase or "no detail"
             if status == 429 or status >= 500:
                 raise LLMProviderUnavailableError(f"LLM API error ({status}): {detail}")
             raise LLMConfigurationError(
