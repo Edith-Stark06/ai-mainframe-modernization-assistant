@@ -68,17 +68,21 @@ def _key(value: Decimal) -> str:
 _FORMAT_WIDTH = re.compile(r"%-?0?(\d+)(?:\.\d+)?[a-zA-Z]")
 
 
+#: A number glued to a unit ("1.3s", "250ms", "12KB"): the digit-run pattern
+#: skips it because a letter follows, but it is an ordinary figure.
+_UNIT_NUMBER = re.compile(
+    r"(?<![\w.\-])(\d+(?:\.\d+)?)(?:ms|s|m|h|kb|mb|gb|b)\b", re.IGNORECASE
+)
+
+
 def _figures(text: str) -> list[tuple[str, Decimal]]:
     found: list[tuple[str, Decimal]] = []
     stripped = _CITATION.sub(" ", text)
-    for match in _NUMBER.finditer(stripped):
-        value = _value(match.group(1))
-        if value is not None:
-            found.append((match.group(1), value))
-    for match in _FORMAT_WIDTH.finditer(stripped):
-        value = _value(match.group(1))
-        if value is not None:
-            found.append((match.group(1), value))
+    for pattern in (_NUMBER, _FORMAT_WIDTH, _UNIT_NUMBER):
+        for match in pattern.finditer(stripped):
+            value = _value(match.group(1))
+            if value is not None:
+                found.append((match.group(1), value))
     return found
 
 

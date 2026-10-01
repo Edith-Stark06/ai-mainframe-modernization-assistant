@@ -49,6 +49,14 @@ class RAGOrchestrator:
             filter_metadata=request.filters,
         )
 
+        # Caller-supplied evidence (e.g. the validation results) comes first; a
+        # searched chunk with the same id is not repeated.
+        supplied = list(request.extra_chunks)
+        supplied_ids = {chunk.chunk_id for chunk in supplied}
+        retrieval_results = supplied + [
+            r for r in retrieval_results if r.chunk_id not in supplied_ids
+        ]
+
         context = RetrievedContext(results=tuple(retrieval_results))
 
         # 2. Return early if no AI requested

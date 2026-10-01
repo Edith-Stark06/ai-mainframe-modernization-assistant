@@ -77,3 +77,16 @@ def test_a_width_the_context_does_not_have_is_still_flagged() -> None:
 def test_fullwidth_bracket_citations_are_not_figures() -> None:
     """A model citing evidence as 【14】 must not have '14' flagged."""
     assert check("It displays the summary 【14】 and 【16】.") == []
+
+
+def test_a_number_glued_to_a_unit_in_the_context_grounds_the_spoken_form() -> None:
+    """Context "compiled in 1.3s"; the answer says "1.3 seconds"."""
+    context = ["Java compilation details: 2 file(s) compiled in 1.3s."]
+    assert find_ungrounded_figures("It compiled in 1.3 seconds.", context, "") == []
+
+
+def test_a_figure_that_is_not_in_the_context_is_still_flagged_with_units() -> None:
+    context = ["compiled in 1.3s"]
+    assert find_ungrounded_figures("It compiled in 9.9 seconds.", context, "") == [
+        "9.9"
+    ]

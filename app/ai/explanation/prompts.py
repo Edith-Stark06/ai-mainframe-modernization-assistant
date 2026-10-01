@@ -106,6 +106,11 @@ def _build_question_prompt(source: str, ctx: dict[str, Any]) -> str:
         "summarize gets a complete answer: one lead sentence, then one bullet "
         "per item or step, each stating what it does (for a rule, its "
         "condition and effect), never just a name or identifier.",
+        "- Questions about the converted Java, its compilation, its tests or its "
+        "validation results are questions about the program: answer them from the "
+        "Validation Center results when they are in the context, reporting every "
+        "status exactly as given. INCONCLUSIVE and NOT_AVAILABLE mean it was not "
+        "verified; never describe them as passed.",
         "- If the message is not a question about the program (small talk, "
         "feedback, or a topic unrelated to it), reply in one short, natural "
         "sentence and offer to help with the program. Do not describe the "

@@ -2,27 +2,124 @@
   "questions": [
     {
       "question": "analyze the converted java code",
-      "answer": [["calculateOrder"], ["initializeData", "processOrder"]]
+      "answer": [
+        [
+          "calculateOrder"
+        ],
+        [
+          "initializeData",
+          "processOrder"
+        ]
+      ]
     },
     {
       "question": "Explain what this program does",
-      "answer": [["discount"], ["tax"]]
+      "answer": [
+        [
+          "discount"
+        ],
+        [
+          "tax"
+        ]
+      ]
     },
     {
       "question": "List the business rules in this program",
-      "answer": [["50000", "HIGH VALUE"], ["10000", "PREMIUM"], ["0.10", "10%", "type R", "'R'"]]
+      "answer": [
+        [
+          "50000",
+          "HIGH VALUE"
+        ],
+        [
+          "10000",
+          "PREMIUM"
+        ],
+        [
+          "0.10",
+          "10%",
+          "type R",
+          "'R'"
+        ]
+      ]
     },
     {
       "question": "What are the main risks if we modernize this program?",
-      "answer": [["shared", "mutable", "WS-STATUS", "WS-SUBTOTAL", "input", "ACCEPT"]]
+      "answer": [
+        [
+          "shared",
+          "mutable",
+          "WS-STATUS",
+          "WS-SUBTOTAL",
+          "input",
+          "ACCEPT"
+        ]
+      ]
     },
     {
       "question": "How does the program handle customer discounts?",
-      "answer": [["0.10", "10%"], ["0.15", "15%"]]
+      "answer": [
+        [
+          "0.10",
+          "10%"
+        ],
+        [
+          "0.15",
+          "15%"
+        ]
+      ]
     },
     {
       "question": "Walk me through what happens when an order is processed",
-      "answer": [["CALCULATE-ORDER"], ["APPLY-DISCOUNT", "discount"], ["CALCULATE-TAX", "tax"], ["FINALIZE-ORDER"]]
+      "answer": [
+        [
+          "CALCULATE-ORDER"
+        ],
+        [
+          "APPLY-DISCOUNT",
+          "discount"
+        ],
+        [
+          "CALCULATE-TAX",
+          "tax"
+        ],
+        [
+          "FINALIZE-ORDER"
+        ]
+      ]
+    },
+    {
+      "question": "analyze the validation of the java code compilation",
+      "answer": [
+        [
+          "compil"
+        ],
+        [
+          "pass"
+        ]
+      ]
+    },
+    {
+      "question": "did the tests pass?",
+      "answer": [
+        [
+          "pass"
+        ],
+        [
+          "5"
+        ]
+      ]
+    },
+    {
+      "question": "is it ready for production?",
+      "answer": [
+        [
+          "inconclusive",
+          "not ready",
+          "not yet",
+          "not verified",
+          "no,"
+        ]
+      ]
     }
   ]
 }

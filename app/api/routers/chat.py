@@ -24,13 +24,18 @@ from app.rag.orchestration.service import RAGOrchestrator
 from app.api.dependencies.ai import get_ai_orchestrator
 from app.api.dependencies.workspace import resolve_workspace_source
 from app.ai.orchestration.service import AIAnalysisOrchestrator
+from app.api.services.pipeline import run_pipeline_for_source
+from app.api.services.pipeline_cache import PipelineCache, get_pipeline_cache
+from app.api.services.validation_context import build_validation_chunk
 from app.rag.answer_format import clean_answer
+from app.rag.retrieval.models import RetrievalResult
 from app.rag.intent import (
     Intent,
     classify_intent,
     conversational_reply,
     retrieval_query,
     wants_broad_context,
+    wants_validation_context,
 )
 from app.rag.ingestion import index_program
 from app.rag.retrieval.hybrid import HybridRetrievalService
@@ -123,12 +128,39 @@ def _classify_ai_error(rag_result: RAGResult) -> tuple[ChatErrorCode, str]:
     return code, _SAFE_MESSAGES[code]
 
 
+def _validation_evidence(
+    request: ChatRequest,
+    workspace_manager: WorkspaceManager,
+    cache: PipelineCache,
+) -> tuple[RetrievalResult, ...]:
+    """
+    The Validation Center results as evidence, when the question is about them.
+
+    "Does the converted Java compile?" is answered by the validation stages, not
+    by anything in the searchable code, so without this the model had nothing to
+    answer from. Computed through the shared pipeline cache (the same
+    computation the Validation Center runs). If it cannot be computed the chat
+    carries on without it: an unavailable result is never invented.
+    """
+    if not (request.filename and wants_validation_context(request.query)):
+        return ()
+    try:
+        bundle, mb = run_pipeline_for_source(
+            request.workspace_id, request.filename, workspace_manager, cache
+        )
+        return (build_validation_chunk(bundle, mb, request.filename),)
+    except Exception as e:  # noqa: BLE001 - includes the 404/403 HTTPExceptions
+        logger.warning(f"Validation results unavailable for chat: {e}")
+        return ()
+
+
 @router.post("/", response_model=ChatResponse)
 def chat_endpoint(
     request: ChatRequest,
     rag_orchestrator: RAGOrchestrator = Depends(get_rag_orchestrator),
     analysis_service: AnalysisService = Depends(get_analysis_service),
     workspace_manager: WorkspaceManager = Depends(get_workspace_manager),
+    cache: PipelineCache = Depends(get_pipeline_cache),
 ):
     try:
         capabilities = [AICapability[c] for c in request.ai_capabilities]
@@ -215,6 +247,7 @@ def chat_endpoint(
         modernization_context=modernization_data,
         history=history,
         retrieval_query=retrieval_query(request.query, history),
+        extra_chunks=_validation_evidence(request, workspace_manager, cache),
     )
 
     try:

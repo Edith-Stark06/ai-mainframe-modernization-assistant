@@ -32,6 +32,9 @@ class RAGRequest:
     #: What to search with when it differs from ``query`` (a short follow-up is
     #: searched together with the previous question). ``None`` = ``query``.
     retrieval_query: str | None = None
+    #: Evidence supplied by the caller rather than found by search (e.g. the
+    #: Validation Center results); placed first among the retrieved context.
+    extra_chunks: tuple[RetrievalResult, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.query or not self.query.strip():
