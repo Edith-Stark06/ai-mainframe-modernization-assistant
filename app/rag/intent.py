@@ -54,6 +54,7 @@ __all__ = [
     "conversational_reply",
     "retrieval_query",
     "wants_broad_context",
+    "wants_validation_context",
 ]
 
 
@@ -145,6 +146,40 @@ _BROAD = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+
+
+#: Words that make a question about the validation / compilation / test results
+#: of the converted Java rather than about the program's own code.
+_VALIDATION = re.compile(
+    r"\b("
+    r"validat\w*|compil\w*|javac|build|builds|"
+    r"tests?|testing|unit[- ]tests?|coverage|"
+    r"equivalen\w*|behaviou?ral|self[- ]repair|"
+    r"unsupported (syntax|constructs?)|"
+    r"verified|verification|confidence|"
+    r"ready (to|for)|production[- ]ready|"
+    r"(did|does|do|has|have|will|would) (it|this|the (java|code|program|conversion)) (pass|fail|work|run)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def wants_validation_context(question: str) -> bool:
+    """
+    ``True`` if *question* is about the validation results of the converted
+    Java (compilation, tests, coverage, equivalence, readiness).
+
+    Those results are not part of the searchable code, so the chat adds them
+    as evidence when this is true. A false positive costs only an extra
+    evidence item, so the pattern errs toward matching.
+
+    Args:
+        question: The user's question.
+
+    Returns:
+        Whether to attach the Validation Center results.
+    """
+    return bool(_VALIDATION.search(question))
 
 
 def wants_broad_context(question: str) -> bool:
@@ -243,6 +278,7 @@ _EXAMPLES = (
     "which business rules it applies",
     "what a specific field, paragraph or condition does",
     "how the converted Java works",
+    "whether the converted Java compiles and passes validation",
     "what the modernization risks are",
 )
 
