@@ -276,6 +276,29 @@ def test_send_chat_message_omits_filename_when_absent(monkeypatch):
     assert "filename" not in captured["json"]
 
 
+def test_send_chat_message_sends_history_only_when_there_is_some(monkeypatch):
+    sent = []
+
+    def fake_request(self, method, url, **kwargs):
+        sent.append(kwargs.get("json"))
+        return _json_response(
+            200,
+            {"query": "q", "answer": "a", "context": [], "error": None},
+        )
+
+    monkeypatch.setattr(httpx.Client, "request", fake_request)
+
+    client = BackendClient()
+    turns = [{"role": "user", "content": "What discount does type R get?"}]
+    client.send_chat_message(workspace_id="ws-1", query="and B?", history=turns)
+    client.send_chat_message(workspace_id="ws-1", query="and B?", history=[])
+    client.send_chat_message(workspace_id="ws-1", query="and B?")
+
+    assert sent[0]["history"] == turns
+    assert "history" not in sent[1]
+    assert "history" not in sent[2]
+
+
 @pytest.mark.parametrize(
     "status_code,expected_message",
     [

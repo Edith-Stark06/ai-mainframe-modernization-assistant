@@ -44,7 +44,7 @@ class RAGOrchestrator:
         """
         # 1. Execute Retrieval
         retrieval_results = self.retrieval_service.search(
-            query=request.query,
+            query=request.retrieval_query or request.query,
             top_k=request.top_k,
             filter_metadata=request.filters,
         )
@@ -76,6 +76,8 @@ class RAGOrchestrator:
         try:
             # Pass the query as part of the context for the AI.
             ai_context: dict[str, Any] = {"rag_query": request.query}
+            if request.history:
+                ai_context["conversation"] = list(request.history)
 
             # Chunks are numbered 1..N in retrieval order -- the same numbers
             # the Evidence list shows -- so the answer can cite them briefly.

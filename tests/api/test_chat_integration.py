@@ -286,13 +286,13 @@ def test_chat_answer_is_readable_text_not_a_python_repr(
 def test_chat_plain_prose_reply_is_shown_instead_of_failing(
     isolated_chat_index: Path, tmp_path: Path
 ) -> None:
-    """Regression: a model that answers in plain prose (e.g. to "hi") used
-    to fail the whole request with LLM_GENERATION_FAILED because the reply
-    lacked 'Summary:'/'Explanation:' headings."""
-    query = "hi"
+    """Regression: a model that answers in plain prose used to fail the whole
+    request with LLM_GENERATION_FAILED because the reply lacked
+    'Summary:'/'Explanation:' headings."""
+    query = "What does WS-FLAG control in this program?"
     workspace_id = str(uuid.uuid4())
     _seed_chat_index(tmp_path, query, workspace_id=workspace_id, filename="")
-    reply = "Hello! How can I help with this program?"
+    reply = "WS-FLAG gates processing and is checked first."
     _override_ai_with_reply(reply)
 
     data = _ask(workspace_id, query)

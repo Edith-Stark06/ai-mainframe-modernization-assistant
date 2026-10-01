@@ -25,6 +25,13 @@ from app.api.dependencies.ai import get_ai_orchestrator
 from app.api.dependencies.workspace import resolve_workspace_source
 from app.ai.orchestration.service import AIAnalysisOrchestrator
 from app.rag.answer_format import clean_answer
+from app.rag.intent import (
+    Intent,
+    classify_intent,
+    conversational_reply,
+    retrieval_query,
+    wants_broad_context,
+)
 from app.rag.ingestion import index_program
 from app.rag.retrieval.hybrid import HybridRetrievalService
 from app.rag.indexing.chroma import ChromaIndex
@@ -33,6 +40,13 @@ from app.api.dependencies.rag import get_embedding_provider
 from app.core.config import get_settings
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+#: How many earlier turns of the conversation are used to understand a follow-up.
+_HISTORY_TURNS = 6
+
+#: Chunks retrieved for a question that needs the whole picture ("list the rules",
+#: "walk me through an order"): the default few would silently leave parts out.
+_BROAD_TOP_K = 16
 
 #: the chat vector index's own fixed identity -- shared by every
 #: reader/writer (get_rag_orchestrator's retrieval, index_workspace_file's
@@ -121,6 +135,29 @@ def chat_endpoint(
     except KeyError:
         raise HTTPException(status_code=400, detail="Invalid AI capability requested")
 
+    # An invalid request is rejected whatever the message says.
+    if request.include_modernization_context and not request.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="Filename is required when include_modernization_context is true",
+        )
+
+    # "hi", "thanks, that works", "bye", "what can you do?" are conversation, not
+    # questions about the code: answer them directly. Retrieving and asking the
+    # model made it describe the program in reply to "hi".
+    intent = classify_intent(request.query)
+    if intent is not Intent.QUESTION:
+        return ChatResponse(
+            query=request.query,
+            answer=conversational_reply(intent, request.filename),
+            context=[],
+            intent=intent.value,
+        )
+
+    history = tuple((turn.role, turn.content) for turn in request.history)[
+        -_HISTORY_TURNS:
+    ]
+
     filters = {"workspace_id": str(request.workspace_id)}
     if request.filename:
         filters["filename"] = request.filename
@@ -168,10 +205,16 @@ def chat_endpoint(
 
     rag_request = RAGRequest(
         query=request.query,
-        top_k=request.top_k,
+        top_k=(
+            max(request.top_k, _BROAD_TOP_K)
+            if wants_broad_context(request.query)
+            else request.top_k
+        ),
         filters=filters,
         ai_capabilities=frozenset(capabilities),
         modernization_context=modernization_data,
+        history=history,
+        retrieval_query=retrieval_query(request.query, history),
     )
 
     try:

@@ -44,7 +44,7 @@ _NUMBER = re.compile(
     r"(?<![\w.\-])(\d{1,3}(?:[ ,  ]\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\w\-])"
 )
 # Chunk-id citations such as [business_rule-0b43ac...] contain digits.
-_CITATION = re.compile(r"\[[^\]]*\]")
+_CITATION = re.compile("\\[[^\\]]*\\]|\u3010[^\u3011]*\u3011")
 _SEPARATORS = re.compile(r"[ ,  ]")
 
 #: Whole numbers below this are counts/enumerations ("2 steps"), not figures.

@@ -1,9 +1,16 @@
 from enum import Enum
 
 from pydantic import BaseModel, Field, StringConstraints
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Literal, Optional
 from typing_extensions import Annotated
 import uuid
+
+
+class ChatTurn(BaseModel):
+    """One earlier message of the conversation (oldest first in a request)."""
+
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=4000)
 
 
 class ChatRequest(BaseModel):
@@ -17,6 +24,9 @@ class ChatRequest(BaseModel):
     ] = None
     include_modernization_context: bool = False
     ai_capabilities: List[str] = Field(default_factory=lambda: ["EXPLANATION"])
+    #: Recent turns, so a follow-up such as "and for type B?" can be understood.
+    #: Only the last few are used.
+    history: List[ChatTurn] = Field(default_factory=list, max_length=20)
 
 
 class ChatErrorCode(str, Enum):
@@ -66,6 +76,9 @@ class ChatResponse(BaseModel):
     #: Figures in the answer not found in the retrieved context (also flagged
     #: in the answer text itself).
     ungrounded_figures: List[str] = Field(default_factory=list)
+    #: What the message was: "question", or a conversational "greeting",
+    #: "thanks", "farewell" or "help" answered without searching the code.
+    intent: str = "question"
 
 
 class ChatIndexRequest(BaseModel):

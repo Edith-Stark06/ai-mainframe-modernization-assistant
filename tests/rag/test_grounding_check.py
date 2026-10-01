@@ -72,3 +72,8 @@ def test_a_printf_width_in_the_context_grounds_the_number() -> None:
 def test_a_width_the_context_does_not_have_is_still_flagged() -> None:
     context = ['String.format("%012d", x)']
     assert find_ungrounded_figures("It is padded to 15 digits.", context, "") == ["15"]
+
+
+def test_fullwidth_bracket_citations_are_not_figures() -> None:
+    """A model citing evidence as 【14】 must not have '14' flagged."""
+    assert check("It displays the summary 【14】 and 【16】.") == []

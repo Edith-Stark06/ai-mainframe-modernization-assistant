@@ -95,6 +95,35 @@ Limits: the counts measure readability noise, not quality of the prose; the tabl
 non-citation column joined by " — ", which reads well for two or three columns and less well for many; the length
 limits are requested in the prompt, not enforced.
 
+## Understanding the message
+
+Chat used to treat every message as a question about the code and reuse the *explain-the-program* prompt
+("what the program does, major steps, conditions, data"). So "hi" got "The user's input was simply 'hi'", and
+"okay cool its working good" got an unrelated tour of `WS-STATUS`; a specific question like "what is the tax rate?"
+got a mini-essay. Now the message is understood first (`app/rag/intent.py`, deterministic rules, no model call):
+
+| Message | What happens |
+|---|---|
+| Greeting, thanks/acknowledgement, goodbye, "what can you do?" | Answered instantly (~0.3 s) with a short reply that names the file and states no program facts. No retrieval, no model call. `intent` in the response says which. |
+| A question | Retrieved and answered by the model with a **question-answering prompt**: answer exactly what was asked and only that; a specific question gets one or two sentences, a list/explain/walk-through/analyze request gets a lead sentence plus one bullet per item; anything unrelated to the program gets one short sentence and an offer to help. |
+| A follow-up ("and for type B?") | Searched together with the previous question, and the last few turns are shown to the model (the UI sends them as `history`). |
+| A broad question (list, all, walk me through, analyze, overview) | `top_k` is raised to 16 so the answer is not built from only the best few chunks. |
+
+The classifier is deliberately conservative: a question mark, a question/request word ("what", "list", "explain",
+"rules", "code"...) or a code-looking token (`WS-TOTAL`, `50000`) makes a message a question, so "thanks, what is the
+tax rate?" and "this tax rate looks good" are not swallowed as pleasantries; an acknowledgement must consist only of
+acknowledgement words (typos tolerated: "wokring").
+
+Measured live on 16 questions (10 specific, 6 open-ended such as "list the business rules" and "walk me through an
+order"), `openai/gpt-oss-20b` via NVIDIA: **16/16 expected facts present**, zero readability noise, specific answers
+8-28 words, list/walk-through answers 90-270 words. A first version of the prompt told the model to answer "only what
+was asked" for everything; the open-ended fact checks caught that it then returned a bare list of rule ids and a one-line
+program summary, which is why the prompt now distinguishes the kind of request.
+
+Limits: the rules cover English; "off topic" is handled by the prompt (the model replies briefly), not by a rule, so
+the reply wording varies; a follow-up that does not look like one (a long message that depends on earlier context) is
+searched as written, though the model still sees the conversation.
+
 ## Limits
 
 * The unverified-figure check compares numbers, not meaning: a number that appears elsewhere in the context but is

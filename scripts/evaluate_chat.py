@@ -49,10 +49,17 @@ from app.rag.style import measure_style  # noqa: E402
 _TIMEOUT_S = 660.0
 
 
+def _norm(text: str) -> str:
+    """Lower-case; unify the non-breaking spaces and hyphens models like to use."""
+    for odd in ("‑", "‐", "‒", "–"):
+        text = text.replace(odd, "-")
+    return " ".join(text.lower().split())
+
+
 def _check(answer: str, groups: list[list[str]]) -> list[list[str]]:
     """The groups for which none of the alternatives is in *answer*."""
-    text = answer.lower()
-    return [g for g in groups if not any(alt.lower() in text for alt in g)]
+    text = _norm(answer)
+    return [g for g in groups if not any(_norm(alt) in text for alt in g)]
 
 
 def main() -> int:
@@ -79,8 +86,15 @@ def main() -> int:
     open_questions = json.loads(Path(args.questions).read_text(encoding="utf-8"))[
         "questions"
     ]
+    # An open question is either a plain string (style only) or
+    # {"question": ..., "answer": [[alt, ...], ...]} (style and facts).
     jobs = [(c["id"], c["question"], c["answer"]) for c in cases] + [
-        (f"open_{i + 1}", q, []) for i, q in enumerate(open_questions)
+        (
+            f"open_{i + 1}",
+            q if isinstance(q, str) else q["question"],
+            [] if isinstance(q, str) else q.get("answer", []),
+        )
+        for i, q in enumerate(open_questions)
     ]
     base = f"{args.api}/api/v1/chat"
 

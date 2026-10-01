@@ -51,6 +51,10 @@ def _render_error(error_code: Optional[str], message: str) -> None:
     st.caption(message)
 
 
+#: How many earlier messages are sent along with a question.
+_HISTORY_TURNS = 6
+
+
 def _render_answer(chat_res: Dict[str, Any]) -> str:
     answer = chat_res.get("answer") or ""
     st.write(answer)
@@ -138,6 +142,14 @@ def render_chat(
     with st.chat_message("user"):
         st.write(prompt)
 
+    # The turns before this question, so "and for type B?" can be understood.
+    # Sent only when there are some: a first message goes out exactly as before.
+    history = [
+        {"role": m["role"], "content": str(m["content"])}
+        for m in st.session_state.messages[:-1][-_HISTORY_TURNS:]
+    ]
+    extra: Dict[str, Any] = {"history": history} if history else {}
+
     with st.chat_message("assistant"):
         _ensure_indexed(client, workspace_id, filename)
         with st.spinner("Thinking..."):
@@ -147,6 +159,7 @@ def render_chat(
                     query=prompt,
                     filename=filename,
                     include_modernization_context=include_context,
+                    **extra,
                 )
             except BackendAPIError as e:
                 st.error(e.message)

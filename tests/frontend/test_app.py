@@ -563,6 +563,7 @@ def _fake_chat_ok(
     filename=None,
     include_modernization_context=False,
     top_k=5,
+    **_extra,
 ):
     return {
         "query": query,
@@ -686,3 +687,36 @@ def test_chat_evidence_is_labelled_with_the_number_the_answer_cites(monkeypatch)
     assert any(c.startswith("[2] WS-TOTAL >= 50000") for c in captions), captions
     assert any(c.startswith("[1] MAIN-PARA.") for c in captions), captions
     assert not any("business_rule-cccc2222dddd" in c for c in captions)
+
+
+def test_chat_sends_earlier_turns_with_a_follow_up_but_not_with_the_first_message(
+    monkeypatch,
+):
+    calls = []
+
+    def fake_chat(self, workspace_id, query, filename=None, **kwargs):
+        calls.append({"query": query, **kwargs})
+        return {
+            "query": query,
+            "answer": f"Answer to: {query}",
+            "context": [],
+            "error": None,
+            "modernization_data": None,
+        }
+
+    monkeypatch.setattr(
+        BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_TWO_FILES
+    )
+    monkeypatch.setattr(BackendClient, "send_chat_message", fake_chat)
+
+    at = _make_app()
+    _load_workspace(at)
+    _open_view(at, "Modernization Chat")
+    at.chat_input(key="chat_input").set_value("What discount does type R get?").run()
+    at.chat_input(key="chat_input").set_value("and for type B?").run()
+
+    assert "history" not in calls[0]  # the first message goes out as before
+    assert calls[1]["history"] == [
+        {"role": "user", "content": "What discount does type R get?"},
+        {"role": "assistant", "content": "Answer to: What discount does type R get?"},
+    ]

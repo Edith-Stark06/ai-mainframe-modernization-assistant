@@ -26,6 +26,12 @@ class RAGRequest:
     )
     ai_capabilities: frozenset[AICapability] = field(default_factory=frozenset)
     modernization_context: Mapping[str, Any] | None = None
+    #: Earlier chat turns as ``(role, text)``, oldest first. Shown to the model
+    #: so a follow-up can be understood; never a source of facts.
+    history: tuple[tuple[str, str], ...] = ()
+    #: What to search with when it differs from ``query`` (a short follow-up is
+    #: searched together with the previous question). ``None`` = ``query``.
+    retrieval_query: str | None = None
 
     def __post_init__(self) -> None:
         if not self.query or not self.query.strip():
