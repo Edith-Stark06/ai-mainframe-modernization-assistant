@@ -62,9 +62,20 @@ def _key(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
 
+#: A printf-style width such as ``%012d`` or ``%-30s``: the 12 / 30 is a real
+#: figure ("zero-padded to 12 digits") that the digit-run pattern cannot see
+#: because a letter follows it.
+_FORMAT_WIDTH = re.compile(r"%-?0?(\d+)(?:\.\d+)?[a-zA-Z]")
+
+
 def _figures(text: str) -> list[tuple[str, Decimal]]:
     found: list[tuple[str, Decimal]] = []
-    for match in _NUMBER.finditer(_CITATION.sub(" ", text)):
+    stripped = _CITATION.sub(" ", text)
+    for match in _NUMBER.finditer(stripped):
+        value = _value(match.group(1))
+        if value is not None:
+            found.append((match.group(1), value))
+    for match in _FORMAT_WIDTH.finditer(stripped):
         value = _value(match.group(1))
         if value is not None:
             found.append((match.group(1), value))

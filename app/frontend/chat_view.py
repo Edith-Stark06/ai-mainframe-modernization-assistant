@@ -58,7 +58,8 @@ def _render_answer(chat_res: Dict[str, Any]) -> str:
     if context:
         with st.expander(f"Evidence ({len(context)})"):
             for item in context:
-                st.caption(f"[{item.get('id')}] {item.get('content', '')[:300]}")
+                label = item.get("ref") or item.get("id")
+                st.caption(f"[{label}] {item.get('content', '')[:300]}")
     return answer
 
 

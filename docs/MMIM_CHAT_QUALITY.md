@@ -58,6 +58,43 @@ Both sets are small; treat the figures as a regression guard, not a benchmark. T
 (`tests/rag/test_retrieval_evaluation.py`, marked `slow`, real embedding model) fail if hybrid retrieval drops
 below these results.
 
+## Answer style
+
+A correct answer can still be hard to read. A live answer to "analyze the converted java code" was a 522-word
+`Summary:`/`Explanation:` block with a 12-row table whose last column was raw chunk ids
+(`[java_method-e8524fdcdb084683]`). The model cannot be fine-tuned from here, but its output can be shaped, and
+the shaping is measured (`app/rag/style.py`, reported by `scripts/evaluate_chat.py`).
+
+1. **Prompt style rules** (`app/ai/grounding.py`): direct answer first in one or two plain sentences, then short
+   one-line bullets (at most 6 for a specific question, 10 when asked to explain or analyze a program), no
+   tables/headings/"Note" sections, identifiers in backticks, no hedging words ("presumably", "likely").
+2. **Short numbered citations.** Retrieved chunks are numbered `[1]`, `[2]`, ... in the prompt, the answer cites
+   `[2]`, and the chat Evidence list shows the same numbers (`context[].ref` in the API response).
+3. **Deterministic clean-up** (`app/rag/answer_format.py`), applied whatever the model writes: raw chunk ids become
+   their number (unknown ids are dropped), markdown tables become bullet lists (citation columns and row numbers
+   removed), dangling `**` markers and trailing double-space breaks are removed, blank-line runs collapsed.
+4. **No parsing labels in chat.** The `Summary:` / `Explanation:` format is still requested (it is what the
+   parser needs) but chat shows the direct answer followed by the detail.
+
+Measured on 16 live answers (10 fact questions + 6 open-ended ones such as "analyze the converted java code"),
+`openai/gpt-oss-20b` via NVIDIA, temperature 0:
+
+| | Before | After |
+|---|---|---|
+| Raw chunk-id citations | 57 | **0** |
+| Markdown table rows | 22 | **0** |
+| `Summary:`/`Explanation:` labels shown | 32 | **0** |
+| Hedging words | 1 | 0 |
+| Average length | 158 words | **95 words** |
+| Fact questions answered correctly | 10/10 | 10/10 |
+
+The open-ended "analyze the converted java code" answer went from 522 words with a table to 254 words of bullets.
+Latency is unchanged and dominated by the hosted model (3-20 s for most answers, up to ~90 s for the longest).
+
+Limits: the counts measure readability noise, not quality of the prose; the table-to-bullet conversion keeps every
+non-citation column joined by " — ", which reads well for two or three columns and less well for many; the length
+limits are requested in the prompt, not enforced.
+
 ## Limits
 
 * The unverified-figure check compares numbers, not meaning: a number that appears elsewhere in the context but is

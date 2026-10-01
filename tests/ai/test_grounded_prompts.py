@@ -18,7 +18,10 @@ def test_question_adds_the_grounding_rules(build) -> None:
         assert line in prompt
     assert "never guess numbers" in prompt
     assert "not in the retrieved context" in prompt
-    assert "Cite the chunk ids" in prompt
+    assert "Cite sources by their number" in prompt
+    assert "Never write chunk ids" in prompt
+    assert "No tables" in prompt
+    assert "presumably" in prompt  # told not to hedge
 
 
 @pytest.mark.parametrize("build", BUILDERS)

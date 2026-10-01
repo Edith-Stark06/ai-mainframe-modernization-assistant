@@ -70,16 +70,17 @@ def test_business_rules_are_passed_separately_from_other_chunks() -> None:
         ],
         ai,
     )
+    # numbered by retrieval position: the paragraph is [1], the rule is [2]
     assert ai.context["business_rules"] == [
-        "[br1]\nBusiness rule BR-007: WS-TOTAL >= 50000"
+        "[2]\nBusiness rule BR-007: WS-TOTAL >= 50000"
     ]
-    assert ai.source == "[p1]\nIF WS-TOTAL >= 50000 ..."
+    assert ai.source == "[1]\nIF WS-TOTAL >= 50000 ..."
 
 
 def test_only_business_rules_still_give_the_model_a_source() -> None:
     ai = _AI()
     _run([_result("br1", "Business rule BR-007", "business_rule")], ai)
-    assert ai.source == "[br1]\nBusiness rule BR-007"
+    assert ai.source == "[1]\nBusiness rule BR-007"
     assert "business_rules" not in ai.context
 
 

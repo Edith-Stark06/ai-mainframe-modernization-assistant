@@ -43,10 +43,18 @@ GROUNDING_RULES: tuple[str, ...] = (
     "- Use ONLY facts stated in the context below. Do not use outside knowledge to "
     "fill gaps, and never guess numbers, thresholds, rates, names or behaviour.",
     "- If any part of the question is not answered by the context, say so plainly "
-    'for that part ("not in the retrieved context") instead of guessing.',
+    'for that part ("not in the retrieved context") instead of guessing, and do '
+    'not hedge with words like "presumably", "likely" or "typically".',
     "- Business rules under PARSER-DERIVED BUSINESS RULES were produced by a "
     "deterministic parser; they take precedence over any paraphrase or code below.",
-    "- Cite the chunk ids you relied on in square brackets, e.g. [business_rule-1a2b3c].",
-    "- Put a direct one-to-two sentence answer under 'Summary:' and the supporting "
-    "detail under 'Explanation:'.",
+    "- Cite sources by their number in square brackets, e.g. [2] or [1][3]. Never "
+    'write chunk ids or the word "chunk".',
+    "\nStyle rules (the answer is shown in a chat window):",
+    "- Under 'Summary:' give the direct answer in one or two plain sentences. Do "
+    "not restate the question or describe the whole program unless asked to.",
+    "- Under 'Explanation:' use short bullet points, one line each, only for what "
+    "supports the answer: at most 6 for a specific question, at most 10 when asked "
+    "to explain or analyze a whole program. Do not repeat the summary.",
+    "- No tables, headings, horizontal rules or 'Note' sections. Put identifiers "
+    "and code in `backticks`. Plain markdown only.",
 )

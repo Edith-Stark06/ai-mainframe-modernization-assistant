@@ -61,3 +61,14 @@ def test_duplicates_are_reported_once_in_order() -> None:
 
 def test_no_context_means_every_real_figure_is_ungrounded() -> None:
     assert find_ungrounded_figures("It is 50000.", [], "") == ["50000"]
+
+
+def test_a_printf_width_in_the_context_grounds_the_number() -> None:
+    """ "zero-padded to 12 digits" is derived from ``%012d``, not invented."""
+    context = ['System.out.println(String.format("%012d", Math.round(total * 100)));']
+    assert find_ungrounded_figures("It is padded to 12 digits.", context, "") == []
+
+
+def test_a_width_the_context_does_not_have_is_still_flagged() -> None:
+    context = ['String.format("%012d", x)']
+    assert find_ungrounded_figures("It is padded to 15 digits.", context, "") == ["15"]

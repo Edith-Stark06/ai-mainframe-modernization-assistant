@@ -279,8 +279,8 @@ def test_chat_answer_is_readable_text_not_a_python_repr(
 
     assert data["error"] is None, data
     assert "CodeExplanation(" not in data["answer"]
-    assert data["answer"].startswith("Summary: It gates processing.")
-    assert "Explanation: WS-FLAG is checked first." in data["answer"]
+    # shown without the parsing labels: the direct answer, then the detail
+    assert data["answer"] == "It gates processing.\n\nWS-FLAG is checked first."
 
 
 def test_chat_plain_prose_reply_is_shown_instead_of_failing(
