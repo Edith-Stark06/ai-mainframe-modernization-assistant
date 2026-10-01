@@ -34,7 +34,7 @@ correctly; the failure was in what reached the model and in how it was told to a
    retrieved context" for anything missing, cite chunk ids, and treat *parser-derived business rules* — now
    passed separately from the other chunks — as authoritative over any paraphrase. Chunks are labelled with
    their ids.
-6. **Low temperature** (`LLM_TEMPERATURE`, default `0.0`) for Ollama and NVIDIA/OpenAI-compatible providers, so
+6. **Low temperature** (`LLM_TEMPERATURE`, default `0.0`) for the NVIDIA/OpenAI-compatible provider, so
    the same question gets the same answer. (Anthropic's API takes no sampling parameters.)
 7. **Unverified-figure check** (`app/rag/grounding.py`): every number in the answer must appear in the
    retrieved context or the question (percent/fraction forms such as `18` ↔ `0.18` count; whole numbers under

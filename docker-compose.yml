@@ -12,8 +12,6 @@ services:
       LOG_LEVEL: INFO
       WARM_EMBEDDINGS: "true"
       LLM_PROVIDER: ${LLM_PROVIDER:-none}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3}
-      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
       # Hosted Claude (LLM_PROVIDER=anthropic). Passed through from the host
       # environment / .env; blank when unset. Never baked into the image.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -24,11 +22,6 @@ services:
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
       NVIDIA_MODEL: ${NVIDIA_MODEL:-deepseek-ai/deepseek-v4.1-flash}
       NVIDIA_BASE_URL: ${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
-    # Lets the container reach an Ollama server running on the host by
-    # name. Docker Desktop provides host.docker.internal itself; this
-    # entry does the same on native Linux Docker.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - workspace-data:/app/workspace
     healthcheck:

@@ -53,10 +53,6 @@ workspace/
 
 chroma_db/
 
-# Ollama Cache
-
-ollama/
-
 # Temporary
 
 *.tmp

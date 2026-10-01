@@ -67,7 +67,7 @@ COBOL → Lexer → Parser → AST → Semantic Analysis → IR
 - ✅ Dependency analysis (COPY / CALL / PERFORM references, variable reads and writes, conditions)
 - ✅ Business-rule extraction, risk assessment and modernization strategy
 - ✅ COBOL → Java backend; the 45-program verification corpus compiles with `javac` and runs
-- ✅ Retrieval-augmented explanation and documentation services (LangChain / ChromaDB / Ollama providers). When no LLM backend is configured the API reports `LLM_PROVIDER_NOT_CONFIGURED` instead of failing
+- ✅ Retrieval-augmented explanation and documentation services (LangChain / ChromaDB; NVIDIA NIM and Anthropic providers). When no LLM backend is configured the API reports `LLM_PROVIDER_NOT_CONFIGURED` instead of failing
 - ✅ Streamlit UI with Overview, Business Rules, Dependencies, Architecture, COBOL ↔ Java, Java Workspace, Validation Center, Report and Modernization Chat views
 - ✅ MMIM training dataset generator (`mmim-gen-v25`, dataset `mmim-v2`): 351 deterministic examples, source-level 226 / 71 / 54 train / validation / test split, leakage and validation reports
 
@@ -174,7 +174,7 @@ Workspace
 | Type Checking | MyPy |
 | AI Framework | LangChain |
 | Vector Database | ChromaDB |
-| LLM | Ollama (Llama 3.x), optional — not required to run analysis |
+| LLM | NVIDIA NIM or Anthropic (hosted), optional — not required to run analysis |
 
 ---
 
@@ -265,7 +265,7 @@ scripts/              dataset, benchmark, evaluation and training tools
 ## ✅ Phase 6 — AI Modernization Engine
 
 - ✅ Retrieval-Augmented Generation (RAG)
-- ✅ LLM Integration (optional Ollama backend)
+- ✅ LLM Integration (optional hosted backends: NVIDIA NIM, Anthropic)
 - ✅ Documentation Generation
 - ✅ COBOL → Java Generation
 - ✅ Code Explanation and Modernization Chat
@@ -327,7 +327,7 @@ Tests are self-contained: git-ignored dataset splits (`train.jsonl`, `validation
 - **Fixed-format COBOL.** Format detection and position-preserving normalization run inside `AnalysisService` (see `docs/FIXED_FORMAT_NORMALIZATION.md`). Not covered: continuation lines (`-` in column 7, reported as a lexer error), fixed-format files with fewer than five non-empty lines (the detector cannot decide, so they are analyzed as written), and `>>SOURCE` directives. Files that use lines wider than 80 columns are recognized and never truncated.
 - **JCL and copybooks.** JCL is not parsed and `COPY` members are not expanded.
 - **Unsupported COBOL constructs.** Constructs the parser does not model are reported as `SYN1xx` / `SYN2xx` diagnostics rather than silently accepted; the generated Java for such programs is not guaranteed to be complete.
-- **Generative AI.** Explanation and chat features need a running Ollama (or other configured) backend; without one the API returns `LLM_PROVIDER_NOT_CONFIGURED`.
+- **Generative AI.** Explanation and chat features need a configured hosted backend (NVIDIA NIM or Anthropic); without one the API returns `LLM_PROVIDER_NOT_CONFIGURED`.
 - **CI.** There is no continuous-integration workflow in the repository yet; run the four commands above locally before committing.
 
 ---
@@ -395,21 +395,14 @@ Deployment notes:
 - **No internet needed at runtime.** The embedding model (`all-MiniLM-L6-v2`, ~90MB) is downloaded once, at build time, into the image, and the container runs with `HF_HUB_OFFLINE=1`. Without this, the first chat request in every fresh container spent minutes downloading it.
 - **Startup warm-up.** Loading the model takes a couple of minutes in a fresh container. With `WARM_EMBEDDINGS=true` (set in `docker-compose.yml`) it loads in a background thread at startup: the API answers health checks immediately, and by the time you send a first chat request it takes seconds rather than failing the UI's 30-second timeout. It defaults to `false` outside Docker so tests and local development don't each pay a model load.
 
-To use a local Ollama LLM backend from inside the container, run Ollama on the host and start the stack with, for example:
+To use a hosted LLM from the container, set `LLM_PROVIDER` and its credential in `.env` (see the NVIDIA NIM and Anthropic sections below); `docker-compose.yml` passes those variables to the `api` container. Answer quality depends on the model — treat the deterministic parser output, not the LLM's prose, as the source of truth.
 
-```bash
-LLM_PROVIDER=ollama OLLAMA_MODEL=llama3 docker compose up -d
-```
+## LLM backends
 
-The `api` container reaches the host's Ollama at `http://host.docker.internal:11434` (the default `OLLAMA_HOST` in `docker-compose.yml`). This was verified end to end on Docker Desktop for Windows (index a file, retrieve, and get a generated answer from a real model); it has **not** been tested on native Linux Docker, where Ollama must additionally be started bound to an address the container can reach (`OLLAMA_HOST=0.0.0.0 ollama serve`). Answer quality depends entirely on the model: a very small model (e.g. `qwen2.5:0.5b`) exercises the plumbing but can explain COBOL incorrectly — use a larger one for real work, and treat the deterministic parser output, not the LLM's prose, as the source of truth.
+By default `LLM_PROVIDER=none` and no LLM is configured — AI-dependent features (chat, code explanation) report `LLM_PROVIDER_NOT_CONFIGURED` rather than fabricating a response. Choose a hosted backend:
 
-## Optional: a real local LLM backend (Ollama)
-
-By default `LLM_PROVIDER=none` and no LLM is configured — AI-dependent features (chat, code explanation) report `LLM_PROVIDER_NOT_CONFIGURED` rather than fabricating a response. To enable a real, local model:
-
-1. Install [Ollama](https://ollama.com) and start it (`ollama serve`, or the desktop app).
-2. Pull a model: `ollama pull llama3` (or a smaller one, e.g. `qwen2.5:0.5b`, for a lighter footprint).
-3. Set `LLM_PROVIDER=ollama` and `OLLAMA_MODEL=<model tag>` in `.env` (see `.env.example`).
+- `LLM_PROVIDER=nvidia` — NVIDIA NIM (below)
+- `LLM_PROVIDER=anthropic` — Anthropic Claude (below)
 
 ## Chat answer quality
 
@@ -433,7 +426,7 @@ Instead of a local model, the platform can use Claude through the Anthropic API:
 2. In `.env` (git-ignored), set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY=<key>`. Optionally set `ANTHROPIC_MODEL` (default `claude-sonnet-5-5`), `ANTHROPIC_AUTH_TOKEN`, and `ANTHROPIC_BASE_URL` for a proxy/gateway.
 3. Restart the API. With `docker compose`, the same variables are passed through to the `api` container.
 
-If `LLM_PROVIDER=anthropic` is set but no key or token is, the API reports `LLM_PROVIDER_NOT_CONFIGURED` (and logs a warning) rather than failing on every request. A rejected key or model surfaces as a configuration error; rate limits, outages and network failures as "provider unavailable". Keys are held as secrets and never logged. Note that **your COBOL-derived prompts are sent to the provider** — use the local Ollama backend if source code must stay on your machine. The `temperature` field of a request is accepted but not sent, because the current Messages API takes no sampling parameters. This provider is tested against the real SDK with a mocked HTTP layer; it has not been exercised against the live API in this repository's CI.
+If `LLM_PROVIDER=anthropic` is set but no key or token is, the API reports `LLM_PROVIDER_NOT_CONFIGURED` (and logs a warning) rather than failing on every request. A rejected key or model surfaces as a configuration error; rate limits, outages and network failures as "provider unavailable". Keys are held as secrets and never logged. Note that **your COBOL-derived prompts are sent to the provider**. The `temperature` field of a request is accepted but not sent, because the current Messages API takes no sampling parameters. This provider is tested against the real SDK with a mocked HTTP layer; it has not been exercised against the live API in this repository's CI.
 
 ---
 

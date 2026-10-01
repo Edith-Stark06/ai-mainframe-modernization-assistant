@@ -13,7 +13,6 @@ from app.ai.orchestration.service import AIAnalysisOrchestrator
 from app.ai.providers.anthropic import AnthropicProvider
 from app.ai.providers.base import LLMProvider
 from app.ai.providers.openai_compatible import OpenAICompatibleProvider
-from app.ai.providers.ollama import OllamaProvider
 from app.core.config import get_settings
 
 
@@ -22,29 +21,22 @@ def get_llm_provider() -> LLMProvider | None:
     Returns the configured production LLM provider.
 
     Returns ``None`` (no provider configured) unless
-    ``settings.llm_provider`` is explicitly set to ``"ollama"``,
-    ``"nvidia"`` or ``"anthropic"`` -- an operator must opt in; this endpoint must never
-    silently assume a model is available. ``"anthropic"`` without any
+    ``settings.llm_provider`` is explicitly set to ``"nvidia"`` or
+    ``"anthropic"`` -- an operator must opt in; this endpoint must never
+    silently assume a model is available. Either one without its
     credential is also "not configured" (``None``), never a provider that
-    would fail on every call. When ``"ollama"`` is enabled, returns a real
-    :class:`~app.ai.providers.ollama.OllamaProvider` (constructing it
-    does not itself contact the server -- a genuine outage still
+    would fail on every call, and so is any other value. Constructing a
+    provider does not contact the service -- a genuine outage still
     surfaces as ``LLMProviderUnavailableError`` on the first real
-    request, never a fabricated response). Not cached -- unlike
+    request, never a fabricated response. Not cached -- unlike
     :func:`app.api.dependencies.rag.get_embedding_provider`'s real
-    model load, constructing an ``OllamaProvider`` is cheap (a lazy
-    HTTP client wrapper), so this stays a plain per-request call and
-    correctly reflects ``settings.llm_provider`` changing at runtime
-    (e.g. across tests) rather than caching a stale answer forever.
-    Tests override this dependency to inject fake providers.
+    model load, constructing a provider is cheap (a lazy HTTP client
+    wrapper), so this stays a plain per-request call and correctly
+    reflects ``settings.llm_provider`` changing at runtime (e.g. across
+    tests) rather than caching a stale answer forever. Tests override
+    this dependency to inject fake providers.
     """
     settings = get_settings()
-    if settings.llm_provider == "ollama":
-        return OllamaProvider(
-            model=settings.ollama_model,
-            host=settings.ollama_host,
-            default_temperature=settings.llm_temperature,
-        )
     if settings.llm_provider == "nvidia":
         nvidia_key = (
             settings.nvidia_api_key.get_secret_value().strip()

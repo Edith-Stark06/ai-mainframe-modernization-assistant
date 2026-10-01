@@ -13,7 +13,7 @@ from app.ai.providers.models import LLMRequest, LLMResponse
 class LLMProvider(Protocol):
     """
     Provider-agnostic interface for generating text from an LLM.
-    Any concrete provider (OpenAI, Anthropic, Ollama, etc.) must implement this interface.
+    Any concrete provider (OpenAI, Anthropic, NVIDIA NIM, etc.) must implement this interface.
     """
 
     def generate(self, request: LLMRequest) -> LLMResponse:

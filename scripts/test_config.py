@@ -22,7 +22,7 @@ print("Upload Limit:", settings.max_upload_mb, "MB")
 
 print()
 
-print("LLM Model   :", settings.ollama_model)
+print("LLM Provider:", settings.llm_provider)
 
 print()
 

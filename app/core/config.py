@@ -62,16 +62,14 @@ class Settings(BaseSettings):
     # ==========================
 
     #: "none" (default -- no LLM configured, matching every existing
-    #: "provider not configured" test/behavior), "ollama" (a real,
-    #: locally-hosted Ollama server), "nvidia" (NVIDIA NIM) or "anthropic" (hosted Claude models;
-    #: see app.api.dependencies.ai.get_llm_provider). Never assumed on: an
-    #: operator must explicitly opt in.
+    #: "provider not configured" test/behavior), "nvidia" (NVIDIA NIM) or
+    #: "anthropic" (hosted Claude models; see
+    #: app.api.dependencies.ai.get_llm_provider). Any other value is treated as
+    #: "none". Never assumed on: an operator must explicitly opt in.
     llm_provider: str = "none"
-    ollama_model: str = "llama3"
-    ollama_host: str = "http://localhost:11434"
 
     #: Sampling temperature used when a request does not set its own
-    #: (Ollama and NVIDIA/OpenAI-compatible providers; Anthropic's API takes no
+    #: (NVIDIA/OpenAI-compatible provider; Anthropic's API takes no
     #: sampling parameters). Low by default: questions about code should get the
     #: same answer each time, and a warmer model is more inclined to fill a gap
     #: with an invented detail.
