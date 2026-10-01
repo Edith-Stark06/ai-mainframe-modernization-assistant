@@ -3,15 +3,13 @@
 modes and produce the comparison + capability analysis.
 
     python -m scripts.evaluation.run_baseline_eval \
-        [--provider heuristic-demo|scripted|langchain|fake] \
-        [--model ollama:llama3] [--script PATH] [--out DIR]
+        [--provider heuristic-demo|scripted|fake] \
+        [--script PATH] [--out DIR]
 
 Writes ``<out>/<mode>/summary.{json,md}`` + ``detailed.jsonl`` for each
 mode, plus ``<out>/comparison.json`` and ``<out>/capability_analysis.json``.
 
-Unit tests never invoke this with a live provider. ``--provider
-langchain`` reads its own credentials from the environment; nothing is
-committed.
+Unit tests never invoke this with a live provider; nothing is committed.
 """
 
 from __future__ import annotations
@@ -36,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--provider",
         default="heuristic-demo",
-        choices=["heuristic-demo", "scripted", "langchain", "fake"],
+        choices=["heuristic-demo", "scripted", "fake"],
     )
     parser.add_argument("--model", default="")
     parser.add_argument("--script", default="")

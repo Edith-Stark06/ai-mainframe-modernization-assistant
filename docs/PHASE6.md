@@ -38,14 +38,13 @@ python -m scripts.benchmark.freeze_benchmark
 
 # #120 — baseline evaluation (3 modes) + capability analysis
 python -m scripts.evaluation.run_baseline_eval --provider heuristic-demo
-python -m scripts.evaluation.run_baseline_eval --provider langchain --model ollama:llama3   # live
 ```
 
 `heuristic-demo` is a **non-LLM deterministic stand-in** used only to
 exercise the harness and produce a committed sample report. A real
-baseline needs `--provider langchain` (or a recorded `--provider
-scripted` script) against a live model. Live runs read credentials from
-the environment; nothing is committed.
+baseline needs a recorded `--provider scripted` script produced from a
+live model run (wrap the live provider in `RecordingLLMProvider`);
+nothing is committed.
 
 ## Provenance & licensing
 

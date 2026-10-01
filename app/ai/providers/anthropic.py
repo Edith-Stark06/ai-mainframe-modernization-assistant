@@ -4,7 +4,8 @@ Anthropic (Claude) LLM Provider.
 Purpose:
     A real, hosted :class:`~app.ai.providers.base.LLMProvider` backed by the
     Anthropic Messages API, via the official ``anthropic`` PyPI client. It is
-    the online counterpart of :class:`~app.ai.providers.ollama.OllamaProvider`:
+    one of the hosted providers (see also
+    :class:`~app.ai.providers.openai_compatible.OpenAICompatibleProvider`):
     same provider-neutral request/response types, same error contract, chosen
     at runtime with ``LLM_PROVIDER=anthropic``.
 
