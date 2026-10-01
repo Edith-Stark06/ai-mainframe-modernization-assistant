@@ -32,6 +32,14 @@ class CodeExplanation:
         if not self.explanation or not self.explanation.strip():
             raise ValueError("Explanation detail cannot be empty or whitespace-only.")
 
+    def chat_text(self) -> str:
+        """The reply as shown in chat: the direct answer, then the detail,
+        without the ``Summary:`` / ``Explanation:`` labels the prompt format
+        needs for parsing but a reader does not."""
+        if not self.structured:
+            return self.explanation
+        return f"{self.summary}\n\n{self.explanation}"
+
     def __str__(self) -> str:
         """Human-readable text, not the dataclass repr -- this is what
         chat shows the user."""

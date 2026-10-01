@@ -172,3 +172,36 @@ def test_grounded_answer_is_left_untouched(env: Path) -> None:
     data = _chat(client, ws)
     assert data["ungrounded_figures"] == []
     assert "Figures not found" not in data["answer"]
+
+
+def test_answer_is_shown_clean_with_numbered_citations(env: Path) -> None:
+    (env / "quality.cbl").write_text(_SOURCE.format(limit=50000), encoding="utf-8")
+    client, ws = TestClient(app), str(uuid.uuid4())
+    _index(client, ws)
+
+    first = _chat(client, ws)["context"][0]
+    reply = (
+        "Summary: **  \nIt is HIGH VALUE at 50000 [" + first["id"] + "].\n\n"
+        "Explanation: | Step | Detail | Chunks |\n|---|---|---|\n"
+        "| 1 | `WS-TOTAL >= 50000` | [" + first["id"] + "] |\n\n**"
+    )
+    _llm(reply)
+
+    data = _chat(client, ws)
+    answer = data["answer"]
+    assert "Summary:" not in answer and "Explanation:" not in answer
+    assert first["id"] not in answer
+    assert f"[{first['ref']}]" in answer  # the number the Evidence list shows
+    assert "|" not in answer  # the table became a bullet
+    assert "- `WS-TOTAL >= 50000`" in answer
+    assert not answer.rstrip().endswith("**")
+
+
+def test_context_entries_carry_the_evidence_number(env: Path) -> None:
+    (env / "quality.cbl").write_text(_SOURCE.format(limit=50000), encoding="utf-8")
+    client, ws = TestClient(app), str(uuid.uuid4())
+    _index(client, ws)
+    _llm("Summary: x\n\nExplanation: y")
+
+    context = _chat(client, ws)["context"]
+    assert [c["ref"] for c in context] == list(range(1, len(context) + 1))

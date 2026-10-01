@@ -646,3 +646,43 @@ def test_empty_workspace_id_cannot_be_submitted():
     at.text_input(key="manual_ws_input").set_value("   ").run()
 
     assert at.button(key="load_workspace_button").disabled is True
+
+
+def test_chat_evidence_is_labelled_with_the_number_the_answer_cites(monkeypatch):
+    """The answer cites sources as [1], [2]...; the Evidence list must show the
+    same numbers, not the raw chunk ids."""
+    monkeypatch.setattr(
+        BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_TWO_FILES
+    )
+    monkeypatch.setattr(
+        BackendClient,
+        "send_chat_message",
+        lambda self, workspace_id, query, filename=None, include_modernization_context=False, top_k=8: {
+            "query": query,
+            "answer": "It flags orders at 50000 [2].",
+            "context": [
+                {
+                    "id": "cobol_paragraph-aaaa1111bbbb",
+                    "ref": 1,
+                    "content": "MAIN-PARA.",
+                },
+                {
+                    "id": "business_rule-cccc2222dddd",
+                    "ref": 2,
+                    "content": "WS-TOTAL >= 50000",
+                },
+            ],
+            "error": None,
+            "modernization_data": None,
+        },
+    )
+
+    at = _make_app()
+    _load_workspace(at)
+    _open_view(at, "Modernization Chat")
+    at.chat_input(key="chat_input").set_value("When is it flagged?").run()
+
+    captions = [c.value for c in at.caption]
+    assert any(c.startswith("[2] WS-TOTAL >= 50000") for c in captions), captions
+    assert any(c.startswith("[1] MAIN-PARA.") for c in captions), captions
+    assert not any("business_rule-cccc2222dddd" in c for c in captions)

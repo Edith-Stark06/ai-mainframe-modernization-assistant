@@ -1,0 +1,10 @@
+{
+  "questions": [
+    "analyze the converted java code",
+    "Explain what this program does",
+    "List the business rules in this program",
+    "What are the main risks if we modernize this program?",
+    "How does the program handle customer discounts?",
+    "Walk me through what happens when an order is processed"
+  ]
+}

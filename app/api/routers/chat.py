@@ -24,6 +24,7 @@ from app.rag.orchestration.service import RAGOrchestrator
 from app.api.dependencies.ai import get_ai_orchestrator
 from app.api.dependencies.workspace import resolve_workspace_source
 from app.ai.orchestration.service import AIAnalysisOrchestrator
+from app.rag.answer_format import clean_answer
 from app.rag.ingestion import index_program
 from app.rag.retrieval.hybrid import HybridRetrievalService
 from app.rag.indexing.chroma import ChromaIndex
@@ -201,12 +202,20 @@ def chat_endpoint(
             AICapability.EXPLANATION in capabilities
             and rag_result.ai_result.explanation
         ):
-            answer = str(rag_result.ai_result.explanation)
+            explanation = rag_result.ai_result.explanation
+            to_chat = getattr(explanation, "chat_text", None)
+            answer = to_chat() if callable(to_chat) else str(explanation)
         elif (
             AICapability.DOCUMENTATION in capabilities
             and rag_result.ai_result.documentation
         ):
             answer = str(rag_result.ai_result.documentation)
+
+    # Number the retrieved chunks 1..N, exactly as the prompt labelled them, so
+    # citations read "[2]" and match the Evidence list; tidy the layout.
+    refs = {r.chunk_id: n for n, r in enumerate(rag_result.context.results, 1)}
+    if answer:
+        answer = clean_answer(answer, refs)
 
     ungrounded = list(rag_result.ungrounded_figures) if answer else []
     if ungrounded:
@@ -216,7 +225,8 @@ def chat_endpoint(
         )
 
     context = [
-        {"id": r.chunk_id, "content": r.content} for r in rag_result.context.results
+        {"id": r.chunk_id, "ref": refs[r.chunk_id], "content": r.content}
+        for r in rag_result.context.results
     ]
 
     return ChatResponse(

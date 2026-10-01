@@ -13,9 +13,10 @@ from app.rag.retrieval.service import RetrievalService
 from app.rag.retrieval.models import RetrievalResult
 
 
-def _labelled(result: RetrievalResult) -> str:
-    """A chunk's text preceded by its id, so an answer can cite it."""
-    return f"[{result.chunk_id}]\n{result.content}"
+def _labelled(result: RetrievalResult, number: int) -> str:
+    """A chunk's text preceded by its number (``[3]``), so an answer can cite it
+    the way the Evidence list shows it."""
+    return f"[{number}]\n{result.content}"
 
 
 class RAGOrchestrator:
@@ -76,20 +77,22 @@ class RAGOrchestrator:
             # Pass the query as part of the context for the AI.
             ai_context: dict[str, Any] = {"rag_query": request.query}
 
-            # Chunks are labelled with their ids so the answer can cite them.
+            # Chunks are numbered 1..N in retrieval order -- the same numbers
+            # the Evidence list shows -- so the answer can cite them briefly.
             # Parser-derived business rules are passed separately: the prompt
             # presents them as authoritative facts that outrank any paraphrase.
+            numbered = list(enumerate(retrieval_results, 1))
             rules = [
-                r
-                for r in retrieval_results
+                (n, r)
+                for n, r in numbered
                 if r.metadata.get("chunk_type") == "business_rule"
             ]
-            others = [r for r in retrieval_results if r not in rules]
+            others = [(n, r) for n, r in numbered if (n, r) not in rules]
             if others and rules:
-                ai_context["business_rules"] = [_labelled(r) for r in rules]
-                source = "\n\n".join(_labelled(r) for r in others)
+                ai_context["business_rules"] = [_labelled(r, n) for n, r in rules]
+                source = "\n\n".join(_labelled(r, n) for n, r in others)
             else:
-                source = "\n\n".join(_labelled(r) for r in retrieval_results)
+                source = "\n\n".join(_labelled(r, n) for n, r in numbered)
 
             if request.modernization_context is not None:
                 ai_context["modernization_data"] = request.modernization_context
