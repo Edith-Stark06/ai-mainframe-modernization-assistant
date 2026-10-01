@@ -102,12 +102,13 @@ def test_chat_endpoint_validation():
 
 def test_chat_endpoint_success():
     resp = client.post(
-        "/api/v1/chat/", json={"query": "hello", "workspace_id": str(uuid.uuid4())}
+        "/api/v1/chat/",
+        json={"query": "What does this program do?", "workspace_id": str(uuid.uuid4())},
     )
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["query"] == "hello"
+    assert data["query"] == "What does this program do?"
     assert data["error"] is None
 
 
@@ -254,7 +255,7 @@ def test_chat_endpoint_modernization_context(monkeypatch, tmp_path):
     resp_missing = client.post(
         "/api/v1/chat/",
         json={
-            "query": "hello",
+            "query": "What does this program do?",
             "workspace_id": valid_uuid,
             "include_modernization_context": True,
         },
@@ -265,7 +266,7 @@ def test_chat_endpoint_modernization_context(monkeypatch, tmp_path):
     resp_not_found = client.post(
         "/api/v1/chat/",
         json={
-            "query": "hello",
+            "query": "What does this program do?",
             "workspace_id": valid_uuid,
             "include_modernization_context": True,
             "filename": "missing.cbl",
@@ -277,7 +278,7 @@ def test_chat_endpoint_modernization_context(monkeypatch, tmp_path):
     resp_traversal = client.post(
         "/api/v1/chat/",
         json={
-            "query": "hello",
+            "query": "What does this program do?",
             "workspace_id": valid_uuid,
             "include_modernization_context": True,
             "filename": "../secrets.txt",

@@ -53,6 +53,19 @@ _BLANK_RUN = re.compile(r"\n{3,}")
 _HARD_BREAK = re.compile(r"[ \t]+\n")
 
 
+#: Characters models substitute for plain ones, which break copy/paste of code
+#: names ("WS\u2011TOTAL" is not "WS-TOTAL") and citation numbers.
+_PLAIN = str.maketrans(
+    {
+        "\u2010": "-",  # hyphen
+        "\u2011": "-",  # non-breaking hyphen
+        "\u2012": "-",  # figure dash
+        "\u3010": "[",  # fullwidth lenticular bracket, used as a citation mark
+        "\u3011": "]",
+    }
+)
+
+
 def _replace_citations(text: str, refs: Mapping[str, int]) -> str:
     """``[chunk-id, ...]`` -> ``[n]`` / ``[n, m]``; unknown ids are dropped."""
 
@@ -128,7 +141,7 @@ def clean_answer(text: str, refs: Mapping[str, int] | None = None) -> str:
         The cleaned text: markdown tables as bullets, no dangling ``**``, no
         trailing double-space line breaks, at most one blank line in a row.
     """
-    cleaned = _replace_citations(text, refs or {})
+    cleaned = _replace_citations(text.translate(_PLAIN), refs or {})
     cleaned = _convert_tables(cleaned)
     cleaned = _ORPHAN_BOLD.sub("", cleaned)
     cleaned = _HARD_BREAK.sub("\n", cleaned)

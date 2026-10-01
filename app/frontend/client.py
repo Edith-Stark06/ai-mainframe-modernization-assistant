@@ -248,8 +248,13 @@ class BackendClient:
         filename: Optional[str] = None,
         include_modernization_context: bool = False,
         top_k: int = 8,
+        history: Optional[List[Dict[str, str]]] = None,
     ) -> Dict[str, Any]:
-        """Send a chat query, optionally enriched with modernization context."""
+        """Send a chat query, optionally enriched with modernization context.
+
+        ``history`` is the earlier ``{role, content}`` turns, so a follow-up
+        question can be understood.
+        """
         payload: Dict[str, Any] = {
             "workspace_id": workspace_id,
             "query": query,
@@ -258,6 +263,8 @@ class BackendClient:
         }
         if filename:
             payload["filename"] = filename
+        if history:
+            payload["history"] = history
         return self._request("POST", "/chat/", json=payload, timeout=_SLOW_AI_TIMEOUT)
 
     def index_for_chat(self, workspace_id: str, filename: str) -> Dict[str, Any]:

@@ -19,6 +19,10 @@ _UNSTRUCTURED_LABEL = "Unstructured model response"
 #: A markdown bold marker the model left dangling around a section label
 #: ("Summary: **" / a lone "**" closing the section). Only a marker set off by
 #: whitespace is removed, so real emphasis such as "**bold** text" is kept.
+#: ``Summary:`` / ``**Summary:**`` / ``**Summary**:`` at the start of a reply.
+_LEADING_SUMMARY_LABEL = re.compile(
+    r"^\s*\*{0,2}\s*summary\s*\*{0,2}\s*:\s*\*{0,2}\s*", re.IGNORECASE
+)
 _ORPHAN_LEADING = re.compile(r"^\*{2,}\s+")
 _ORPHAN_TRAILING = re.compile(r"\s+\*{2,}$")
 
@@ -93,6 +97,9 @@ class CodeExplanationService:
             text = response.text.strip()
             if not allow_unstructured or not text:
                 raise
+            # A one-line answer often comes as just "Summary: ..." (no
+            # Explanation); show the answer, not the label.
+            text = _strip_orphan_markers(_LEADING_SUMMARY_LABEL.sub("", text)) or text
             return CodeExplanation(
                 summary=_UNSTRUCTURED_LABEL, explanation=text, structured=False
             )

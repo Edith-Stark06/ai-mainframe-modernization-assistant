@@ -53,8 +53,9 @@ GROUNDING_RULES: tuple[str, ...] = (
     "- Under 'Summary:' give the direct answer in one or two plain sentences. Do "
     "not restate the question or describe the whole program unless asked to.",
     "- Under 'Explanation:' use short bullet points, one line each, only for what "
-    "supports the answer: at most 6 for a specific question, at most 10 when asked "
-    "to explain or analyze a whole program. Do not repeat the summary.",
+    "supports the answer: at most 6 for a specific question; for a list, "
+    "walk-through, analysis or whole-program explanation one bullet per item or "
+    "step, up to 12. Do not repeat the summary.",
     "- No tables, headings, horizontal rules or 'Note' sections. Put identifiers "
     "and code in `backticks`. Plain markdown only.",
 )

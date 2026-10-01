@@ -92,3 +92,22 @@ def test_code_spacing_is_never_altered() -> None:
 
 def test_empty_text_stays_empty() -> None:
     assert clean_answer("") == ""
+
+
+# ------------------------------------------------- typographic substitutions
+
+
+def test_fullwidth_citation_brackets_become_ordinary_ones() -> None:
+    assert clean_answer("It sets the rate 【11】 and 【8】【10】.") == (
+        "It sets the rate [11] and [8][10]."
+    )
+
+
+def test_non_breaking_hyphens_in_code_names_become_plain_hyphens() -> None:
+    text = "Uses `WS‑SUBTOTAL` and BR‐001 and WS‒TOTAL."
+    assert clean_answer(text) == "Uses `WS-SUBTOTAL` and BR-001 and WS-TOTAL."
+
+
+def test_en_and_em_dashes_are_left_alone() -> None:
+    text = "Rule – effect — detail"
+    assert clean_answer(text) == text
