@@ -42,6 +42,8 @@ import html
 import re
 from collections.abc import Iterable, Sequence
 
+from app.frontend.design import logo
+
 __all__ = [
     "ICONS",
     "badge",
@@ -203,15 +205,8 @@ def page_header(
 
 
 def brand_mark(size: int = 34) -> str:
-    """The product mark: three bars (source, transform, target) on ink."""
-    return (
-        f'<svg class="ds-brand-mark" width="{size}" height="{size}" viewBox="0 0 34 34" aria-hidden="true">'
-        '<rect width="34" height="34" rx="9" fill="var(--c-ink)"/>'
-        '<rect x="7" y="8" width="14" height="4" rx="2" fill="var(--c-canvas)"/>'
-        '<rect x="7" y="15" width="20" height="4" rx="2" fill="var(--c-brand)"/>'
-        '<rect x="7" y="22" width="11" height="4" rx="2" fill="var(--c-canvas)"/>'
-        "</svg>"
-    )
+    """The product logo on its dark tile (the same in light and dark themes)."""
+    return logo.markup("tile", size=size, css_class="ds-brand-mark")
 
 
 def brand(name: str = "Mainframe Modernization", tag: str = "COBOL to Java") -> str:

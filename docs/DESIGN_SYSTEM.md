@@ -40,6 +40,24 @@ code. The theme follows the operating system (or Streamlit's Settings > Theme).
 Fonts are bundled (`app/frontend/static/fonts`, served by Streamlit's static
 serving) so the UI does not depend on a CDN.
 
+## Logo
+
+Three bars that loosen from a solid block (the legacy mainframe's data rows)
+toward a single cyan dot (the assistant and the modern output). The geometry
+lives in `design/logo.py`; the in-app mark, the landing-page mark, the SVGs and
+the favicon are all generated from it, and a test fails if the committed assets
+drift. Regenerate with `python -m app.frontend.design.logo`.
+
+| Asset (`app/frontend/static/logo/`) | Use |
+| --- | --- |
+| `logo-mark.svg` | App icon: symbol on a dark rounded square |
+| `logo-symbol-on-dark.svg` | Symbol only, for dark backgrounds |
+| `logo-symbol-on-light.svg` | Symbol only, deeper teal dot for light backgrounds |
+| `favicon.png` | 256px browser-tab icon |
+
+The wordmark ("Mainframe Modernization", tagline "COBOL TO JAVA") is live text
+beside the mark, not part of the image.
+
 ## Assistant (chat)
 
 A centred, single-column conversation: opening screen with one-tap questions,

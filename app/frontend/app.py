@@ -36,6 +36,7 @@ from app.frontend.chat_view import render_chat  # noqa: E402
 from app.frontend.client import BackendClient  # noqa: E402
 from app.frontend.dependencies_view import render_dependencies  # noqa: E402
 from app.frontend.design import ui  # noqa: E402
+from app.frontend.design.logo import ASSET_DIR  # noqa: E402
 from app.frontend.entry import render_entry  # noqa: E402
 from app.frontend.java_view import render_java_view  # noqa: E402
 from app.frontend.java_workspace import render_java_workspace  # noqa: E402
@@ -208,11 +209,14 @@ def _render_workspace_stage(client: BackendClient) -> None:
         _render_workspace_body(client, view)
 
 
+FAVICON = ASSET_DIR / "favicon.png"
+
+
 def main() -> None:
     """Entry point: configure the page and route to the current stage."""
     st.set_page_config(
         page_title="Mainframe Modernization Assistant",
-        page_icon=":material/memory:",
+        page_icon=str(FAVICON),
         layout="wide",
     )
     state.init_session_state()

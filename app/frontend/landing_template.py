@@ -93,10 +93,8 @@ nav {
 }
 .brand { font-weight: 700; letter-spacing: 0.1em; font-size: 0.9rem; display: flex; align-items: center; gap: 0.75rem; }
 .brand span { color: var(--text-muted); }
-.brand-icon { display: flex; gap: 3px; }
-.brand-icon i { width: 3px; height: 12px; background: var(--cyan); border-radius: 2px; }
-.brand-icon i:nth-child(2) { height: 16px; background: var(--violet); }
-.brand-icon i:nth-child(3) { height: 8px; background: var(--green); }
+.brand-logo { display: inline-flex; line-height: 0; }
+.brand-logo svg { display: block; }
 
 .nav-links { display: flex; gap: 2rem; align-items: center; }
 .nav-links a { color: var(--text-muted); text-decoration: none; font-size: 0.8rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; transition: color 0.2s; }
@@ -437,7 +435,7 @@ section.visible { opacity: 1; transform: translateY(0); }
 
 <nav>
     <div class="brand">
-        <div class="brand-icon"><i></i><i></i><i></i></div>
+        <span class="brand-logo">{LOGO}</span>
         MAINFRAME <span>&rarr;</span> MODERN
     </div>
     <div class="nav-links">
