@@ -19,30 +19,21 @@ Non-responsibilities:
     - Building CSS (see :mod:`app.frontend.design.styles`) or markup
       (see :mod:`app.frontend.design.ui`).
 
-Provenance:
-    The look follows ``DESIGN.md`` at the repository root (warm cream canvas,
-    coral accent, serif display, dark product surfaces). Where that document's
-    values fail WCAG 2.1 AA they are adjusted, never used as-is:
-
-    ============================  ==========  ==========  ===============
-    Use                           DESIGN.md   Here        Why
-    ============================  ==========  ==========  ===============
-    Button fill (white text)      #cc785c     #a9583e     3.28 -> 5.06:1
-    Coral as link / text          #cc785c     #a9583e     3.11 -> 4.80:1
-    Secondary text on cards       #6c6a64     #66645e     4.48 -> 4.90:1
-    Success / warning / error     #5db872 ..  darker      2.3  -> >=5:1
-    Input borders                 #e6dfd8     #8e8b82     1.25 -> 3.23:1
-    ============================  ==========  ==========  ===============
-
-    The original coral (:attr:`Palette.brand`) is kept for non-text marks
-    (brand mark, accents) where 3:1 is the requirement.
+Look:
+    Deep navy surfaces with a cyan accent in the dark theme (the platform's
+    original look) and a cool blue-grey surface with a deeper cyan-blue accent
+    in the light theme. Text, status colors and non-text marks are chosen so
+    every pair in :data:`TEXT_PAIRS` / :data:`MARK_PAIRS` meets WCAG 2.1 AA in
+    both palettes. :attr:`Palette.brand` is for non-text marks (brand mark,
+    accents) where 3:1 is the requirement; :attr:`Palette.primary` carries
+    buttons and links.
 
 Dependencies:
     - none (standard library only)
 
 Examples:
-    >>> round(contrast_ratio("#141413", "#faf9f5"), 1)
-    17.5
+    >>> round(contrast_ratio("#000000", "#ffffff"), 1)
+    21.0
 
 Author:
     Edith Stark
@@ -132,7 +123,7 @@ class Palette:
     muted: str  # secondary text (still >= 4.5:1 on every surface)
 
     # brand / primary action
-    brand: str  # decorative coral (non-text marks only)
+    brand: str  # decorative accent (non-text marks only)
     primary: str  # button fill, links, active indicator
     primary_hover: str
     on_primary: str  # text on the primary fill
@@ -171,80 +162,80 @@ class Palette:
 
 LIGHT = Palette(
     name="light",
-    canvas="#faf9f5",
+    canvas="#f5f8fb",
     surface="#ffffff",
-    surface_soft="#f5f0e8",
-    surface_strong="#efe9de",
-    hairline="#e6dfd8",
-    hairline_strong="#8e8b82",
-    ink="#141413",
-    body="#3d3d3a",
-    muted="#66645e",
-    brand="#cc785c",
-    primary="#a9583e",
-    primary_hover="#8f4630",
+    surface_soft="#eaf0f6",
+    surface_strong="#dce6f0",
+    hairline="#d5dfe9",
+    hairline_strong="#6f8396",
+    ink="#0b1620",
+    body="#2b3a49",
+    muted="#4b5d6f",
+    brand="#0b8aa3",
+    primary="#0a6c86",
+    primary_hover="#085870",
     on_primary="#ffffff",
-    primary_tint="#f3e3da",
-    primary_text="#8f4630",
+    primary_tint="#d9eef4",
+    primary_text="#085870",
     success="#2f6f44",
-    success_bg="#e5f1e7",
+    success_bg="#e3f1e8",
     warning="#7a5600",
     warning_bg="#f7ecce",
     error="#a63232",
     error_bg="#f7e2df",
-    info="#2c6a8f",
-    info_bg="#e1edf4",
-    neutral="#5f5d57",
-    neutral_bg="#ece7de",
-    success_mark="#3b8a57",
+    info="#2b5fb3",
+    info_bg="#e1eaf8",
+    neutral="#4a5866",
+    neutral_bg="#e4ebf2",
+    success_mark="#2f9a62",
     warning_mark="#b27b00",
     error_mark="#c64545",
-    info_mark="#3a7ca5",
-    neutral_mark="#8e8b82",
-    code_bg="#181715",
-    code_fg="#faf9f5",
-    code_muted="#a09d96",
-    grid="#ebe6df",
-    focus="#a9583e",
+    info_mark="#3f7bd1",
+    neutral_mark="#6f8396",
+    code_bg="#0d1117",
+    code_fg="#e6edf3",
+    code_muted="#8b98a5",
+    grid="#dfe8f1",
+    focus="#0a6c86",
 )
 
 DARK = Palette(
     name="dark",
-    canvas="#181715",
-    surface="#1f1e1b",
-    surface_soft="#141311",
-    surface_strong="#2c2a26",
-    hairline="#34312c",
-    hairline_strong="#8e8b82",
-    ink="#faf9f5",
-    body="#e3e0d8",
-    muted="#a09d96",
-    brand="#cc785c",
-    primary="#e08a6d",
-    primary_hover="#eba086",
-    on_primary="#181715",
-    primary_tint="#3a2a23",
-    primary_text="#eba086",
-    success="#6fcf8c",
-    success_bg="#1f3326",
-    warning="#e8b04a",
-    warning_bg="#3a2f17",
-    error="#ee7a72",
-    error_bg="#40201e",
-    info="#6cb2dd",
-    info_bg="#1c3140",
-    neutral="#b8b5ad",
-    neutral_bg="#2c2a26",
-    success_mark="#5bbd7a",
-    warning_mark="#d9a037",
-    error_mark="#e0675f",
-    info_mark="#5aa3cf",
-    neutral_mark="#8e8b82",
-    code_bg="#0f0e0d",
-    code_fg="#faf9f5",
-    code_muted="#a09d96",
-    grid="#2c2a26",
-    focus="#e08a6d",
+    canvas="#080c12",
+    surface="#0d1117",
+    surface_soft="#0a0e14",
+    surface_strong="#16212d",
+    hairline="#1c2733",
+    hairline_strong="#6b7f93",
+    ink="#e6edf3",
+    body="#c3ced8",
+    muted="#93a1af",
+    brand="#2dd4e8",
+    primary="#2dd4e8",
+    primary_hover="#5ce3f2",
+    on_primary="#04161a",
+    primary_tint="#0f2c36",
+    primary_text="#5ce3f2",
+    success="#3ddc97",
+    success_bg="#0f2b21",
+    warning="#e8a92d",
+    warning_bg="#33260c",
+    error="#f27c7c",
+    error_bg="#3a1618",
+    info="#7db4f5",
+    info_bg="#12263f",
+    neutral="#b0bcc8",
+    neutral_bg="#1a2531",
+    success_mark="#3ddc97",
+    warning_mark="#e8a92d",
+    error_mark="#e84d4d",
+    info_mark="#5b9bf0",
+    neutral_mark="#7b8794",
+    code_bg="#05070a",
+    code_fg="#e6edf3",
+    code_muted="#8b98a5",
+    grid="#1c2733",
+    focus="#2dd4e8",
 )
 
 
