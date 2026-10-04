@@ -46,8 +46,8 @@ hr { border-color: var(--c-hairline) !important; }
 
 /* brand */
 .ds-brand { display: flex; align-items: center; gap: 0.7rem; padding: 0.15rem 0.35rem 0.9rem 0.35rem; }
-.ds-brand-mark { flex: none; width: 34px; height: 34px; }
-.ds-brand-name { font-family: var(--font-display); font-size: 1.12rem; line-height: 1.1; font-weight: 500; color: var(--c-ink); letter-spacing: -0.01em; }
+.ds-brand-mark { flex: none; width: 34px; height: 34px; border-radius: 22%; box-shadow: 0 0 0 1px var(--c-hairline-strong); }
+.ds-brand-name { font-family: var(--font-sans); font-size: 1.02rem; line-height: 1.15; font-weight: 600; color: var(--c-ink); letter-spacing: -0.01em; }
 .ds-brand-tag { display: block; font-family: var(--font-sans); font-size: 0.68rem; color: var(--c-muted); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 3px; font-weight: 500; }
 
 /* workspace card (sidebar) */

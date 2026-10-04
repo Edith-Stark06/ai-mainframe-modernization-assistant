@@ -17,6 +17,7 @@ from typing import Callable
 import streamlit as st
 import streamlit.components.v1 as components
 
+from app.frontend.design import logo
 from app.frontend.landing_template import LANDING_HTML, Z17_IMAGE_B64
 
 __all__ = ["render_landing"]
@@ -30,7 +31,9 @@ def render_landing(
     intro_seen: bool,
 ) -> None:
     # Inject the base64 encoded z17 image
-    html_content = LANDING_HTML.replace("{Z17_IMAGE_B64}", Z17_IMAGE_B64)
+    html_content = LANDING_HTML.replace("{Z17_IMAGE_B64}", Z17_IMAGE_B64).replace(
+        "{LOGO}", logo.markup("on-dark", size=26)
+    )
 
     # Set a large height to ensure Streamlit renders it properly, the iframe JS will resize it.
     components.html(html_content, height=10000, scrolling=True)
