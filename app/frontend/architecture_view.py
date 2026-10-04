@@ -17,7 +17,13 @@ from typing import Any, Dict, List, Optional
 
 import streamlit as st
 
-from app.frontend.components import section_header, selectable_table, stat_row
+from app.frontend.components import (
+    section_header,
+    selectable_table,
+    stat_row,
+    subsection,
+)
+from app.frontend.design import ui
 from app.frontend.theme import status_pill
 
 __all__ = ["render_architecture"]
@@ -35,80 +41,34 @@ def _type_sort_key(component_type: str) -> tuple[int, str]:
 
 
 def _render_blueprint(components: List[Dict[str, Any]]) -> None:
-    # 1. Mainframe Layer
-    mainframe_html = """
-    <div style="border: 1px solid #333; border-radius: 4px; padding: 15px; margin-bottom: 20px; text-align: center; background: rgba(0,0,0,0.2);">
-        <div style="font-size: 10px; letter-spacing: 1px; color: #888; margin-bottom: 10px; font-weight: 600;">1. MAINFRAME</div>
-        <div style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap;">
-            <span class="mf-topbar-badge">COBOL</span>
-            <span class="mf-topbar-badge">JCL</span>
-            <span class="mf-topbar-badge">DB2</span>
-            <span class="mf-topbar-badge">VSAM</span>
-            <span class="mf-topbar-badge">CICS</span>
-        </div>
-    </div>
-    <div style="text-align: center; color: #555; margin-bottom: 20px;">↓</div>
-    """
-
-    # 2. Intelligence Layer
-    intelligence_html = """
-    <div style="border: 1px solid #333; border-radius: 4px; padding: 15px; margin-bottom: 20px; text-align: center; background: rgba(0,0,0,0.2);">
-        <div style="font-size: 10px; letter-spacing: 1px; color: #888; margin-bottom: 10px; font-weight: 600;">2. MODERNIZATION INTELLIGENCE</div>
-        <div style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap;">
-            <span class="mf-topbar-badge" style="background:#111827;border-color:#374151;">Parser</span>
-            <span class="mf-topbar-badge" style="background:#111827;border-color:#374151;">IR</span>
-            <span class="mf-topbar-badge" style="background:#111827;border-color:#374151;">CFG</span>
-            <span class="mf-topbar-badge" style="background:#111827;border-color:#374151;">Business Rules</span>
-            <span class="mf-topbar-badge" style="background:#111827;border-color:#374151;">Dependencies</span>
-            <span class="mf-topbar-badge" style="background:#111827;border-color:#374151;">Risk</span>
-            <span class="mf-topbar-badge" style="background:#111827;border-color:#374151;">Strategy</span>
-        </div>
-    </div>
-    <div style="text-align: center; color: #555; margin-bottom: 20px;">↓</div>
-    """
-
-    # 3. Target Architecture Layer (dynamic from backend)
-    services_html = ""
-    for c in components:
-        color = (
-            "#1d4ed8"
-            if c.get("type") == "SERVICE"
-            else "#047857" if c.get("type") == "DOMAIN" else "#4338ca"
+    """The four-layer picture: what goes in, what analyses it, the derived
+    components (the only part that varies per file), and what comes out."""
+    ui.render(
+        ui.layer_diagram(
+            [
+                ("1. Mainframe", ["COBOL", "JCL", "DB2", "VSAM", "CICS"], "neutral"),
+                (
+                    "2. Modernization intelligence",
+                    [
+                        "Parser",
+                        "IR",
+                        "CFG",
+                        "Business rules",
+                        "Dependencies",
+                        "Risk",
+                        "Strategy",
+                    ],
+                    "neutral",
+                ),
+                (
+                    "3. Target architecture",
+                    [str(c.get("name", "Unknown")) for c in components],
+                    "accent",
+                ),
+                ("4. Modern application", ["Java", "REST", "Data", "Tests"], "success"),
+            ]
         )
-        services_html += f'<div style="border: 1px solid {color}; border-radius: 4px; padding: 8px 12px; font-size: 13px; color: #e2e8f0; font-weight: 500;">{c.get("name", "Unknown")}</div>'
-
-    target_html = f"""
-    <div style="border: 1px solid #333; border-radius: 4px; padding: 15px; margin-bottom: 20px; text-align: center; background: rgba(0,0,0,0.2);">
-        <div style="font-size: 10px; letter-spacing: 1px; color: #888; margin-bottom: 10px; font-weight: 600;">3. TARGET ARCHITECTURE</div>
-        <div style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap;">
-            {services_html if components else '<span style="color:#666; font-size:12px;">No components derived</span>'}
-        </div>
-    </div>
-    <div style="text-align: center; color: #555; margin-bottom: 20px;">↓</div>
-    """
-
-    # 4. Modern Application Layer
-    modern_html = """
-    <div style="border: 1px solid #333; border-radius: 4px; padding: 15px; margin-bottom: 20px; text-align: center; background: rgba(0,0,0,0.2);">
-        <div style="font-size: 10px; letter-spacing: 1px; color: #888; margin-bottom: 10px; font-weight: 600;">4. MODERN APPLICATION</div>
-        <div style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap;">
-            <span class="mf-topbar-badge" style="border-color:#059669;color:#10b981;">Java</span>
-            <span class="mf-topbar-badge" style="border-color:#059669;color:#10b981;">REST</span>
-            <span class="mf-topbar-badge" style="border-color:#059669;color:#10b981;">Data</span>
-            <span class="mf-topbar-badge" style="border-color:#059669;color:#10b981;">Tests</span>
-        </div>
-    </div>
-    """
-
-    blueprint = f"""
-    <div style="max-width: 800px; margin: 0 auto; font-family: ui-sans-serif, system-ui, sans-serif;">
-        {mainframe_html}
-        {intelligence_html}
-        {target_html}
-        {modern_html}
-    </div>
-    """
-    st.markdown(blueprint, unsafe_allow_html=True)
+    )
 
 
 def _component_detail(component: Dict[str, Any]) -> None:
@@ -146,16 +106,16 @@ def render_architecture(
     architecture_response: Optional[Dict[str, Any]], *, error: Optional[str]
 ) -> None:
     if error:
-        section_header("Architecture")
+        section_header("Architecture", eyebrow="Analyze")
         st.error(error)
         return
     if architecture_response is None:
-        section_header("Architecture")
+        section_header("Architecture", eyebrow="Analyze")
         st.info("Run analysis from the sidebar to derive an architecture.")
         return
 
     if not architecture_response.get("available"):
-        section_header("Architecture")
+        section_header("Architecture", eyebrow="Analyze")
         st.markdown(status_pill("NOT AVAILABLE", "UNAVAILABLE"), unsafe_allow_html=True)
         st.caption(
             architecture_response.get("reason") or "Architecture could not be derived."
@@ -165,17 +125,15 @@ def render_architecture(
     arch = architecture_response["architecture"]
     components = arch.get("components", [])
 
-    st.markdown(
-        "<h3 style='text-align:center; font-weight:600; font-size: 1.2rem; margin-bottom: 2rem; color: #f8fafc; letter-spacing:1px;'>MODERNIZATION ARCHITECTURE BLUEPRINT</h3>",
-        unsafe_allow_html=True,
+    section_header(
+        "Architecture",
+        "Derived target components, grouped by layer.",
+        eyebrow="Analyze",
     )
-
     _render_blueprint(components)
 
-    st.divider()
-
     counts = Counter(c["type"] for c in components)
-    section_header("Architecture Summary", f"{len(components)} component(s) generated.")
+    subsection("Summary", f"{len(components)} component(s) generated.")
     stat_row([(ctype, str(n)) for ctype, n in sorted(counts.items())])
 
     strategy = arch.get("primary_strategy")
@@ -188,7 +146,9 @@ def render_architecture(
         st.info("No architecture components were derived for this file.")
         return
 
-    st.markdown("**Component Inventory**")
+    subsection(
+        "Component inventory", "Select a row to inspect its evidence and provenance."
+    )
     records = []
     for c in components:
         records.append(

@@ -115,6 +115,50 @@ class BackendClient:
             logger.error("Backend network error: {} {} -> {}", method, url, e)
             raise BackendAPIError(_SAFE_NETWORK_ERROR) from e
 
+    def _request_text(self, method: str, url: str, **kwargs: Any) -> str:
+        """Like :meth:`_request` for an endpoint that returns plain text
+        (the Graphviz DOT export), with the same safe-error mapping."""
+        try:
+            response = self.client.request(method, url, **kwargs)
+            response.raise_for_status()
+            return response.text
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code
+            logger.error("Backend API error: {} {} -> HTTP {}", method, url, status)
+            raise BackendAPIError(_safe_message_for_status(status), status) from e
+        except httpx.HTTPError as e:
+            logger.error("Backend network error: {} {} -> {}", method, url, e)
+            raise BackendAPIError(_SAFE_NETWORK_ERROR) from e
+
+    def get_health(self) -> Dict[str, Any]:
+        """The API's health check, with a short timeout so a stopped backend
+        is reported quickly instead of stalling the page."""
+        return self._request("GET", "/health", timeout=3.0)
+
+    def get_summary(self, workspace_id: str) -> Dict[str, Any]:
+        """Workspace-level totals: file count, size, and a per-type breakdown."""
+        return self._request("GET", f"/workspaces/{workspace_id}/summary")
+
+    def analyze_jcl(self, workspace_id: str, filename: str) -> Dict[str, Any]:
+        """Parse one JCL file: its job, steps, DD statements, unsupported
+        statements and diagnostics."""
+        return self._request(
+            "POST",
+            f"/workspaces/{workspace_id}/jcl/analyze",
+            json={"filename": filename},
+        )
+
+    def export_graph_dot(self, workspace_id: str, filename: str, graph: str) -> str:
+        """One of the analysis graphs as Graphviz DOT text.
+
+        ``graph`` is ``"dependency"``, ``"control_flow"`` or ``"data_flow"``.
+        """
+        return self._request_text(
+            "GET",
+            f"/workspaces/{workspace_id}/export/graph.dot",
+            params={"filename": filename, "graph": graph},
+        )
+
     def upload_files(self, files: List[Tuple[str, bytes]]) -> Dict[str, Any]:
         """
         Upload one or more source files, creating a new workspace.

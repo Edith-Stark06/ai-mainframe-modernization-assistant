@@ -30,7 +30,11 @@ def render_java_view(
     behavioral_status: Optional[str] = None,
     error: Optional[str],
 ) -> None:
-    section_header("COBOL ↔ Java")
+    section_header(
+        "COBOL ↔ Java",
+        "The source and its generated Java, side by side.",
+        eyebrow="Transform",
+    )
     if error:
         st.error(error)
         return

@@ -21,8 +21,8 @@ from typing import Any, Dict, Optional
 import streamlit as st
 
 from app.frontend.client import BackendAPIError, BackendClient
-from app.frontend.components import section_header, stat_row
-from app.frontend.theme import status_pill
+from app.frontend.components import stat_row
+from app.frontend.design import ui
 
 __all__ = ["render_chat"]
 
@@ -38,17 +38,19 @@ _ERROR_HEADINGS: Dict[str, tuple[str, str]] = {
 
 
 def _render_error(error_code: Optional[str], message: str) -> None:
+    """An honest, specific status for a failed turn. No answer text is ever
+    invented to stand in for it."""
     heading, word = _ERROR_HEADINGS.get(
         error_code or "", ("MODERNIZATION CHAT", "FAILED")
     )
-    st.markdown(
-        f'<div class="mf-panel">'
-        f'<div class="mf-muted" style="font-size:0.72rem;letter-spacing:0.08em;">{heading}</div>'
-        f"{status_pill(word, word)}"
-        f"</div>",
-        unsafe_allow_html=True,
+    tone = ui.tone_for(word)
+    ui.render(
+        ui.callout(
+            "warning" if tone == "neutral" else tone,
+            f"{heading.capitalize()}: {word.lower()}",
+            message,
+        )
     )
-    st.caption(message)
 
 
 #: How many earlier messages are sent along with a question.
@@ -107,37 +109,55 @@ def _render_context_stats(report: Dict[str, Any]) -> None:
     )
 
 
-def render_chat(
-    client: BackendClient,
-    workspace_id: str,
-    filename: Optional[str],
-    *,
-    report: Optional[Dict[str, Any]] = None,
+#: Questions worth asking of any parsed program; each is answered from the
+#: file's own analysis, so none of them promises something the backend lacks.
+SUGGESTIONS = (
+    "Explain what this program does",
+    "List the business rules in this program",
+    "What are the main risks if we modernize it?",
+    "Did the converted Java compile and pass its tests?",
+)
+
+
+def _render_empty_state(
+    filename: Optional[str], report: Optional[Dict[str, Any]]
 ) -> None:
-    section_header(
-        "Modernization Chat",
-        filename or None,
-        eyebrow="AI",
-        eyebrow_accent="violet",
+    """The opening screen: a greeting, what the assistant knows, and one-tap
+    questions."""
+    ui.render(
+        '<div class="ds-chat-hello">'
+        + ui.brand_mark(40)
+        + '<h2 class="ds-chat-hello-title">What would you like to know about '
+        + f"{ui.esc(filename or 'this program')}?</h2>"
+        + '<p class="ds-chat-hello-sub">Answers come from the parsed program and its '
+        "validation results, with numbered sources. If the evidence does not "
+        "cover a question, I will say so.</p></div>"
     )
     if report is not None:
         _render_context_stats(report)
+    for row in range(0, len(SUGGESTIONS), 2):
+        for offset, column in enumerate(st.columns(2)):
+            index = row + offset
+            with column:
+                if st.button(
+                    SUGGESTIONS[index],
+                    key=f"suggest_{index}",
+                    icon=":material/arrow_outward:",
+                    width="stretch",
+                    disabled=not filename,
+                ):
+                    st.session_state.chat_pending = SUGGESTIONS[index]
+                    st.rerun()
 
-    include_context = st.checkbox(
-        "Include modernization context for this file",
-        value=False,
-        disabled=not filename,
-        key="include_modernization_context",
-    )
 
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
-
-    prompt = st.chat_input("Ask about this source file", key="chat_input")
-    if not prompt:
-        return
-
+def _render_turn(
+    client: BackendClient,
+    workspace_id: str,
+    filename: Optional[str],
+    prompt: str,
+    include_context: bool,
+) -> None:
+    """Send one question and render the user message and the real answer."""
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.write(prompt)
@@ -174,3 +194,56 @@ def render_chat(
         else:
             answer = _render_answer(chat_res)
             st.session_state.messages.append({"role": "assistant", "content": answer})
+
+
+def render_chat(
+    client: BackendClient,
+    workspace_id: str,
+    filename: Optional[str],
+    *,
+    report: Optional[Dict[str, Any]] = None,
+) -> None:
+    """The assistant: a centred conversation, one-tap questions, a pinned
+    composer. Widget keys (``chat_input``, ``include_modernization_context``)
+    are stable."""
+    with st.container(key="chat_header"):
+        title, context, fresh = st.columns([5, 3, 1.6], vertical_alignment="center")
+        with title:
+            ui.render(
+                '<div class="ds-chat-title">Modernization Chat'
+                + (
+                    f'<span class="ds-chat-file">{ui.esc(filename)}</span>'
+                    if filename
+                    else ""
+                )
+                + "</div>"
+            )
+        with context:
+            include_context = st.checkbox(
+                "Include context",
+                value=False,
+                disabled=not filename,
+                key="include_modernization_context",
+                help="Include the file's modernization analysis summary with the question.",
+            )
+        with fresh:
+            if st.button(
+                "New chat",
+                key="new_chat",
+                icon=":material/add:",
+                width="stretch",
+            ):
+                st.session_state.messages = []
+                st.rerun()
+
+    typed = st.chat_input("Ask about this source file", key="chat_input")
+    prompt = typed or st.session_state.pop("chat_pending", None)
+
+    with st.container(key="chat_thread"):
+        if not st.session_state.messages and not prompt:
+            _render_empty_state(filename, report)
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.write(msg["content"])
+        if prompt:
+            _render_turn(client, workspace_id, filename, prompt, include_context)

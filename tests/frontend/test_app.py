@@ -322,7 +322,9 @@ def test_initial_state_prompts_for_selection():
     at = _make_app()
 
     assert not at.exception
-    assert any("select a workspace and file" in info.value for info in at.info)
+    text = " ".join(m.value for m in at.markdown)
+    assert "Welcome, Guest" in text
+    assert "No workspace yet" in text
 
 
 def test_load_workspace_lists_inventory_files(monkeypatch):
@@ -371,13 +373,12 @@ def test_successful_analysis_renders_pipeline_and_topology(monkeypatch):
 
     at = _make_app()
     _load_workspace(at)
-    at.button(key="analyze_button").click().run()
 
     assert not at.exception
     full_text = " ".join(m.value for m in at.markdown)
     assert "MAIN" in full_text
     assert "SUBRTN" in full_text
-    assert any("2 node(s), 1 edge(s)" in c.value for c in at.caption)
+    assert any("2 nodes and 1 edge" in c.value for c in at.caption)
 
 
 def test_insufficient_data_topology_shows_honest_empty_state(monkeypatch):
@@ -392,10 +393,11 @@ def test_insufficient_data_topology_shows_honest_empty_state(monkeypatch):
 
     at = _make_app()
     _load_workspace(at)
-    at.button(key="analyze_button").click().run()
 
     assert not at.exception
-    assert any("Empty flow generated" in i.value for i in at.info)
+    assert any(
+        "No control-flow topology could be extracted" in m.value for m in at.markdown
+    )
     assert (
         "READY FOR MODERNIZATION" not in " ".join(m.value for m in at.markdown).upper()
     )
@@ -415,34 +417,54 @@ def test_analysis_api_failure_shows_safe_error(monkeypatch):
 
     at = _make_app()
     _load_workspace(at)
-    at.button(key="analyze_button").click().run()
 
     assert not at.exception
     assert any("server encountered an error" in e.value for e in at.error)
 
 
-def test_switching_file_clears_stale_results(monkeypatch):
+def test_switching_file_analyses_the_new_file_not_the_old_one(monkeypatch):
+    """Results are cached per file: switching files must fetch the new file's
+    analysis and never show the previous file's topology under the new name."""
     monkeypatch.setattr(
         BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_TWO_FILES
     )
+    analysed: list[str] = []
+
+    def fake_analyze(self, ws_id, filename):
+        analysed.append(filename)
+        return SUCCESSFUL_PIPELINE
+
+    monkeypatch.setattr(BackendClient, "analyze_modernization", fake_analyze)
+
+    at = _make_app()
+    _load_workspace(at)
+    assert analysed == ["MAIN.cbl"]
+    assert "SUBRTN" in " ".join(m.value for m in at.markdown)
+
+    at.selectbox(key="file_select").set_value("UTIL.cbl").run()
+
+    assert analysed == ["MAIN.cbl", "UTIL.cbl"]
+    assert at.session_state["modernization_result_filename"] == "UTIL.cbl"
+
+
+def test_refresh_analysis_fetches_the_file_again(monkeypatch):
     monkeypatch.setattr(
-        BackendClient,
-        "analyze_modernization",
-        lambda self, ws_id, filename: SUCCESSFUL_PIPELINE,
+        BackendClient, "get_inventory", lambda self, ws_id: INVENTORY_TWO_FILES
     )
+    calls: list[str] = []
+
+    def fake_analyze(self, ws_id, filename):
+        calls.append(filename)
+        return SUCCESSFUL_PIPELINE
+
+    monkeypatch.setattr(BackendClient, "analyze_modernization", fake_analyze)
 
     at = _make_app()
     _load_workspace(at)
     at.button(key="analyze_button").click().run()
-    full_text = " ".join(m.value for m in at.markdown)
-    assert "SUBRTN" in full_text
 
-    at.selectbox(key="file_select").set_value("UTIL.cbl").run()
-
-    assert any(
-        "Click 'Analyze for Modernization' in the sidebar to see topology" in i.value
-        for i in at.info
-    )
+    assert not at.exception
+    assert calls == ["MAIN.cbl", "MAIN.cbl"]
 
 
 def test_switching_file_clears_stale_chat_history(monkeypatch):

@@ -68,7 +68,7 @@ COBOL → Lexer → Parser → AST → Semantic Analysis → IR
 - ✅ Business-rule extraction, risk assessment and modernization strategy
 - ✅ COBOL → Java backend; the 45-program verification corpus compiles with `javac` and runs
 - ✅ Retrieval-augmented explanation and documentation services (LangChain / ChromaDB; NVIDIA NIM and Anthropic providers). When no LLM backend is configured the API reports `LLM_PROVIDER_NOT_CONFIGURED` instead of failing
-- ✅ Streamlit UI with Overview, Business Rules, Dependencies, Architecture, COBOL ↔ Java, Java Workspace, Validation Center, Report and Modernization Chat views
+- ✅ Streamlit UI (light/dark, WCAG 2.1 AA; see [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)) with Overview, Portfolio, Business Rules, Dependencies, Architecture, JCL Analysis, COBOL ↔ Java, Java Workspace, Validation Center, Report (JSON/Markdown export) and a conversational Modernization Chat
 - ✅ MMIM training dataset generator (`mmim-gen-v25`, dataset `mmim-v2`): 351 deterministic examples, source-level 226 / 71 / 54 train / validation / test split, leakage and validation reports
 
 ---

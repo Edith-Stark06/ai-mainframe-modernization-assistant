@@ -19,11 +19,17 @@ bidirectional component.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 import streamlit as st
 
-from app.frontend.components import render_force_graph, section_header, selectable_table
+from app.frontend.client import BackendAPIError
+from app.frontend.components import (
+    render_force_graph,
+    section_header,
+    selectable_table,
+    subsection,
+)
 
 __all__ = ["render_dependencies"]
 
@@ -151,30 +157,73 @@ def _render_data_flow_graph(flow: Dict[str, Any]) -> None:
                 st.caption(f"{arrow} {other} ({e.get('edge_type', '')})")
 
 
+_GRAPH_KINDS = {
+    "Dependency graph": "dependency",
+    "Control flow": "control_flow",
+    "Data flow": "data_flow",
+}
+
+
+def _render_dot_export(
+    dot_loader: Callable[[str], str], filename: Optional[str]
+) -> None:
+    """Offer a Graphviz DOT download of one of the analysis graphs.
+
+    The DOT text is produced by the backend (never reconstructed here) and is
+    fetched only when asked for, so opening the page costs nothing extra.
+    """
+    with st.popover("Export graph", icon=":material/download:"):
+        label = st.selectbox("Graph", list(_GRAPH_KINDS), key="dot_graph_kind")
+        kind = _GRAPH_KINDS[label]
+        if st.button("Generate DOT", key="dot_generate"):
+            try:
+                st.session_state["dot_export"] = (kind, dot_loader(kind))
+            except BackendAPIError as exc:
+                st.session_state["dot_export"] = None
+                st.error(exc.message)
+        ready = st.session_state.get("dot_export")
+        if ready and ready[0] == kind:
+            st.download_button(
+                "Download .dot",
+                data=ready[1],
+                file_name=f"{filename or 'graph'}.{kind}.dot",
+                mime="text/vnd.graphviz",
+                key="dot_download",
+            )
+            st.caption("Render with Graphviz: dot -Tsvg file.dot -o graph.svg")
+
+
 def render_dependencies(
-    analysis: Optional[Dict[str, Any]], *, error: Optional[str]
+    analysis: Optional[Dict[str, Any]],
+    *,
+    error: Optional[str],
+    dot_loader: Optional[Callable[[str], str]] = None,
+    filename: Optional[str] = None,
 ) -> None:
     if error:
-        section_header("Dependencies")
+        section_header("Dependencies", eyebrow="Analyze")
         st.error(error)
         return
     if analysis is None:
-        section_header("Dependencies")
+        section_header("Dependencies", eyebrow="Analyze")
         st.info("Run analysis from the sidebar to explore dependencies.")
         return
 
     deps: List[Dict[str, Any]] = analysis.get("dependencies", [])
-    section_header("Dependencies", f"{len(deps)} reference(s) extracted.")
+    section_header(
+        "Dependencies", f"{len(deps)} reference(s) extracted.", eyebrow="Analyze"
+    )
+    if dot_loader is not None:
+        _render_dot_export(dot_loader, filename)
 
     graph = analysis.get("dependency_graph") or {}
     _render_graph_and_inspector(graph)
 
-    st.markdown("**Data Flow**")
-    st.caption("Which paragraph reads or writes which data item.")
+    subsection("Data flow", "Which paragraph reads or writes which data item.")
     data_flow_graph = analysis.get("data_flow_graph") or {}
     _render_data_flow_graph(data_flow_graph)
 
-    st.markdown("**All Dependencies**")
+    subsection("All dependencies")
     if not deps:
         st.caption("No dependencies were extracted from this file.")
         return

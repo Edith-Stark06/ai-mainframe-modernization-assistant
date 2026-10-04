@@ -1,0 +1,128 @@
+# GENERATED from app/frontend/design/tokens.py -- do not edit by hand.
+# Regenerate: python -m app.frontend.design.streamlit_theme > .streamlit/config.toml
+# (tests/frontend/test_streamlit_config.py fails if this file drifts.)
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# "minimal" hides the Deploy button but keeps the menu (Settings > Theme).
+toolbarMode = "minimal"
+
+[server]
+# Serves the bundled fonts (app/frontend/static/fonts) -- no third-party
+# font request is ever made.
+enableStaticServing = true
+
+[theme]
+font = "Inter"
+headingFont = "Source Serif 4"
+codeFont = "JetBrains Mono"
+baseFontSize = 15
+codeFontSize = "0.8125rem"
+headingFontSizes = ["2rem", "1.5rem", "1.25rem", "1.0625rem", "1rem", "0.875rem"]
+headingFontWeights = [500, 500, 500, 600, 600, 600]
+metricValueFontSize = "1.75rem"
+metricValueFontWeight = 600
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/fonts/Inter-Variable.woff2"
+weight = "100 900"
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Source Serif 4"
+url = "app/static/fonts/SourceSerif4-Variable.woff2"
+weight = "200 900"
+style = "normal"
+
+[[theme.fontFaces]]
+family = "JetBrains Mono"
+url = "app/static/fonts/JetBrainsMono-Variable.woff2"
+weight = "100 800"
+style = "normal"
+
+[theme.light]
+primaryColor = "#a9583e"
+backgroundColor = "#faf9f5"
+secondaryBackgroundColor = "#f5f0e8"
+textColor = "#141413"
+linkColor = "#8f4630"
+linkUnderline = true
+borderColor = "#e6dfd8"
+dataframeBorderColor = "#e6dfd8"
+dataframeHeaderBackgroundColor = "#f5f0e8"
+showWidgetBorder = true
+baseRadius = "8px"
+buttonRadius = "8px"
+codeBackgroundColor = "#efe9de"
+codeTextColor = "#141413"
+redColor = "#c64545"
+redTextColor = "#a63232"
+redBackgroundColor = "#f7e2df"
+orangeColor = "#b27b00"
+orangeTextColor = "#7a5600"
+orangeBackgroundColor = "#f7ecce"
+yellowColor = "#b27b00"
+yellowTextColor = "#7a5600"
+yellowBackgroundColor = "#f7ecce"
+greenColor = "#3b8a57"
+greenTextColor = "#2f6f44"
+greenBackgroundColor = "#e5f1e7"
+blueColor = "#3a7ca5"
+blueTextColor = "#2c6a8f"
+blueBackgroundColor = "#e1edf4"
+violetColor = "#8e8b82"
+violetTextColor = "#5f5d57"
+violetBackgroundColor = "#ece7de"
+grayColor = "#8e8b82"
+grayTextColor = "#5f5d57"
+grayBackgroundColor = "#ece7de"
+
+[theme.light.sidebar]
+backgroundColor = "#f5f0e8"
+secondaryBackgroundColor = "#efe9de"
+borderColor = "#e6dfd8"
+
+[theme.dark]
+primaryColor = "#e08a6d"
+backgroundColor = "#181715"
+secondaryBackgroundColor = "#141311"
+textColor = "#faf9f5"
+linkColor = "#eba086"
+linkUnderline = true
+borderColor = "#34312c"
+dataframeBorderColor = "#34312c"
+dataframeHeaderBackgroundColor = "#141311"
+showWidgetBorder = true
+baseRadius = "8px"
+buttonRadius = "8px"
+codeBackgroundColor = "#2c2a26"
+codeTextColor = "#faf9f5"
+redColor = "#e0675f"
+redTextColor = "#ee7a72"
+redBackgroundColor = "#40201e"
+orangeColor = "#d9a037"
+orangeTextColor = "#e8b04a"
+orangeBackgroundColor = "#3a2f17"
+yellowColor = "#d9a037"
+yellowTextColor = "#e8b04a"
+yellowBackgroundColor = "#3a2f17"
+greenColor = "#5bbd7a"
+greenTextColor = "#6fcf8c"
+greenBackgroundColor = "#1f3326"
+blueColor = "#5aa3cf"
+blueTextColor = "#6cb2dd"
+blueBackgroundColor = "#1c3140"
+violetColor = "#8e8b82"
+violetTextColor = "#b8b5ad"
+violetBackgroundColor = "#2c2a26"
+grayColor = "#8e8b82"
+grayTextColor = "#b8b5ad"
+grayBackgroundColor = "#2c2a26"
+
+[theme.dark.sidebar]
+backgroundColor = "#141311"
+secondaryBackgroundColor = "#2c2a26"
+borderColor = "#34312c"

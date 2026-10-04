@@ -23,8 +23,9 @@ from app.frontend.components import (
     selectable_table,
     stat_row,
     status_matrix,
+    subsection,
 )
-from app.frontend.theme import status_pill
+from app.frontend.design import ui
 
 __all__ = ["render_validation"]
 
@@ -66,7 +67,11 @@ def render_validation(
     report: Optional[Dict[str, Any]] = None,
     error: Optional[str],
 ) -> None:
-    section_header("Validation Center")
+    section_header(
+        "Validation Center",
+        "Every stage, with the status the backend computed.",
+        eyebrow="Validate",
+    )
     if error:
         st.error(error)
         return
@@ -75,17 +80,14 @@ def render_validation(
         return
 
     overall = validation["overall_status"]
-    st.markdown(
-        f'<div class="mf-panel" style="text-align:center;">'
-        f"{status_pill(_OVERALL_HEADLINE[overall], overall)}"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
-    st.caption(
-        "Overall status reflects Parser, Analysis, Java Generation, "
-        "Compilation, and Behavioral Equivalence only -- Risks, Unsupported "
-        "Syntax, COBOL Tests, and Self Repair are informational and never "
-        "gate this rollup on their own."
+    ui.render(
+        ui.callout(
+            ui.tone_for(overall),
+            _OVERALL_HEADLINE[overall],
+            "Overall status reflects Parser, Analysis, Java Generation, Compilation and "
+            "Behavioral Equivalence only. Risks, Unsupported Syntax, COBOL Tests and Self "
+            "Repair are informational and never gate this rollup on their own.",
+        )
     )
 
     stages: List[Dict[str, Any]] = validation["stages"]
@@ -93,7 +95,7 @@ def render_validation(
     stat_row(_validation_stat_items(stages, report))
 
     blocking = [s for s in stages if s["status"] in _BLOCKING_STATUSES]
-    st.markdown("**Blocking Issues**")
+    subsection("Blocking issues", "Select a row for its details.")
     if not blocking:
         st.caption("No blocking issues -- every gating stage passed.")
         return
