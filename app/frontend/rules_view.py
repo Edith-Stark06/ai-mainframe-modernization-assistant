@@ -76,11 +76,11 @@ def render_business_rules(
     intelligence: Optional[Dict[str, Any]], *, error: Optional[str]
 ) -> None:
     if error:
-        section_header("Business Rules")
+        section_header("Business Rules", eyebrow="Analyze")
         st.error(error)
         return
     if intelligence is None:
-        section_header("Business Rules")
+        section_header("Business Rules", eyebrow="Analyze")
         st.info("Run analysis from the sidebar to extract business rules.")
         return
 

@@ -27,7 +27,7 @@ __all__ = ["render_java_workspace"]
 def render_java_workspace(
     workspace: Optional[Dict[str, Any]], *, error: Optional[str]
 ) -> None:
-    section_header("Java Workspace")
+    section_header("Java Workspace", eyebrow="Transform")
     if error:
         st.error(error)
         return

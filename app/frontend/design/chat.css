@@ -1,0 +1,48 @@
+/* ==========================================================================
+   Assistant (chat) view -- a centred conversation, one-tap questions and a
+   pinned, rounded composer. Tokens only; scoped to the chat containers so no
+   other view is affected.
+   ========================================================================== */
+
+.st-key-chat_header { max-width: 48rem; margin: 0 auto 0.5rem auto; padding-bottom: 0.6rem; border-bottom: 1px solid var(--c-hairline); }
+.ds-chat-title { font-family: var(--font-display); font-size: 1.15rem; color: var(--c-ink); display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.ds-chat-file { font-family: var(--font-code); font-size: 0.78rem; color: var(--c-muted); background: var(--c-surface-strong); padding: 0.1rem 0.45rem; border-radius: var(--r-sm); }
+
+.st-key-chat_thread { max-width: 48rem; margin: 0 auto; padding-bottom: 6rem; }
+
+/* opening screen */
+.ds-chat-hello { text-align: center; padding: 2.5rem 0 1.25rem 0; }
+.ds-chat-hello .ds-brand-mark { margin: 0 auto 1rem auto; display: block; }
+.ds-chat-hello-title { font-family: var(--font-display); font-size: 1.75rem; line-height: 1.2; font-weight: 400; color: var(--c-ink); margin: 0 auto; max-width: 30ch; }
+.ds-chat-hello-sub { color: var(--c-muted); font-size: 0.92rem; margin: 0.6rem auto 0 auto; max-width: 52ch; }
+.st-key-chat_thread [class*="st-key-suggest_"] .stButton > button {
+  justify-content: flex-start; text-align: left; min-height: 3.1rem; padding: 0.6rem 0.9rem;
+  background: var(--c-surface); border: 1px solid var(--c-hairline); border-radius: var(--r-lg);
+  color: var(--c-body); font-weight: 500; box-shadow: var(--shadow-sm);
+}
+.st-key-chat_thread [class*="st-key-suggest_"] .stButton > button:hover { border-color: var(--c-hairline-strong); background: var(--c-surface-soft); color: var(--c-ink); }
+.st-key-chat_thread [class*="st-key-suggest_"] .stButton > button p { color: inherit; }
+
+/* messages */
+[data-testid="stChatMessage"] { background: transparent; padding: 0.5rem 0; gap: 0.75rem; }
+[data-testid="stChatMessageAvatarUser"],
+[data-testid="stChatMessageAvatarAssistant"] { background: var(--c-ink); color: var(--c-canvas); border-radius: var(--r-md); }
+[data-testid="stChatMessageAvatarUser"] { display: none; }
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) { justify-content: flex-end; }
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) [data-testid="stChatMessageContent"] {
+  flex: 0 1 auto; background: var(--c-surface-strong); color: var(--c-ink);
+  border-radius: 1.15rem 1.15rem 0.3rem 1.15rem; padding: 0.65rem 1rem; max-width: 80%; width: fit-content;
+}
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) [data-testid="stChatMessageContent"] { max-width: 100%; line-height: 1.65; }
+
+/* composer */
+[data-testid="stBottom"] > div { background: transparent; }
+[data-testid="stBottomBlockContainer"] { max-width: 48rem; margin: 0 auto; padding-bottom: 1.25rem; }
+[data-testid="stChatInput"] {
+  background: var(--c-surface); border: 1px solid var(--c-hairline-strong); border-radius: 1.5rem;
+  box-shadow: var(--shadow-pop);
+}
+[data-testid="stChatInput"] textarea { color: var(--c-ink); font-size: 0.98rem; }
+[data-testid="stChatInput"]:focus-within { border-color: var(--c-primary); }
+[data-testid="stChatInputSubmitButton"] { background: var(--c-primary) !important; color: var(--c-on-primary) !important; border-radius: 999px; }
+[data-testid="stChatInput"] > div, [data-testid="stChatInput"] textarea { border: none !important; box-shadow: none !important; background: transparent !important; outline: none !important; }

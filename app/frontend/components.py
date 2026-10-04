@@ -1,13 +1,34 @@
 """
-Phase 12 (Stitch redesign) -- shared structural rendering primitives.
+Shared Streamlit-facing components.
 
-These are pure presentation helpers built on top of ``theme.py``'s CSS and
-``status_pill``: they format and lay out data a caller already fetched from
-the backend. None of them fetch, filter, or compute a domain fact -- every
-value passed in must already be real. This module exists so every page can
-stop hand-rolling its own ``st.container(border=True)`` card and instead
-share one compact, consistent visual language (stat strips, pipeline
-steppers, status matrices, and click-to-inspect tables).
+Purpose:
+    Thin wrappers that put the design system's primitives
+    (:mod:`app.frontend.design.ui`) on the page, plus the two components that
+    need Streamlit itself: the selectable table and the network graph. None of
+    them fetches, filters or computes a domain fact -- every value passed in
+    must already be real.
+
+Responsibilities:
+    - Page / section headings: :func:`section_header`, :func:`subsection`.
+    - Figures: :func:`stat_row`, :func:`pipeline_steps`, :func:`status_matrix`.
+    - :func:`selectable_table` -- a single-row-select table that returns the
+      selected record.
+    - :func:`render_force_graph` -- the dependency / control-flow network.
+
+Dependencies:
+    - streamlit, networkx (layout only), app.frontend.design.ui
+
+Examples:
+    ::
+
+        section_header("Business Rules", "10 extracted", eyebrow="Analyze")
+        stat_row([("Rules", "10"), ("Coverage", "99%")])
+
+Author:
+    Edith Stark
+
+Project:
+    AI-Powered Mainframe Modernization Assistant
 """
 
 from __future__ import annotations
@@ -16,34 +37,19 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
 
 import streamlit as st
 
-from app.frontend.theme import status_pill
+from app.frontend.design import ui
 
 __all__ = [
-    "section_header",
-    "stat_row",
     "pipeline_steps",
-    "status_matrix",
-    "selectable_table",
     "render_force_graph",
+    "section_header",
+    "selectable_table",
+    "stat_row",
+    "status_matrix",
+    "subsection",
 ]
 
-_STEP_GLYPH = {
-    "done": "✓",
-    "active": "●",
-    "partial": "~",
-    "pending": "○",
-    "fail": "✗",
-}
-
-_GRAPH_CSS = """
-<style>
-  .mf-force-graph svg { width: 100%; height: auto; }
-  .mf-force-node circle { fill: #0d1117; stroke: #2dd4e8; stroke-width: 1.4; }
-  .mf-force-node text { fill: #e6edf3; font-size: 10px; text-anchor: middle; }
-  .mf-force-edge { stroke: #1c2733; stroke-width: 1.2; fill: none; }
-  .mf-force-edge-label { fill: #8b98a5; font-size: 8px; }
-</style>
-"""
+_STATE_ALIAS = {"active": "partial"}
 
 
 def section_header(
@@ -53,62 +59,57 @@ def section_header(
     eyebrow: Optional[str] = None,
     eyebrow_accent: Literal["cyan", "violet"] = "cyan",
 ) -> None:
-    """The compact Level-1 page-title block: optional eyebrow, title, and
-    an optional one-line muted subtitle -- never a paragraph.
-    ``eyebrow_accent="violet"`` is reserved for the AI surface
-    (Modernization Chat) -- the one restrained violet accent in the app."""
-    eyebrow_cls = (
-        "mf-eyebrow-sm mf-ai-accent" if eyebrow_accent == "violet" else "mf-eyebrow-sm"
-    )
-    eyebrow_html = f'<div class="{eyebrow_cls}">{eyebrow}</div>' if eyebrow else ""
-    subtitle_html = f'<div class="mf-subtitle">{subtitle}</div>' if subtitle else ""
-    st.markdown(
-        f'<div class="mf-section-header">{eyebrow_html}'
-        f'<div class="mf-section-title">{title}</div>{subtitle_html}</div>',
-        unsafe_allow_html=True,
+    """The page title block: optional eyebrow, title, one muted line.
+
+    ``eyebrow_accent`` is accepted for backward compatibility and ignored: the
+    design system has a single accent.
+    """
+    ui.render(ui.page_header(title, subtitle, eyebrow=eyebrow))
+
+
+def subsection(title: str, hint: Optional[str] = None) -> None:
+    """A heading inside a page, with an optional one-line hint."""
+    ui.render(
+        f'<div class="ds-section"><h2 class="ds-h2">{ui.esc(title)}</h2>'
+        + (f'<p class="ds-hint">{ui.esc(hint)}</p>' if hint else "")
+        + "</div>"
     )
 
 
 def stat_row(items: Sequence[Tuple[str, str]]) -> None:
-    """A compact horizontal strip of label/value pairs, thin dividers, no
-    boxed cards -- the "BUSINESS RULES 6 / DEPENDENCIES 63 / ..." row used
-    across Overview, Business Rules, Architecture, Validation, and Chat."""
+    """A responsive grid of label / value tiles."""
     if not items:
         return
-    cells = "".join(
-        f'<div class="mf-stat"><div class="mf-stat-value">{value}</div>'
-        f'<div class="mf-stat-label">{label}</div></div>'
-        for label, value in items
-    )
-    st.markdown(f'<div class="mf-statrow">{cells}</div>', unsafe_allow_html=True)
+    ui.render(ui.kpi_grid([{"label": label, "value": value} for label, value in items]))
 
 
 def pipeline_steps(steps: Sequence[Tuple[str, str]]) -> None:
-    """The horizontal ANALYZE / UNDERSTAND / TRANSFORM / VALIDATE stepper.
-    ``state`` for each step is one of "done" | "active" | "partial" |
-    "pending", already derived by the caller from real backend facts."""
+    """The ANALYZE / UNDERSTAND / TRANSFORM / VALIDATE stepper from
+    ``(label, state)`` pairs already derived from real backend facts."""
     if not steps:
         return
-    cells = "".join(
-        f'<div class="mf-step mf-step--{state}">'
-        f'<span class="mf-step-glyph">{_STEP_GLYPH.get(state, _STEP_GLYPH["pending"])}</span>'
-        f"{label}</div>"
-        for label, state in steps
+    ui.render(
+        ui.stepper(
+            [
+                {
+                    "name": label,
+                    "state": _STATE_ALIAS.get(state, state),
+                    "metric": "",
+                    "detail": "",
+                }
+                for label, state in steps
+            ]
+        )
     )
-    st.markdown(f'<div class="mf-pipeline">{cells}</div>', unsafe_allow_html=True)
 
 
 def status_matrix(cells: Sequence[Tuple[str, str]]) -> None:
-    """A CSS-grid of label + honest status_pill cells, replacing a row of
-    bordered ``st.container`` cards (Validation Center, Report checklist)."""
+    """One chip per ``(label, status)``: the label and an honest status badge."""
     if not cells:
         return
-    rendered = "".join(
-        f'<div class="mf-matrix-cell"><div class="mf-matrix-label">{label}</div>'
-        f"{status_pill(status, status)}</div>"
-        for label, status in cells
+    ui.render(
+        ui.stage_grid([{"stage": label, "status": status} for label, status in cells])
     )
-    st.markdown(f'<div class="mf-matrix">{rendered}</div>', unsafe_allow_html=True)
 
 
 def selectable_table(
@@ -117,15 +118,22 @@ def selectable_table(
     *,
     key: str,
     height: Union[int, Literal["stretch", "content"]] = "content",
+    column_config: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Render ``records`` as a compact single-select table and return the
-    selected record's *original* dict (not just the displayed columns), or
-    ``None`` if nothing is selected.
+    """Render *records* as a single-select table; return the selected record.
 
-    This is the one real, working "click a row to open an inspector"
-    mechanism available in Streamlit (``st.dataframe`` row selection)
-    without building a custom bidirectional component -- used wherever the
-    design calls for "clicking a node/rule/issue populates the inspector."
+    The returned value is the record's *original* dict (not only the shown
+    columns), or ``None`` when nothing is selected. This is the working "click a
+    row to open the inspector" mechanism Streamlit offers without a custom
+    component.
+
+    Args:
+        records: Source rows.
+        columns: Which keys to display, in order.
+        key: Streamlit widget key.
+        height: Table height (``"content"`` fits the rows).
+        column_config: Optional ``st.column_config`` per column (widths,
+            progress bars, formatting).
     """
     if not records:
         return None
@@ -140,6 +148,7 @@ def selectable_table(
         on_select="rerun",
         selection_mode="single-row",
         key=key,
+        column_config=column_config,
     )
     selection = event["selection"] if event else None
     selected_rows = list(selection["rows"]) if selection else []
@@ -154,34 +163,32 @@ def render_force_graph(
     *,
     empty_message: str,
     width: int = 720,
-    height: int = 280,
+    height: int = 320,
+    caption: bool = True,
 ) -> None:
-    """A compact force-directed SVG graph shared by Dependencies (the
-    cross-program CALL/PERFORM/COPY graph) and Overview (the control-flow
-    topology). ``nodes`` are already-fetched ``(id, label)`` pairs,
-    ``edges`` are already-fetched ``(source_id, target_id, type_label)``
-    triples -- this function only lays them out (via ``networkx.spring_layout``,
-    presentation only) and draws them; it never invents a node or an edge.
+    """A force-directed SVG graph for dependencies and control flow.
+
+    ``nodes`` are already-fetched ``(id, label)`` pairs and ``edges``
+    ``(source_id, target_id, type_label)`` triples; this lays them out
+    (``networkx.spring_layout``, presentation only) and draws them. It never
+    invents a node or an edge. The canvas grows and the nodes shrink as the
+    graph gets denser, and edge labels are dropped once there are too many to
+    read.
     """
     if not nodes:
-        st.info(empty_message)
+        ui.render(ui.empty_state("search", "Nothing to draw", empty_message))
         return
 
     import networkx as nx  # type: ignore[import-untyped]
 
-    # Density-aware sizing: a real graph can have far more nodes than a
-    # fixed small canvas can show legibly. Rather than let node circles
-    # overlap into an unreadable cluster ("graph overflow"), grow the
-    # canvas and shrink nodes/labels as the graph gets denser, and drop
-    # per-edge type labels once there are too many to read anyway.
     node_count = len(nodes)
-    height = max(height, min(640, 200 + node_count * 6))
+    height = max(height, min(680, 220 + node_count * 6))
     if node_count <= 15:
-        radius, font_size, label_len = 26, 10, 12
+        radius, font_size, label_len = 27, 10, 12
     elif node_count <= 40:
-        radius, font_size, label_len = 17, 8, 9
+        radius, font_size, label_len = 18, 8, 9
     else:
-        radius, font_size, label_len = 11, 7, 6
+        radius, font_size, label_len = 12, 7, 6
     show_edge_labels = node_count <= 25
 
     labels = dict(nodes)
@@ -194,60 +201,46 @@ def render_force_graph(
     pos = nx.spring_layout(graph, seed=7, k=1.4 / max(len(graph.nodes) ** 0.5, 1))
     xs = [p[0] for p in pos.values()] or [0]
     ys = [p[1] for p in pos.values()] or [0]
-    x_min, x_max = min(xs), max(xs)
-    y_min, y_max = min(ys), max(ys)
-    margin = max(radius + 14, 40)
+    x_min, x_max, y_min, y_max = min(xs), max(xs), min(ys), max(ys)
+    margin = max(radius + 16, 44)
 
     def scale(x: float, y: float) -> Tuple[float, float]:
         sx = margin + (x - x_min) / max(x_max - x_min, 1e-6) * (width - 2 * margin)
         sy = margin + (y - y_min) / max(y_max - y_min, 1e-6) * (height - 2 * margin)
         return sx, sy
 
-    svg_edges = []
+    svg_edges: List[str] = []
     for source, target, data in graph.edges(data=True):
         x1, y1 = scale(*pos[source])
         x2, y2 = scale(*pos[target])
-        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
-        label_svg = (
-            f'<text class="mf-force-edge-label" x="{mx:.1f}" y="{my:.1f}">'
-            f'{data.get("dependency_type", "")}</text>'
+        label = (
+            f'<text class="edge-label" x="{(x1 + x2) / 2:.1f}" y="{(y1 + y2) / 2:.1f}">'
+            f"{ui.esc(data.get('dependency_type', ''))}</text>"
             if show_edge_labels
             else ""
         )
         svg_edges.append(
-            f'<path class="mf-force-edge" d="M{x1:.1f},{y1:.1f} L{x2:.1f},{y2:.1f}" '
-            f'marker-end="url(#mf-force-arrow)"/>{label_svg}'
+            f'<path class="edge" d="M{x1:.1f},{y1:.1f} L{x2:.1f},{y2:.1f}" '
+            f'marker-end="url(#ds-arrow)"/>{label}'
         )
 
-    svg_nodes = []
+    svg_nodes: List[str] = []
     for node in graph.nodes:
         x, y = scale(*pos[node])
-        label = str(labels.get(node, node))[:label_len]
+        full = str(labels.get(node, node))
         svg_nodes.append(
-            f'<g class="mf-force-node"><circle cx="{x:.1f}" cy="{y:.1f}" r="{radius}"/>'
-            f'<text x="{x:.1f}" y="{y + 4:.1f}" style="font-size:{font_size}px">'
-            f"{label}</text></g>"
+            f'<g class="node"><title>{ui.esc(full)}</title><circle cx="{x:.1f}" cy="{y:.1f}" r="{radius}"/>'
+            f'<text x="{x:.1f}" y="{y + 3.5:.1f}" style="font-size:{font_size}px">{ui.esc(full[:label_len])}</text></g>'
         )
 
-    st.markdown(_GRAPH_CSS, unsafe_allow_html=True)
-    st.markdown(
-        f"""
-        <div class="mf-force-graph">
-          <svg viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <marker id="mf-force-arrow" markerWidth="8" markerHeight="8" refX="7" refY="3"
-                      orient="auto" markerUnits="strokeWidth">
-                <path d="M0,0 L0,6 L7,3 z" fill="#1c2733"/>
-              </marker>
-            </defs>
-            {"".join(svg_edges)}
-            {"".join(svg_nodes)}
-          </svg>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    n_nodes, n_edges = graph.number_of_nodes(), graph.number_of_edges()
+    summary = f"{n_nodes} node{'s' if n_nodes != 1 else ''} and {n_edges} edge{'s' if n_edges != 1 else ''}"
+    ui.render(
+        f'<div class="ds-graph"><svg viewBox="0 0 {width} {height}" role="img" aria-label="Network graph: {summary}" '
+        'xmlns="http://www.w3.org/2000/svg"><defs><marker id="ds-arrow" markerWidth="8" markerHeight="8" '
+        'refX="7" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L7,3 z" '
+        'fill="var(--c-hairline-strong)"/></marker></defs>'
+        f'{"".join(svg_edges)}{"".join(svg_nodes)}</svg></div>'
     )
-    st.caption(
-        f"{graph.number_of_nodes()} node(s), {graph.number_of_edges()} edge(s) -- "
-        "force-directed layout; every edge is exactly what the backend returned."
-    )
+    if caption:
+        st.caption(f"{summary}. Every edge is exactly what the backend returned.")

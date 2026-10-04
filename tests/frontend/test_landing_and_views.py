@@ -319,7 +319,9 @@ def test_idle_ai_core_state_before_any_workspace_selected():
     at = _make_app()
     _enter_workspace(at)
 
-    assert "AWAITING ANALYSIS" in _visible_text(at)
+    text = _visible_text(at)
+    assert "No workspace yet" in text
+    assert "Welcome" in text
 
 
 def test_sidebar_nav_button_switches_the_active_view(monkeypatch):
@@ -409,7 +411,7 @@ def test_dependencies_view_renders_real_graph_and_flat_list(monkeypatch):
     _open_view(at, "Dependencies")
 
     assert not at.exception
-    assert any("SUBRTN" in c.value or "node(s)" in c.value for c in at.caption)
+    assert any("SUBRTN" in c.value or " nodes and " in c.value for c in at.caption)
     rows = _dataframe_with_column(at, "Type").value
     assert "CALL" in list(rows["Type"])
     assert "VARIABLE_READ" in list(rows["Type"])
