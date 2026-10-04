@@ -32,11 +32,11 @@ data loading is `app/frontend/state.py`, and each page is a `*_view.py`.
 
 ## Visual language
 
-Warm cream canvas, serif display headings (Source Serif 4), Inter for UI,
-JetBrains Mono for code, one coral accent. It follows the repository's
-`DESIGN.md`, with these deliberate deviations to reach WCAG 2.1 AA: the accent
-used for text and for buttons with white text is darkened (`#a9583e`), muted
-text is darkened (`#66645e`), and control borders use a stronger hairline.
+Dark theme: deep navy surfaces (`#080c12` canvas, `#0d1117` cards) with a cyan
+accent (`#2dd4e8`), the platform's original look. Light theme: a cool blue-grey
+canvas with a deeper cyan-blue accent (`#0a6c86`) so white button text keeps
+4.5:1. Serif display headings (Source Serif 4), Inter for UI, JetBrains Mono for
+code. The theme follows the operating system (or Streamlit's Settings > Theme).
 Fonts are bundled (`app/frontend/static/fonts`, served by Streamlit's static
 serving) so the UI does not depend on a CDN.
 
