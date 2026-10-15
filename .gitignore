@@ -85,3 +85,6 @@ data/dataset/*/*.validation.json
 # Phase 7 / #121 — per-run training artifacts (manifest + records written
 # under each run dir; not committed). The model registry IS committed.
 reports/training-runs/
+
+# Task specification files (local only)
+/TASK-*.md
